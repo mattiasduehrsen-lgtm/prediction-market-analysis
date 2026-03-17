@@ -7,6 +7,7 @@ from simple_term_menu import TerminalMenu
 
 from src.common.analysis import Analysis
 from src.common.indexer import Indexer
+from src.current.collector import collect_current_data
 from src.common.util import package_data
 from src.common.util.strings import snake_to_title
 
@@ -132,10 +133,16 @@ def package():
     sys.exit(0 if success else 1)
 
 
+def current():
+    """Collect a lightweight snapshot of current market data."""
+    collect_current_data()
+    sys.exit(0)
+
+
 def main():
     if len(sys.argv) < 2:
         print("\nUsage: uv run main.py <command>")
-        print("Commands: analyze, index, package")
+        print("Commands: analyze, index, current, package")
         sys.exit(0)
 
     command = sys.argv[1]
@@ -153,8 +160,12 @@ def main():
         package()
         sys.exit(0)
 
+    if command == "current":
+        current()
+        sys.exit(0)
+
     print(f"Unknown command: {command}")
-    print("Commands: analyze, index, package")
+    print("Commands: analyze, index, current, package")
     sys.exit(1)
 
 

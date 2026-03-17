@@ -22,8 +22,8 @@ class Trade:
     trade_id: str
     ticker: str
     count: int
-    yes_price: int
-    no_price: int
+    yes_price: Optional[int]
+    no_price: Optional[int]
     taker_side: str
     created_time: datetime
 
@@ -32,10 +32,10 @@ class Trade:
         return cls(
             trade_id=data["trade_id"],
             ticker=data["ticker"],
-            count=data["count"],
-            yes_price=data["yes_price"],
-            no_price=data["no_price"],
-            taker_side=data["taker_side"],
+            count=data.get("count", 0),
+            yes_price=data.get("yes_price"),
+            no_price=data.get("no_price"),
+            taker_side=data.get("taker_side", ""),
             created_time=parse_datetime(data["created_time"]),
         )
 

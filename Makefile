@@ -1,4 +1,4 @@
-.PHONY: analyze run index package lint format test setup
+.PHONY: analyze run index current package lint format test setup
 
 RUN = uv run main.py
 
@@ -10,6 +10,9 @@ run:
 
 index:
 	$(RUN) index
+
+current:
+	$(RUN) current
 
 package:
 	$(RUN) package

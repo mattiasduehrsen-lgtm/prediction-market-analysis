@@ -41,6 +41,14 @@ make index
 
 This opens an interactive menu to select which indexer to run. Data is saved to `data/kalshi/` and `data/polymarket/` directories. Progress is saved automatically, so you can interrupt and resume collection.
 
+For a lightweight current-data snapshot without historical backfills:
+
+```bash
+make current
+```
+
+This saves bounded snapshots to `data/current/` and overwrites them on each run instead of growing a full historical dataset. You can tune snapshot size with `CURRENT_KALSHI_MARKET_HOURS`, `CURRENT_KALSHI_RECENT_TRADES_LIMIT`, `CURRENT_POLYMARKET_MARKETS_LIMIT`, and `CURRENT_POLYMARKET_TRADES_LIMIT`.
+
 ### Running Analyses
 
 ```bash

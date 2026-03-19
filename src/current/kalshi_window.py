@@ -66,15 +66,13 @@ def collect_kalshi_window(
     pd.DataFrame(_records(trades, fetched_at)).to_parquet(trades_path, index=False)
     pd.DataFrame(_records(markets, fetched_at)).to_parquet(markets_path, index=False)
     window_path.write_text(
-        (
-            "{\n"
-            f'  "start": "{start.isoformat()}",\n'
-            f'  "end": "{now.isoformat()}",\n'
-            f'  "hours": {hours},\n'
-            f'  "trades": {len(trades)},\n'
-            f'  "markets": {len(markets)}\n'
-            "}\n"
-        )
+        "{\n"
+        f'  "start": "{start.isoformat()}",\n'
+        f'  "end": "{now.isoformat()}",\n'
+        f'  "hours": {hours},\n'
+        f'  "trades": {len(trades)},\n'
+        f'  "markets": {len(markets)}\n'
+        "}\n"
     )
 
     print(f"Saved trades to {trades_path}")

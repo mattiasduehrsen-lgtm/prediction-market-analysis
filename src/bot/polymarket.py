@@ -57,7 +57,7 @@ class StrategyConfig:
     stop_loss_pct: float = 0.20
 
     @classmethod
-    def from_env(cls) -> "StrategyConfig":
+    def from_env(cls) -> StrategyConfig:
         return cls(
             edge_threshold=_env_float("PAPER_EDGE_THRESHOLD", 0.03),
             min_recent_trades=_env_int("PAPER_MIN_RECENT_TRADES", 2),
@@ -81,7 +81,7 @@ class PortfolioConfig:
     max_positions: int = 5
 
     @classmethod
-    def from_env(cls) -> "PortfolioConfig":
+    def from_env(cls) -> PortfolioConfig:
         return cls(
             starting_cash=_env_float("PAPER_STARTING_CASH", 1000.0),
             max_position_dollars=_env_float("PAPER_MAX_POSITION_DOLLARS", 100.0),

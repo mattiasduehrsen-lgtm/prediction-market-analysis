@@ -3,14 +3,53 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
-import matplotlib
 import pandas as pd
 import pytest
 
-# Use non-interactive backend for headless CI
-matplotlib.use("Agg")
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_TEST_TMP_ROOT = _PROJECT_ROOT / "test-artifacts" / "runtime"
+_TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("TMPDIR", str(_TEST_TMP_ROOT))
+os.environ.setdefault("TEMP", str(_TEST_TMP_ROOT))
+os.environ.setdefault("TMP", str(_TEST_TMP_ROOT))
+os.environ.setdefault("MPLCONFIGDIR", str(_PROJECT_ROOT / ".cache" / "matplotlib"))
+Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+tempfile.tempdir = str(_TEST_TMP_ROOT)
+
+
+def pytest_configure() -> None:
+    if os.name == "nt":
+        import _pytest.pathlib as pytest_pathlib
+        import _pytest.tmpdir as pytest_tmpdir
+
+        original_cleanup_dead_symlinks = pytest_pathlib.cleanup_dead_symlinks
+        original_rm_rf = pytest_pathlib.rm_rf
+
+        def _safe_cleanup_dead_symlinks(root: Path) -> None:
+            try:
+                original_cleanup_dead_symlinks(root)
+            except PermissionError:
+                return
+
+        def _safe_rm_rf(path: Path) -> None:
+            try:
+                original_rm_rf(path)
+            except PermissionError:
+                return
+
+        pytest_pathlib.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
+        pytest_tmpdir.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
+        pytest_pathlib.rm_rf = _safe_rm_rf
+        pytest_tmpdir.rm_rf = _safe_rm_rf
+
+    import matplotlib
+
+    # Use non-interactive backend for headless CI
+    matplotlib.use("Agg")
 
 
 # -- Helper functions to build fixture DataFrames --

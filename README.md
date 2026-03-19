@@ -14,6 +14,7 @@ Currently supported features:
 - Trade history collection via API and blockchain
 - Parquet-based storage with automatic progress saving
 - Extensible analysis script framework
+- Polymarket paper-trading bot skeleton using current snapshots
 
 ## Installation & Usage
 
@@ -48,6 +49,28 @@ make current
 ```
 
 This saves bounded snapshots to `data/current/` and overwrites them on each run instead of growing a full historical dataset. You can tune snapshot size with `CURRENT_KALSHI_MARKET_HOURS`, `CURRENT_KALSHI_RECENT_TRADES_LIMIT`, `CURRENT_POLYMARKET_MARKETS_LIMIT`, and `CURRENT_POLYMARKET_TRADES_LIMIT`.
+
+### Paper Trading
+
+Run the Polymarket paper-trading bot on the current snapshot:
+
+```bash
+make paper
+```
+
+This reads `data/current/polymarket/{markets,trades}.{csv,parquet}` and writes scored signals, simulated orders, positions, and a summary to `output/paper_trading/polymarket/`.
+
+To run a short timed loop instead of a single pass:
+
+```bash
+make paper-loop 3 5
+```
+
+This runs 3 iterations with 5 seconds between them. The loop and one-shot runs both maintain a persistent paper portfolio by reloading the prior summary and positions from `output/paper_trading/polymarket/`.
+
+Every new simulated entry/exit is also appended to `output/paper_trading/polymarket/ledger.csv`, which serves as the durable paper trade ledger across runs.
+
+The default strategy looks for active outcomes where recent trade VWAP is above the current market price, recent flow is buy-heavy, and the market has enough liquidity. You can tune it with environment variables such as `PAPER_EDGE_THRESHOLD`, `PAPER_LOOKBACK_SECONDS`, `PAPER_MAX_POSITION_DOLLARS`, and `PAPER_MAX_POSITIONS`.
 
 ### Running Analyses
 

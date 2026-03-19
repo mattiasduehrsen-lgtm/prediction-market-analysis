@@ -1,4 +1,4 @@
-.PHONY: analyze run index current package lint format test setup
+.PHONY: analyze run index current package paper paper-loop lint format test setup
 
 RUN = uv run main.py
 
@@ -13,6 +13,12 @@ index:
 
 current:
 	$(RUN) current
+
+paper:
+	$(RUN) paper
+
+paper-loop:
+	$(RUN) paper-loop $(filter-out $@,$(MAKECMDGOALS))
 
 package:
 	$(RUN) package

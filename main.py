@@ -8,6 +8,7 @@ from simple_term_menu import TerminalMenu
 from src.common.analysis import Analysis
 from src.common.indexer import Indexer
 from src.current.collector import collect_current_data
+from src.bot.polymarket import PaperTradingBot
 from src.common.util import package_data
 from src.common.util.strings import snake_to_title
 
@@ -139,10 +140,30 @@ def current():
     sys.exit(0)
 
 
+def paper():
+    """Run the Polymarket paper-trading bot once."""
+    saved = PaperTradingBot().run_once()
+    print("Paper-trading run complete.")
+    for name, path in saved.items():
+        print(f"  {name}: {path}")
+    sys.exit(0)
+
+
+def paper_loop():
+    """Run the Polymarket paper-trading bot on a timer."""
+    iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    saved = PaperTradingBot().run_loop(iterations=iterations, sleep_seconds=sleep_seconds)
+    print("Paper-trading loop complete.")
+    for name, path in saved.items():
+        print(f"  {name}: {path}")
+    sys.exit(0)
+
+
 def main():
     if len(sys.argv) < 2:
         print("\nUsage: uv run main.py <command>")
-        print("Commands: analyze, index, current, package")
+        print("Commands: analyze, index, current, package, paper, paper-loop")
         sys.exit(0)
 
     command = sys.argv[1]
@@ -164,8 +185,16 @@ def main():
         current()
         sys.exit(0)
 
+    if command == "paper":
+        paper()
+        sys.exit(0)
+
+    if command == "paper-loop":
+        paper_loop()
+        sys.exit(0)
+
     print(f"Unknown command: {command}")
-    print("Commands: analyze, index, current, package")
+    print("Commands: analyze, index, current, package, paper, paper-loop")
     sys.exit(1)
 
 

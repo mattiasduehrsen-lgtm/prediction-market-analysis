@@ -68,6 +68,39 @@ class KalshiClient:
 
         return all_trades
 
+    def get_trades(
+        self,
+        limit: int = 1000,
+        verbose: bool = True,
+        min_ts: Optional[int] = None,
+        max_ts: Optional[int] = None,
+    ) -> list[Trade]:
+        all_trades = []
+        cursor = None
+
+        while True:
+            params = {"limit": limit}
+            if cursor:
+                params["cursor"] = cursor
+            if min_ts is not None:
+                params["min_ts"] = min_ts
+            if max_ts is not None:
+                params["max_ts"] = max_ts
+
+            data = self._get("/markets/trades", params=params)
+
+            trades = [Trade.from_dict(t) for t in data.get("trades", [])]
+            if trades:
+                all_trades.extend(trades)
+                if verbose:
+                    print(f"Fetched {len(trades)} trades (total: {len(all_trades)})")
+
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+
+        return all_trades
+
     def list_markets(self, limit: int = 20, **kwargs) -> list[Market]:
         params = {"limit": limit, **kwargs}
         data = self._get("/markets", params=params)

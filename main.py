@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-from simple_term_menu import TerminalMenu
+PROJECT_ROOT = Path(__file__).resolve().parent
+MPLCONFIGDIR = PROJECT_ROOT / ".cache" / "matplotlib"
+MPLCONFIGDIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(MPLCONFIGDIR))
 
 from src.bot.polymarket import PaperTradingBot
 from src.common.analysis import Analysis
@@ -15,6 +19,8 @@ from src.current.collector import collect_current_data
 
 def analyze(name: str | None = None):
     """Run analysis by name or show interactive menu."""
+    from simple_term_menu import TerminalMenu
+
     analyses = Analysis.load()
 
     if not analyses:
@@ -96,6 +102,8 @@ def analyze(name: str | None = None):
 
 def index():
     """Interactive indexer selection menu."""
+    from simple_term_menu import TerminalMenu
+
     indexers = Indexer.load()
 
     if not indexers:

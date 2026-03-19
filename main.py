@@ -5,12 +5,12 @@ from pathlib import Path
 
 from simple_term_menu import TerminalMenu
 
+from src.bot.polymarket import PaperTradingBot
 from src.common.analysis import Analysis
 from src.common.indexer import Indexer
-from src.current.collector import collect_current_data
-from src.bot.polymarket import PaperTradingBot
 from src.common.util import package_data
 from src.common.util.strings import snake_to_title
+from src.current.collector import collect_current_data
 
 
 def analyze(name: str | None = None):

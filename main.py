@@ -4,22 +4,22 @@ import os
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-MPLCONFIGDIR = PROJECT_ROOT / ".cache" / "matplotlib"
-MPLCONFIGDIR.mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("MPLCONFIGDIR", str(MPLCONFIGDIR))
 
-from src.bot.polymarket import PaperTradingBot
-from src.common.analysis import Analysis
-from src.common.indexer import Indexer
-from src.common.util import package_data
-from src.common.util.strings import snake_to_title
-from src.current.collector import collect_current_data
+def _configure_matplotlib_cache() -> None:
+    project_root = Path(__file__).resolve().parent
+    mpl_config_dir = project_root / ".cache" / "matplotlib"
+    mpl_config_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(mpl_config_dir))
 
 
 def analyze(name: str | None = None):
     """Run analysis by name or show interactive menu."""
+    _configure_matplotlib_cache()
+
     from simple_term_menu import TerminalMenu
+
+    from src.common.analysis import Analysis
+    from src.common.util.strings import snake_to_title
 
     analyses = Analysis.load()
 
@@ -104,6 +104,9 @@ def index():
     """Interactive indexer selection menu."""
     from simple_term_menu import TerminalMenu
 
+    from src.common.indexer import Indexer
+    from src.common.util.strings import snake_to_title
+
     indexers = Indexer.load()
 
     if not indexers:
@@ -138,18 +141,28 @@ def index():
 
 def package():
     """Package the data directory into a zstd-compressed tar archive."""
+    from src.common.util import package_data
+
     success = package_data()
     sys.exit(0 if success else 1)
 
 
 def current():
     """Collect a lightweight snapshot of current market data."""
+    _configure_matplotlib_cache()
+
+    from src.current.collector import collect_current_data
+
     collect_current_data()
     sys.exit(0)
 
 
 def paper():
     """Run the Polymarket paper-trading bot once."""
+    _configure_matplotlib_cache()
+
+    from src.bot.polymarket import PaperTradingBot
+
     saved = PaperTradingBot().run_once()
     print("Paper-trading run complete.")
     for name, path in saved.items():
@@ -159,6 +172,10 @@ def paper():
 
 def paper_loop():
     """Run the Polymarket paper-trading bot on a timer."""
+    _configure_matplotlib_cache()
+
+    from src.bot.polymarket import PaperTradingBot
+
     iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 3
     sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 5
     saved = PaperTradingBot().run_loop(iterations=iterations, sleep_seconds=sleep_seconds)

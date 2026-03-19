@@ -1035,7 +1035,7 @@ class VolumeMomentumStrategy:
         ) / merged["peak_price"].clip(lower=1e-9)
 
         merged["exit_reason"] = ""
-        merged.loc[(merged["closed"] == True) | (merged["active"] == False), "exit_reason"] = "market_inactive"
+        merged.loc[merged["closed"] | ~merged["active"], "exit_reason"] = "market_inactive"
         merged.loc[merged["holding_seconds"] >= cfg.max_holding_seconds, "exit_reason"] = "max_hold"
         merged.loc[merged["edge"] <= cfg.exit_edge_threshold, "exit_reason"] = "edge_reversal"
         merged.loc[merged["return_pct"] >= cfg.take_profit_pct, "exit_reason"] = "take_profit"

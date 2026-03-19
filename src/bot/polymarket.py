@@ -184,9 +184,9 @@ class PolymarketSnapshot:
                 last_trade_price=("price", "last"),
                 last_trade_at=("timestamp", "max"),
             ).reset_index()
-            recent_agg["recent_vwap"] = recent_agg["weighted_price"] / recent_agg[
-                "recent_volume_shares"
-            ].clip(lower=1e-9)
+            recent_agg["recent_vwap"] = recent_agg["weighted_price"] / recent_agg["recent_volume_shares"].clip(
+                lower=1e-9
+            )
             recent_agg = recent_agg.drop(columns=["weighted_notional", "weighted_price"])
 
         merged = outcomes_df.merge(
@@ -269,9 +269,7 @@ class VolumeMomentumStrategy:
         merged["market_price"] = merged["market_price"].fillna(merged["current_price"])
         merged["edge"] = merged["edge"].fillna(0.0)
         merged["score"] = merged["score"].fillna(0.0)
-        merged["return_pct"] = (
-            (merged["market_price"] - merged["entry_price"]) / merged["entry_price"].clip(lower=1e-9)
-        )
+        merged["return_pct"] = (merged["market_price"] - merged["entry_price"]) / merged["entry_price"].clip(lower=1e-9)
 
         merged["exit_reason"] = ""
         merged.loc[merged["edge"] <= cfg.exit_edge_threshold, "exit_reason"] = "edge_reversal"
@@ -320,10 +318,7 @@ class PaperPortfolio:
             return
 
         remaining_positions = []
-        exits = {
-            (row["condition_id"], int(row["outcome_index"])): row
-            for _, row in exit_signals.iterrows()
-        }
+        exits = {(row["condition_id"], int(row["outcome_index"])): row for _, row in exit_signals.iterrows()}
 
         for position in self.positions:
             key = (position["condition_id"], int(position["outcome_index"]))

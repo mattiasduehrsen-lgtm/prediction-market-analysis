@@ -4,11 +4,14 @@ import json
 import math
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
+
+from src.indexers.polymarket.client import PolymarketClient
 
 
 def _env_float(name: str, default: float) -> float:
@@ -29,6 +32,26 @@ def _load_table(path: Path) -> pd.DataFrame:
     if path.suffix == ".csv":
         return pd.read_csv(path)
     return pd.read_parquet(path)
+
+
+def _records(items: list[Any], fetched_at: datetime) -> list[dict[str, Any]]:
+    records = []
+    for item in items:
+        if is_dataclass(item):
+            record = asdict(item)
+        elif isinstance(item, dict):
+            record = dict(item)
+        else:
+            record = vars(item)
+
+        record["_fetched_at"] = fetched_at
+        records.append(record)
+    return records
+
+
+def _write_snapshot(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(records).to_parquet(path, index=False)
 
 
 def _select_existing(base_dir: Path, stem: str) -> Path:
@@ -109,7 +132,30 @@ class PolymarketSnapshot:
     def __init__(self, data_dir: Path | str = "data/current/polymarket"):
         self.data_dir = Path(data_dir)
 
+    def ensure_snapshot(self) -> None:
+        try:
+            _select_existing(self.data_dir, "markets")
+            _select_existing(self.data_dir, "trades")
+            return
+        except FileNotFoundError:
+            pass
+
+        fetched_at = datetime.utcnow()
+        markets_limit = _env_int("CURRENT_POLYMARKET_MARKETS_LIMIT", 500)
+        trades_limit = _env_int("CURRENT_POLYMARKET_TRADES_LIMIT", 500)
+
+        print("Polymarket snapshot missing, fetching current data first...")
+        with PolymarketClient() as client:
+            markets = client.get_markets(limit=markets_limit, closed=False)
+            trades = client.get_trades(limit=trades_limit)
+
+        _write_snapshot(self.data_dir / "markets.parquet", _records(markets, fetched_at))
+        _write_snapshot(self.data_dir / "trades.parquet", _records(trades, fetched_at))
+        print(f"Saved Polymarket markets snapshot: {len(markets)} rows")
+        print(f"Saved Polymarket trades snapshot: {len(trades)} rows")
+
     def load(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        self.ensure_snapshot()
         markets = _load_table(_select_existing(self.data_dir, "markets"))
         trades = _load_table(_select_existing(self.data_dir, "trades"))
         return markets, trades

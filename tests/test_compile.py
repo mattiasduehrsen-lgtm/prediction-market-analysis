@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,12 @@ def _discover_modules() -> list[str]:
 
 
 ALL_MODULES = _discover_modules()
+
+
+def _load_indexers_for_tests() -> list[type[Indexer]]:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"websockets\.legacy is deprecated", category=DeprecationWarning)
+        return Indexer.load()
 
 
 # -- Import tests ------------------------------------------------------------
@@ -60,11 +67,11 @@ def test_analysis_instantiation(cls: type[Analysis]):
 
 def test_indexer_discovery():
     """Indexer.load() should find at least one concrete indexer."""
-    indexers = Indexer.load()
+    indexers = _load_indexers_for_tests()
     assert len(indexers) > 0, "No indexers discovered in src/indexers/"
 
 
-@pytest.mark.parametrize("cls", Indexer.load(), ids=lambda c: c.__name__)
+@pytest.mark.parametrize("cls", _load_indexers_for_tests(), ids=lambda c: c.__name__)
 def test_indexer_instantiation(cls: type[Indexer]):
     """Every discovered indexer should instantiate with default arguments."""
     instance = cls()

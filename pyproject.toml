@@ -34,6 +34,11 @@ dev = [
 pythonpath = ["."]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
 addopts = "-p test_runtime_plugin -p no:cacheprovider"
+filterwarnings = [
+    "ignore:websockets\\.legacy is deprecated:DeprecationWarning",
+    "ignore:Precision loss occurred in moment calculation due to catastrophic cancellation\\.:RuntimeWarning",
+    "ignore:Animation was deleted without rendering anything\\.:UserWarning",
+]
 
 [tool.ruff]
 target-version = "py39"

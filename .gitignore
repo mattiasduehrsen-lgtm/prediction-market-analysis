@@ -31,3 +31,8 @@ output
 .cache
 test-artifacts
 runtime-artifacts
+runtime-probe-a
+scratchpad-probe
+test-artifacts-probe
+.tmppytest
+pytest-cache-files-*

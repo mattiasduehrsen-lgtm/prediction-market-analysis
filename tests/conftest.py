@@ -3,53 +3,47 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import uuid
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_TEST_TMP_ROOT = _PROJECT_ROOT / "test-artifacts" / "runtime"
-_TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("TMPDIR", str(_TEST_TMP_ROOT))
-os.environ.setdefault("TEMP", str(_TEST_TMP_ROOT))
-os.environ.setdefault("TMP", str(_TEST_TMP_ROOT))
-os.environ.setdefault("MPLCONFIGDIR", str(_PROJECT_ROOT / ".cache" / "matplotlib"))
-Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
-tempfile.tempdir = str(_TEST_TMP_ROOT)
+
+class LocalTempPathFactory:
+    def __init__(self, base_dir: Path) -> None:
+        self._base_dir = base_dir
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+
+    def mktemp(self, basename: str) -> Path:
+        while True:
+            candidate = self._base_dir / f"{basename}-{uuid.uuid4().hex[:8]}"
+            try:
+                candidate.mkdir(parents=True, exist_ok=False)
+                return candidate
+            except FileExistsError:
+                continue
+
+    def getbasetemp(self) -> Path:
+        return self._base_dir
 
 
 def pytest_configure() -> None:
-    if os.name == "nt":
-        import _pytest.pathlib as pytest_pathlib
-        import _pytest.tmpdir as pytest_tmpdir
-
-        original_cleanup_dead_symlinks = pytest_pathlib.cleanup_dead_symlinks
-        original_rm_rf = pytest_pathlib.rm_rf
-
-        def _safe_cleanup_dead_symlinks(root: Path) -> None:
-            try:
-                original_cleanup_dead_symlinks(root)
-            except PermissionError:
-                return
-
-        def _safe_rm_rf(path: Path) -> None:
-            try:
-                original_rm_rf(path)
-            except PermissionError:
-                return
-
-        pytest_pathlib.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
-        pytest_tmpdir.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
-        pytest_pathlib.rm_rf = _safe_rm_rf
-        pytest_tmpdir.rm_rf = _safe_rm_rf
-
     import matplotlib
 
     # Use non-interactive backend for headless CI
     matplotlib.use("Agg")
+
+
+@pytest.fixture(scope="session")
+def tmp_path_factory() -> LocalTempPathFactory:
+    base_dir = Path(__file__).resolve().parents[1] / "runtime-artifacts" / "pytest"
+    return LocalTempPathFactory(base_dir)
+
+
+@pytest.fixture
+def tmp_path(tmp_path_factory: LocalTempPathFactory, request: pytest.FixtureRequest) -> Path:
+    return tmp_path_factory.mktemp(request.node.name)
 
 
 # -- Helper functions to build fixture DataFrames --

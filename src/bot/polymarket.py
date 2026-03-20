@@ -220,8 +220,7 @@ def _infer_market_category(value: str) -> str:
     if any(term in normalized for term in ["election", "vote", "senate", "house", "president", "prime minister"]):
         return "politics"
     if any(
-        term in normalized
-        for term in ["cpi", "inflation", "fed", "rate", "gdp", "unemployment", "payroll", "economy"]
+        term in normalized for term in ["cpi", "inflation", "fed", "rate", "gdp", "unemployment", "payroll", "economy"]
     ):
         return "economics"
     if any(
@@ -268,10 +267,14 @@ def _cross_market_match_score(
     kalshi_terms = _extract_key_terms(kalshi_question)
     poly_numbers = _extract_numeric_tokens(poly_question)
     kalshi_numbers = _extract_numeric_tokens(kalshi_question)
-    number_score = 1.0 if not poly_numbers and not kalshi_numbers else (
-        len(poly_numbers & kalshi_numbers) / max(min(len(poly_numbers), len(kalshi_numbers)), 1)
-        if poly_numbers and kalshi_numbers
-        else 0.0
+    number_score = (
+        1.0
+        if not poly_numbers and not kalshi_numbers
+        else (
+            len(poly_numbers & kalshi_numbers) / max(min(len(poly_numbers), len(kalshi_numbers)), 1)
+            if poly_numbers and kalshi_numbers
+            else 0.0
+        )
     )
     poly_category = _infer_market_category(poly_question)
     kalshi_category = _infer_market_category(kalshi_question)
@@ -345,7 +348,9 @@ def _cross_market_match_score(
             else 0.0
         )
     lexical_entity_score = (
-        len(poly_terms & kalshi_terms) / max(min(len(poly_terms), len(kalshi_terms)), 1) if poly_terms and kalshi_terms else 0.0
+        len(poly_terms & kalshi_terms) / max(min(len(poly_terms), len(kalshi_terms)), 1)
+        if poly_terms and kalshi_terms
+        else 0.0
     )
     entity_score = max(lexical_entity_score, alias_entity_score)
     composite = (
@@ -721,6 +726,7 @@ class KalshiSnapshot:
             return pd.DataFrame()
 
         frame = markets.copy()
+
         def _series(column: str, default: Any) -> pd.Series:
             if column in frame.columns:
                 return frame[column]
@@ -736,13 +742,13 @@ class KalshiSnapshot:
         last_price = pd.to_numeric(_series("last_price", math.nan), errors="coerce") / 100.0
         frame["kalshi_yes_price"] = yes_ask.fillna(yes_bid).fillna(last_price)
         frame["kalshi_no_price"] = 1 - frame["kalshi_yes_price"]
-        frame["kalshi_mid_price"] = (
-            pd.concat([yes_bid, yes_ask], axis=1).mean(axis=1).fillna(frame["kalshi_yes_price"])
-        )
+        frame["kalshi_mid_price"] = pd.concat([yes_bid, yes_ask], axis=1).mean(axis=1).fillna(frame["kalshi_yes_price"])
         frame["kalshi_question"] = _series("title", "").fillna("").astype(str)
         frame["kalshi_market_norm"] = frame["kalshi_question"].map(_normalize_text)
         frame["kalshi_category"] = frame["kalshi_question"].map(_infer_market_category)
-        frame["kalshi_key_terms"] = frame["kalshi_question"].map(lambda value: " ".join(sorted(_extract_key_terms(value))))
+        frame["kalshi_key_terms"] = frame["kalshi_question"].map(
+            lambda value: " ".join(sorted(_extract_key_terms(value)))
+        )
         frame["kalshi_yes_label"] = _series("yes_sub_title", "Yes").fillna("Yes").astype(str)
         frame["kalshi_no_label"] = _series("no_sub_title", "No").fillna("No").astype(str)
         frame["kalshi_volume"] = pd.to_numeric(_series("volume", 0.0), errors="coerce").fillna(0.0)
@@ -758,16 +764,29 @@ class KalshiSnapshot:
         trades = trades.copy()
         trades["created_time"] = pd.to_datetime(trades["created_time"], utc=True, errors="coerce")
         trades = trades.dropna(subset=["created_time"])
-        recent = trades[trades["created_time"] >= latest_ts - pd.Timedelta(seconds=StrategyConfig.from_env().lookback_seconds)]
+        recent = trades[
+            trades["created_time"] >= latest_ts - pd.Timedelta(seconds=StrategyConfig.from_env().lookback_seconds)
+        ]
         if recent.empty:
             frame["kalshi_buy_share"] = 0.5
             frame["kalshi_recent_trade_count"] = 0
             return frame
 
-        recent["yes_price_norm"] = pd.to_numeric(recent["yes_price"] if "yes_price" in recent.columns else math.nan, errors="coerce") / 100.0
+        recent["yes_price_norm"] = (
+            pd.to_numeric(recent["yes_price"] if "yes_price" in recent.columns else math.nan, errors="coerce") / 100.0
+        )
         recent["buy_yes_flag"] = (
-            recent["taker_side"] if "taker_side" in recent.columns else pd.Series([""] * len(recent), index=recent.index)
-        ).fillna("").astype(str).str.lower().eq("yes").astype(float)
+            (
+                recent["taker_side"]
+                if "taker_side" in recent.columns
+                else pd.Series([""] * len(recent), index=recent.index)
+            )
+            .fillna("")
+            .astype(str)
+            .str.lower()
+            .eq("yes")
+            .astype(float)
+        )
         trade_agg = (
             recent.groupby("ticker", dropna=False)
             .agg(
@@ -835,7 +854,9 @@ def _merge_cross_market_data(
         price_gap = comparable_price - float(row["market_price"]) if pd.notna(comparable_price) else math.nan
         confirms = pd.notna(price_gap) and price_gap >= cfg.kalshi_price_gap_threshold
         disagrees = pd.notna(price_gap) and price_gap <= -cfg.kalshi_price_gap_threshold
-        alignment_score = 0.0 if pd.isna(price_gap) else _clamp(abs(price_gap) / max(cfg.kalshi_price_gap_threshold * 2, 1e-9))
+        alignment_score = (
+            0.0 if pd.isna(price_gap) else _clamp(abs(price_gap) / max(cfg.kalshi_price_gap_threshold * 2, 1e-9))
+        )
         support = 0.0
         if confirms:
             support = cfg.kalshi_confirmation_bonus * alignment_score
@@ -938,9 +959,7 @@ class VolumeMomentumStrategy:
 
         edge_component = (signals["edge"] / max(cfg.edge_threshold * 2, 1e-9)).apply(_clamp)
         ratio_component = (signals["edge_ratio"] / max(cfg.edge_ratio_threshold * 2, 1e-9)).apply(_clamp)
-        flow_component = ((signals["buy_share"] - cfg.min_buy_share) / max(1 - cfg.min_buy_share, 1e-9)).apply(
-            _clamp
-        )
+        flow_component = ((signals["buy_share"] - cfg.min_buy_share) / max(1 - cfg.min_buy_share, 1e-9)).apply(_clamp)
         notional_component = (
             signals["recent_notional"].apply(lambda x: math.log1p(max(x, 0)))
             / max(math.log1p(cfg.min_recent_notional * 8), 1e-9)
@@ -956,10 +975,8 @@ class VolumeMomentumStrategy:
             + 0.20 * notional_component
             + 0.10 * freshness_component
         )
-        persistence_boost = ((signals["signal_runs"] - 1).clip(lower=0, upper=3) * 0.02)
-        stale_penalty = (
-            ((signals["signal_age_seconds"] - 6 * 3600).clip(lower=0) / (24 * 3600)).clip(upper=0.15)
-        )
+        persistence_boost = (signals["signal_runs"] - 1).clip(lower=0, upper=3) * 0.02
+        stale_penalty = ((signals["signal_age_seconds"] - 6 * 3600).clip(lower=0) / (24 * 3600)).clip(upper=0.15)
         signals["conviction"] = signals["conviction"] + persistence_boost - stale_penalty
         signals["conviction"] = (signals["conviction"] + signals["cross_market_support"]).clip(lower=0.0, upper=1.0)
         signals["score"] = signals["score"] * (1 + signals["cross_market_support"])
@@ -981,9 +998,7 @@ class VolumeMomentumStrategy:
     def generate_signals(self, scored_df: pd.DataFrame) -> pd.DataFrame:
         if scored_df.empty:
             return scored_df
-        buys = scored_df[scored_df["signal"] == "buy"].nlargest(
-            self.config.max_candidates, ["conviction", "score"]
-        )
+        buys = scored_df[scored_df["signal"] == "buy"].nlargest(self.config.max_candidates, ["conviction", "score"])
         return buys.reset_index(drop=True)
 
     def generate_exit_signals(
@@ -1025,14 +1040,12 @@ class VolumeMomentumStrategy:
         merged["recent_notional"] = merged["recent_notional"].fillna(0.0)
         merged["closed"] = merged["closed"].fillna(False)
         merged["active"] = merged["active"].fillna(True)
-        merged["return_pct"] = (merged["market_price"] - merged["entry_price"]) / merged["entry_price"].clip(
-            lower=1e-9
-        )
+        merged["return_pct"] = (merged["market_price"] - merged["entry_price"]) / merged["entry_price"].clip(lower=1e-9)
         merged["opened_at"] = pd.to_datetime(merged["opened_at"], utc=True, errors="coerce")
         merged["holding_seconds"] = (run_at - merged["opened_at"]).dt.total_seconds().fillna(0.0)
-        merged["drawdown_from_peak_pct"] = (
-            merged["market_price"] - merged["peak_price"]
-        ) / merged["peak_price"].clip(lower=1e-9)
+        merged["drawdown_from_peak_pct"] = (merged["market_price"] - merged["peak_price"]) / merged["peak_price"].clip(
+            lower=1e-9
+        )
 
         merged["exit_reason"] = ""
         merged.loc[merged["closed"] | ~merged["active"], "exit_reason"] = "market_inactive"
@@ -1492,12 +1505,12 @@ class PaperTradingBot:
         prior = self._load_signal_history()
         prior_map: dict[tuple[str, int], dict[str, Any]] = {}
         if not prior.empty:
-            prior_map = {
-                (str(row["condition_id"]), int(row["outcome_index"])): row for _, row in prior.iterrows()
-            }
+            prior_map = {(str(row["condition_id"]), int(row["outcome_index"])): row for _, row in prior.iterrows()}
 
         records: list[dict[str, Any]] = []
-        buy_signals = scored_df[scored_df["signal"] == "buy"].copy() if "signal" in scored_df.columns else pd.DataFrame()
+        buy_signals = (
+            scored_df[scored_df["signal"] == "buy"].copy() if "signal" in scored_df.columns else pd.DataFrame()
+        )
         for _, row in buy_signals.iterrows():
             key = (str(row["condition_id"]), int(row["outcome_index"]))
             previous = prior_map.get(key)
@@ -1647,7 +1660,9 @@ class PaperTradingBot:
                 "realized_pnl": closed["realized_pnl_exit"],
                 "return_pct": closed["realized_pnl_exit"] / closed["notional_entry"].clip(lower=1e-9),
                 "signal_runs": closed["signal_runs_entry"],
-                "entry_timing_bucket": closed["signal_runs_entry"].apply(lambda value: _entry_timing_bucket(int(value))),
+                "entry_timing_bucket": closed["signal_runs_entry"].apply(
+                    lambda value: _entry_timing_bucket(int(value))
+                ),
                 "signal_age_seconds": closed["signal_age_seconds_entry"],
                 "signal_persistence_bucket": closed["signal_persistence_bucket_entry"],
                 "kalshi_match_score": closed["kalshi_match_score_entry"],

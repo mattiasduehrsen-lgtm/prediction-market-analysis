@@ -262,9 +262,9 @@ def test_paper_bot_loop_appends_no_duplicate_orders(tmp_path: Path):
     ledger = pd.read_csv(saved["ledger"])
     positions = pd.read_csv(saved["positions"])
 
-    assert len(orders) == 1
-    assert set(orders["side"]) == {"buy"}
+    assert orders.empty
     assert len(ledger) == 1
+    assert set(ledger["side"]) == {"buy"}
     assert len(positions) == 1
 
 

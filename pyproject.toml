@@ -33,7 +33,7 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
-addopts = "--basetemp=test-artifacts/pytest -p no:cacheprovider"
+addopts = "-p test_runtime_plugin -p no:cacheprovider"
 
 [tool.ruff]
 target-version = "py39"

@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polymarket Bot Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4a5568;
+      display: inline-block;
+    }
+    .status-dot.running { background: #48bb78; box-shadow: 0 0 6px #48bb78; }
+
+    #status-label { font-size: 13px; color: #a0aec0; }
+
+    .btn {
+      padding: 8px 18px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-start { background: #48bb78; color: #000; }
+    .btn-stop  { background: #fc8181; color: #000; }
+    .btn-refresh { background: #2d3148; color: #e2e8f0; }
+
+    .last-updated {
+      font-size: 11px;
+      color: #4a5568;
+      margin-top: 2px;
+      text-align: right;
+    }
+
+    main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
+
+    /* Stat cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .card-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #718096;
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .card-value.positive { color: #68d391; }
+    .card-value.negative { color: #fc8181; }
+    .card-sub {
+      font-size: 12px;
+      color: #718096;
+      margin-top: 4px;
+    }
+
+    /* Chart */
+    .chart-box {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 28px;
+    }
+
+    .chart-box h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #a0aec0;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* Tables */
+    .section { margin-bottom: 28px; }
+
+    .section h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #a0aec0;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .table-wrap {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      background: #13151f;
+      color: #718096;
+      font-weight: 600;
+      padding: 12px 16px;
+      text-align: left;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.6px;
+    }
+
+    tbody tr { border-top: 1px solid #2d3148; }
+    tbody tr:hover { background: #1f2235; }
+    tbody td { padding: 12px 16px; color: #cbd5e0; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .pill-yes  { background: #1a3a2a; color: #68d391; }
+    .pill-no   { background: #3a1a1a; color: #fc8181; }
+    .pill-win  { background: #1a3a2a; color: #68d391; }
+    .pill-loss { background: #3a1a1a; color: #fc8181; }
+
+    .positive-val { color: #68d391; }
+    .negative-val { color: #fc8181; }
+
+    .pill-buy  { background: #1a2a3a; color: #63b3ed; }
+    .pill-hold { background: #2a2a1a; color: #d69e2e; }
+
+    .momentum-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .momentum-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: #68d391;
+      min-width: 2px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #4a5568;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Polymarket Bot</h1>
+  <div class="header-right">
+    <span class="status-dot" id="dot"></span>
+    <span id="status-label">Checking...</span>
+    <button class="btn btn-start" id="btn-start" onclick="startBot()">Start Bot</button>
+    <button class="btn btn-stop"  id="btn-stop"  onclick="stopBot()" style="display:none">Stop Bot</button>
+    <button class="btn btn-refresh" onclick="refresh()">Refresh</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Stat cards -->
+  <div class="cards" id="cards">
+    <div class="card"><div class="card-label">Equity</div><div class="card-value" id="c-equity">—</div></div>
+    <div class="card"><div class="card-label">Realized P&L</div><div class="card-value" id="c-realized">—</div></div>
+    <div class="card"><div class="card-label">Unrealized P&L</div><div class="card-value" id="c-unrealized">—</div></div>
+    <div class="card"><div class="card-label">Open Positions</div><div class="card-value" id="c-open">—</div></div>
+    <div class="card"><div class="card-label">Closed Trades</div><div class="card-value" id="c-closed">—</div><div class="card-sub" id="c-winrate"></div></div>
+    <div class="card"><div class="card-label">Cash Available</div><div class="card-value" id="c-cash">—</div></div>
+  </div>
+
+  <!-- Equity chart -->
+  <div class="chart-box">
+    <h2>Equity Over Time</h2>
+    <div class="chart-wrap">
+      <canvas id="equity-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Current signals -->
+  <div class="section">
+    <h2>Current Signals</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Outcome</th>
+            <th>Price</th>
+            <th>Edge</th>
+            <th>Momentum</th>
+            <th>Conviction</th>
+            <th>Signal</th>
+          </tr>
+        </thead>
+        <tbody id="signals-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Open positions -->
+  <div class="section">
+    <h2>Open Positions</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Outcome</th>
+            <th>Entry</th>
+            <th>Current</th>
+            <th>Shares</th>
+            <th>Unrealized P&L</th>
+            <th>Opened</th>
+          </tr>
+        </thead>
+        <tbody id="positions-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Closed trades -->
+  <div class="section">
+    <h2>Closed Trades</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Outcome</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>P&L</th>
+            <th>Exit Reason</th>
+            <th>Held</th>
+          </tr>
+        </thead>
+        <tbody id="closed-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="last-updated" id="last-updated"></div>
+  <div class="last-updated" id="next-refresh"></div>
+
+</main>
+
+<script>
+  let equityChart = null;
+
+  function fmt(n, decimals = 2) {
+    if (n == null) return "—";
+    return Number(n).toFixed(decimals);
+  }
+
+  function fmtDollars(n) {
+    if (n == null) return "—";
+    const v = Number(n);
+    return (v >= 0 ? "+" : "") + "$" + Math.abs(v).toFixed(2);
+  }
+
+  function fmtHours(seconds) {
+    if (!seconds) return "—";
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  function colorClass(n) {
+    if (n == null) return "";
+    return Number(n) >= 0 ? "positive-val" : "negative-val";
+  }
+
+  async function loadSummary() {
+    const s = await fetch("/api/summary").then(r => r.json());
+    const equity = Number(s.equity || 1000);
+    const started = 1000;
+    const pct = ((equity - started) / started * 100).toFixed(2);
+
+    document.getElementById("c-equity").textContent = "$" + fmt(equity);
+    document.getElementById("c-equity").className = "card-value";
+
+    const realized = Number(s.realized_pnl || 0);
+    const unrealized = Number(s.unrealized_pnl || 0);
+
+    const rEl = document.getElementById("c-realized");
+    rEl.textContent = fmtDollars(realized);
+    rEl.className = "card-value " + (realized >= 0 ? "positive" : "negative");
+
+    const uEl = document.getElementById("c-unrealized");
+    uEl.textContent = fmtDollars(unrealized);
+    uEl.className = "card-value " + (unrealized >= 0 ? "positive" : "negative");
+
+    document.getElementById("c-open").textContent = s.open_positions ?? "0";
+    document.getElementById("c-cash").textContent = "$" + fmt(s.cash);
+
+    const closed = s.closed_trades ?? 0;
+    const wins = s.wins ?? 0;
+    const losses = s.losses ?? 0;
+    const winrate = closed > 0 ? (wins / closed * 100).toFixed(0) : "—";
+    document.getElementById("c-closed").textContent = closed;
+    document.getElementById("c-winrate").textContent = closed > 0
+      ? `${wins}W / ${losses}L · ${winrate}% win rate` : "No closed trades yet";
+  }
+
+  async function loadSignals() {
+    const rows = await fetch("/api/signals").then(r => r.json());
+    const body = document.getElementById("signals-body");
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-state">No signals yet — waiting for next cycle</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(r => {
+      const outcome = (r.outcome || "").toUpperCase();
+      const pillClass = outcome === "YES" ? "pill-yes" : "pill-no";
+      const signal = r.signal || "hold";
+      const sigClass = signal === "buy" ? "pill-buy" : "pill-hold";
+      const momentum = Number(r.price_momentum || 0);
+      const barWidth = Math.min(Math.round(momentum * 1000), 80);
+      const conviction = Number(r.conviction || 0);
+      return `<tr>
+        <td>${r.question || "—"}</td>
+        <td><span class="pill ${pillClass}">${outcome}</span></td>
+        <td>${fmt(r.market_price)}</td>
+        <td class="${colorClass(r.edge)}">${fmt(r.edge, 3)}</td>
+        <td>
+          <div class="momentum-bar-wrap">
+            <div class="momentum-bar" style="width:${barWidth}px"></div>
+            <span style="font-size:11px;color:#718096">${fmt(momentum, 3)}</span>
+          </div>
+        </td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div style="width:60px;height:4px;border-radius:2px;background:#2d3148">
+              <div style="width:${Math.round(conviction*100)}%;height:100%;border-radius:2px;background:#63b3ed"></div>
+            </div>
+            <span style="font-size:11px;color:#718096">${Math.round(conviction*100)}%</span>
+          </div>
+        </td>
+        <td><span class="pill ${sigClass}">${signal.toUpperCase()}</span></td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function loadPositions() {
+    const rows = await fetch("/api/positions").then(r => r.json());
+    const body = document.getElementById("positions-body");
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-state">No open positions</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(r => {
+      const outcome = (r.outcome || "").toUpperCase();
+      const pillClass = outcome === "YES" ? "pill-yes" : "pill-no";
+      const pnl = Number(r.unrealized_pnl || 0);
+      const opened = r.opened_at ? new Date(r.opened_at).toLocaleString() : "—";
+      return `<tr>
+        <td>${r.question || "—"}</td>
+        <td><span class="pill ${pillClass}">${outcome}</span></td>
+        <td>${fmt(r.entry_price)}</td>
+        <td>${fmt(r.current_price)}</td>
+        <td>${fmt(r.size, 0)}</td>
+        <td class="${colorClass(pnl)}">${fmtDollars(pnl)}</td>
+        <td>${opened}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function loadClosedTrades() {
+    const rows = await fetch("/api/closed_trades").then(r => r.json());
+    const body = document.getElementById("closed-body");
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-state">No closed trades yet</td></tr>';
+      return;
+    }
+    // Show most recent first
+    const sorted = [...rows].reverse();
+    body.innerHTML = sorted.map(r => {
+      const outcome = (r.outcome || "").toUpperCase();
+      const pillClass = outcome === "YES" ? "pill-yes" : "pill-no";
+      const pnl = Number(r.realized_pnl || 0);
+      const pnlClass = pnl >= 0 ? "pill-win" : "pill-loss";
+      return `<tr>
+        <td>${r.question || "—"}</td>
+        <td><span class="pill ${pillClass}">${outcome}</span></td>
+        <td>${fmt(r.entry_price)}</td>
+        <td>${fmt(r.exit_price)}</td>
+        <td><span class="pill ${pnlClass}">${fmtDollars(pnl)}</span></td>
+        <td>${(r.exit_reason || "—").replace(/_/g, " ")}</td>
+        <td>${fmtHours(r.holding_seconds)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function loadEquityChart() {
+    const data = await fetch("/api/equity_history").then(r => r.json());
+    const labels = data.map(d => new Date(d.time).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}));
+    const values = data.map(d => d.equity);
+
+    if (equityChart) equityChart.destroy();
+
+    const ctx = document.getElementById("equity-chart").getContext("2d");
+    equityChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          borderColor: "#63b3ed",
+          backgroundColor: "rgba(99,179,237,0.08)",
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: "#63b3ed",
+          fill: true,
+          tension: 0.3,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            ticks: { color: "#4a5568", maxTicksLimit: 10, font: { size: 11 } },
+            grid: { color: "#1f2235" },
+          },
+          y: {
+            ticks: {
+              color: "#4a5568",
+              font: { size: 11 },
+              callback: v => "$" + v.toFixed(0)
+            },
+            grid: { color: "#1f2235" },
+          }
+        }
+      }
+    });
+  }
+
+  async function checkBotStatus() {
+    const s = await fetch("/api/bot/status").then(r => r.json());
+    const dot = document.getElementById("dot");
+    const label = document.getElementById("status-label");
+    const btnStart = document.getElementById("btn-start");
+    const btnStop = document.getElementById("btn-stop");
+    if (s.running) {
+      dot.className = "status-dot running";
+      label.textContent = "Bot running";
+      btnStart.style.display = "none";
+      btnStop.style.display = "";
+    } else {
+      dot.className = "status-dot";
+      label.textContent = "Bot stopped";
+      btnStart.style.display = "";
+      btnStop.style.display = "none";
+    }
+  }
+
+  async function startBot() {
+    await fetch("/api/bot/start", { method: "POST" });
+    await checkBotStatus();
+  }
+
+  async function stopBot() {
+    await fetch("/api/bot/stop", { method: "POST" });
+    await checkBotStatus();
+  }
+
+  async function refresh() {
+    await Promise.all([
+      loadSummary(),
+      loadSignals(),
+      loadPositions(),
+      loadClosedTrades(),
+      loadEquityChart(),
+      checkBotStatus(),
+    ]);
+    document.getElementById("last-updated").textContent =
+      "Last updated: " + new Date().toLocaleTimeString();
+  }
+
+  // Initial load
+  refresh();
+
+  // Auto-refresh every 60 seconds with countdown
+  const REFRESH_INTERVAL = 60;
+  let secondsUntilRefresh = REFRESH_INTERVAL;
+
+  setInterval(() => {
+    secondsUntilRefresh--;
+    if (secondsUntilRefresh <= 0) {
+      refresh();
+      secondsUntilRefresh = REFRESH_INTERVAL;
+    }
+    document.getElementById("next-refresh").textContent =
+      `Next refresh in ${secondsUntilRefresh}s`;
+  }, 1000);
+</script>
+
+</body>
+</html>

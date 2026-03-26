@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import math
 import os
@@ -12,6 +13,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.bot.live_executor import LiveExecutor, build_live_executor_if_enabled
 from src.indexers.polymarket.client import PolymarketClient
 
 
@@ -33,12 +35,14 @@ def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
 
 
+@functools.lru_cache(maxsize=8192)
 def _normalize_text(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower())
     normalized = re.sub(r"\b(will|the|a|an|be|to|of|in|on|for)\b", " ", normalized)
     return " ".join(normalized.split())
 
 
+@functools.lru_cache(maxsize=8192)
 def _extract_key_terms(value: str) -> set[str]:
     stopwords = {
         "will",
@@ -69,6 +73,7 @@ def _extract_key_terms(value: str) -> set[str]:
     return {token for token in _normalize_text(value).split() if len(token) >= 3 and token not in stopwords}
 
 
+@functools.lru_cache(maxsize=8192)
 def _extract_numeric_tokens(value: str) -> set[str]:
     return set(re.findall(r"\b\d+(?:\.\d+)?\b", str(value).lower()))
 
@@ -211,6 +216,7 @@ def _extract_threshold_direction(value: str) -> tuple[str | None, str | None]:
     return direction, threshold
 
 
+@functools.lru_cache(maxsize=8192)
 def _infer_market_category(value: str) -> str:
     normalized = _normalize_text(value)
     if _extract_alias_entities(normalized, TEAM_ALIASES):
@@ -250,6 +256,7 @@ def _time_alignment_score(left_end: Any, right_end: Any) -> float:
     return 0.0
 
 
+@functools.lru_cache(maxsize=65536)
 def _token_overlap(left: str, right: str) -> float:
     left_tokens = set(_normalize_text(left).split())
     right_tokens = set(_normalize_text(right).split())
@@ -481,6 +488,7 @@ class StrategyConfig:
     kalshi_confirmation_bonus: float = 0.15
     kalshi_disagreement_penalty: float = 0.20
     kalshi_price_gap_threshold: float = 0.05
+    min_price_momentum: float = 0.02
 
     @classmethod
     def from_env(cls) -> StrategyConfig:
@@ -502,10 +510,11 @@ class StrategyConfig:
             stop_loss_pct=_env_float("PAPER_STOP_LOSS_PCT", 0.20),
             trailing_stop_drawdown_pct=_env_float("PAPER_TRAILING_STOP_DRAWDOWN_PCT", 0.12),
             max_holding_seconds=_env_int("PAPER_MAX_HOLDING_SECONDS", 86400),
-            min_cross_market_overlap=_env_float("PAPER_MIN_CROSS_MARKET_OVERLAP", 0.6),
+            min_cross_market_overlap=_env_float("PAPER_MIN_CROSS_MARKET_OVERLAP", 0.35),
             kalshi_confirmation_bonus=_env_float("PAPER_KALSHI_CONFIRMATION_BONUS", 0.15),
             kalshi_disagreement_penalty=_env_float("PAPER_KALSHI_DISAGREEMENT_PENALTY", 0.20),
             kalshi_price_gap_threshold=_env_float("PAPER_KALSHI_PRICE_GAP_THRESHOLD", 0.05),
+            min_price_momentum=_env_float("PAPER_MIN_PRICE_MOMENTUM", 0.02),
         )
 
 
@@ -599,6 +608,12 @@ class PolymarketSnapshot:
         trades = _load_table(_select_existing(self.data_dir, "trades"))
         return markets, trades
 
+    def _load_order_books(self) -> pd.DataFrame:
+        ob_path = self.data_dir / "order_books.parquet"
+        if ob_path.exists():
+            return pd.read_parquet(ob_path)
+        return pd.DataFrame()
+
     def outcome_frame(self) -> pd.DataFrame:
         markets, trades = self.load()
 
@@ -673,8 +688,35 @@ class PolymarketSnapshot:
             )
             recent_agg = recent_agg.drop(columns=["weighted_price"])
 
+        # Momentum: compare VWAP in the early half of the window vs the late half.
+        # Rising prices → positive momentum → stronger buy signal.
+        mid_cutoff = cutoff + pd.Timedelta(seconds=lookback_seconds / 2)
+        early_trades = recent[recent["timestamp"] < mid_cutoff].copy()
+        late_trades = recent[recent["timestamp"] >= mid_cutoff].copy()
+
+        def _half_vwap(df: pd.DataFrame, col: str) -> pd.DataFrame:
+            if df.empty:
+                return pd.DataFrame(columns=["condition_id", "outcome", "outcome_index", col])
+            df = df.copy()
+            df["_notional"] = df["size"] * df["price"]
+            g = df.groupby(["condition_id", "outcome", "outcome_index"], dropna=False)
+            result = (g["_notional"].sum() / g["size"].sum().clip(lower=1e-9)).reset_index()
+            result.columns = ["condition_id", "outcome", "outcome_index", col]
+            return result
+
+        early_vwap_df = _half_vwap(early_trades, "early_vwap")
+        late_vwap_df = _half_vwap(late_trades, "late_vwap")
+
         merged = outcomes_df.merge(
             recent_agg,
+            on=["condition_id", "outcome", "outcome_index"],
+            how="left",
+        ).merge(
+            early_vwap_df,
+            on=["condition_id", "outcome", "outcome_index"],
+            how="left",
+        ).merge(
+            late_vwap_df,
             on=["condition_id", "outcome", "outcome_index"],
             how="left",
         )
@@ -683,7 +725,10 @@ class PolymarketSnapshot:
             merged[col] = merged[col].fillna(0)
 
         merged["recent_vwap"] = merged["recent_vwap"].fillna(merged["market_price"])
+        merged["early_vwap"] = merged["early_vwap"].fillna(merged["market_price"])
+        merged["late_vwap"] = merged["late_vwap"].fillna(merged["market_price"])
         merged["last_trade_price"] = merged["last_trade_price"].fillna(merged["market_price"])
+        merged["price_momentum"] = merged["late_vwap"] - merged["early_vwap"]
         merged["edge"] = merged["recent_vwap"] - merged["market_price"]
         merged["edge_ratio"] = merged["edge"] / merged["market_price"].clip(lower=1e-9)
         merged["seconds_since_last_trade"] = (
@@ -697,13 +742,33 @@ class PolymarketSnapshot:
 
         freshness = 1 / (1 + (merged["seconds_since_last_trade"] / 300).clip(lower=0))
         liquidity_bonus = merged["recent_notional"].apply(lambda x: math.log1p(max(x, 0)))
+        momentum_signal = merged["price_momentum"].clip(lower=0)
+        edge_signal = merged["edge"].clip(lower=0)
         merged["score"] = (
-            merged["edge"].clip(lower=0)
+            (edge_signal + momentum_signal * 2)
             * (1 + merged["edge_ratio"].clip(lower=0))
-            * merged["flow_imbalance"].clip(lower=0)
+            * (merged["flow_imbalance"].clip(lower=0) + 0.05)
             * freshness
             * liquidity_bonus
         )
+
+        # Merge order book imbalance from pmxt data if available.
+        ob_df = self._load_order_books()
+        if not ob_df.empty and "condition_id" in ob_df.columns:
+            ob_keep = ob_df[["condition_id", "outcome_index", "ob_imbalance", "spread", "best_bid", "best_ask"]].copy()
+            ob_keep["outcome_index"] = ob_keep["outcome_index"].astype(int)
+            merged = merged.merge(ob_keep, on=["condition_id", "outcome_index"], how="left")
+        else:
+            merged["ob_imbalance"] = 0.0
+            merged["spread"] = math.nan
+            merged["best_bid"] = math.nan
+            merged["best_ask"] = math.nan
+
+        merged["ob_imbalance"] = merged["ob_imbalance"].fillna(0.0)
+
+        # Boost score when order book shows strong buying pressure.
+        ob_boost = (merged["ob_imbalance"].clip(lower=0) * 0.5 + 1.0)
+        merged["score"] = merged["score"] * ob_boost
 
         return merged.sort_values(["score", "recent_notional"], ascending=False).reset_index(drop=True)
 
@@ -821,16 +886,38 @@ def _merge_cross_market_data(
     if kalshi_df.empty:
         return enriched
 
-    kalshi_records = kalshi_df.to_dict("records")
+    # Cap Kalshi records to the top 2000 by volume so matching stays fast.
+    # These are the most liquid markets and most likely to match Polymarket.
+    cap_df = kalshi_df.copy()
+    if "kalshi_volume" in cap_df.columns:
+        cap_df = cap_df.nlargest(2000, "kalshi_volume")
+    else:
+        cap_df = cap_df.head(2000)
+    kalshi_records = cap_df.to_dict("records")
+
+    # Build an inverted index: keyword -> list of kalshi record indices.
+    # This means each Polymarket market is only scored against Kalshi markets
+    # that share at least one keyword, instead of every Kalshi market.
+    kalshi_index: dict[str, list[int]] = {}
+    for i, record in enumerate(kalshi_records):
+        for term in _extract_key_terms(str(record.get("kalshi_question", ""))):
+            kalshi_index.setdefault(term, []).append(i)
+
     for idx, row in enriched.iterrows():
         question = str(row.get("question", ""))
         if not question:
             continue
 
+        # Find only Kalshi records that share at least one keyword
+        candidate_indices: set[int] = set()
+        for term in _extract_key_terms(question):
+            candidate_indices.update(kalshi_index.get(term, []))
+
         best_match: dict[str, Any] | None = None
         best_score = 0.0
         best_details: dict[str, float | str] | None = None
-        for candidate in kalshi_records:
+        for i in candidate_indices:
+            candidate = kalshi_records[i]
             score, details = _cross_market_match_score(
                 question,
                 row.get("end_date"),
@@ -941,7 +1028,8 @@ class VolumeMomentumStrategy:
         else:
             signals["signal_persistence_bucket"] = signals["signal_persistence_bucket"].fillna("fresh")
 
-        eligible = (
+        # Standard signal: recent trades show VWAP above current price
+        vwap_eligible = (
             signals["active"]
             & ~signals["closed"]
             & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
@@ -956,6 +1044,35 @@ class VolumeMomentumStrategy:
             & (signals["last_trade_price"] >= signals["market_price"])
             & ~signals["kalshi_disagrees"]
         )
+
+        # Kalshi price signal: Kalshi prices this outcome higher than Polymarket
+        # This works without trade history — just compares current prices across exchanges.
+        kalshi_price_gap = signals["kalshi_price_gap"].fillna(0.0)
+        kalshi_eligible = (
+            signals["active"]
+            & ~signals["closed"]
+            & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
+            & (signals["liquidity"] >= cfg.min_liquidity)
+            & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
+            & signals["kalshi_confirms"].fillna(False)
+            & (kalshi_price_gap >= cfg.kalshi_price_gap_threshold * 2)
+        )
+
+        # Momentum signal: price has been consistently trending up over the lookback window.
+        # Uses early vs late VWAP split from the CLOB 6-hour price history.
+        momentum = signals["price_momentum"].fillna(0.0) if "price_momentum" in signals.columns else pd.Series(0.0, index=signals.index)
+        momentum_eligible = (
+            signals["active"]
+            & ~signals["closed"]
+            & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
+            & (signals["liquidity"] >= cfg.min_liquidity)
+            & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
+            & (momentum >= cfg.min_price_momentum)
+            & (signals["recent_trade_count"] >= cfg.min_recent_trades)
+            & ~signals["kalshi_disagrees"]
+        )
+
+        eligible = vwap_eligible | kalshi_eligible | momentum_eligible
 
         edge_component = (signals["edge"] / max(cfg.edge_threshold * 2, 1e-9)).apply(_clamp)
         ratio_component = (signals["edge_ratio"] / max(cfg.edge_ratio_threshold * 2, 1e-9)).apply(_clamp)
@@ -985,7 +1102,8 @@ class VolumeMomentumStrategy:
         eligible_rows = signals.loc[eligible]
         signals.loc[eligible, "entry_reason"] = eligible_rows.apply(
             lambda row: (
-                f"edge={row['edge']:.3f}, edge_pct={row['edge_ratio']:.1%}, "
+                f"edge={row['edge']:.3f}, momentum={row.get('price_momentum', 0):.3f}, "
+                f"edge_pct={row['edge_ratio']:.1%}, "
                 f"buy_share={row['buy_share']:.1%}, recent_notional=${row['recent_notional']:.0f}, "
                 f"trades={int(row['recent_trade_count'])}, last_trade_age={int(row['seconds_since_last_trade'])}s, "
                 f"expiry={row['hours_to_expiry']:.1f}h, signal_runs={int(row['signal_runs'])}, "
@@ -1053,6 +1171,13 @@ class VolumeMomentumStrategy:
         merged.loc[merged["edge"] <= cfg.exit_edge_threshold, "exit_reason"] = "edge_reversal"
         merged.loc[merged["return_pct"] >= cfg.take_profit_pct, "exit_reason"] = "take_profit"
         merged.loc[merged["return_pct"] <= -cfg.stop_loss_pct, "exit_reason"] = "stop_loss"
+        # Momentum reversal: if the price trend that drove entry has flipped negative, exit early.
+        if "price_momentum" in merged.columns:
+            merged.loc[
+                (merged["price_momentum"] < -cfg.min_price_momentum)
+                & (merged["return_pct"] > -cfg.stop_loss_pct / 2),
+                "exit_reason",
+            ] = "momentum_reversal"
         merged.loc[
             (merged["return_pct"] > 0) & (merged["drawdown_from_peak_pct"] <= -cfg.trailing_stop_drawdown_pct),
             "exit_reason",
@@ -1062,8 +1187,9 @@ class VolumeMomentumStrategy:
 
 
 class PaperPortfolio:
-    def __init__(self, config: PortfolioConfig | None = None):
+    def __init__(self, config: PortfolioConfig | None = None, live_executor: LiveExecutor | None = None):
         self.config = config or PortfolioConfig.from_env()
+        self.live_executor = live_executor
         self.cash = self.config.starting_cash
         self.positions: list[dict[str, Any]] = []
         self.orders: list[Order] = []
@@ -1221,10 +1347,24 @@ class PaperPortfolio:
                 continue
 
             exit_row = exits[key]
-            exit_price = float(exit_row["market_price"])
+            # Simulate slippage: receive slightly less than quoted price on exit.
+            slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)
+            exit_price = max(float(exit_row["market_price"]) * (1 - slippage), 0.01)
             size = float(position["size"])
             notional = size * exit_price
             realized_pnl = notional - float(position["cost_basis"])
+
+            # If live trading is enabled, place the real sell order first.
+            # Only remove the position and update accounting if the sell succeeds.
+            if self.live_executor is not None:
+                token_id = str(position.get("asset", ""))
+                try:
+                    self.live_executor.sell(token_id, exit_price, size)
+                except Exception as exc:
+                    print(f"[LIVE] SELL rejected for '{position.get('question')}': {exc}")
+                    remaining_positions.append(position)
+                    continue
+
             self.cash += notional
             self.realized_pnl += realized_pnl
             self.last_exit_at[key] = run_at
@@ -1265,6 +1405,8 @@ class PaperPortfolio:
 
     def execute(self, signals: pd.DataFrame, run_at: datetime) -> None:
         existing = {(position["condition_id"], int(position["outcome_index"])) for position in self.positions}
+        # Track which condition_ids already have a position — never hold both Yes and No on the same market.
+        existing_markets = {position["condition_id"] for position in self.positions}
         for _, signal in signals.iterrows():
             if len(self.positions) >= self.config.max_positions:
                 break
@@ -1274,10 +1416,17 @@ class PaperPortfolio:
             key = (str(signal["condition_id"]), int(signal["outcome_index"]))
             if key in existing or self._in_cooldown(key[0], key[1], run_at):
                 continue
+            # Skip if we already hold the other side of this market.
+            if str(signal["condition_id"]) in existing_markets:
+                continue
 
             price = float(signal["market_price"])
             if price <= 0:
                 continue
+            # Simulate slippage: pay slightly more than the quoted price on entry.
+            # On Polymarket, 0.5% slippage is realistic for liquid markets.
+            slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)
+            price = min(price * (1 + slippage), 0.99)
 
             remaining_exposure = self._remaining_exposure_capacity()
             if remaining_exposure < self.config.min_position_dollars:
@@ -1292,7 +1441,21 @@ class PaperPortfolio:
                 continue
 
             size = notional / price
+            token_id = str(signal.get("asset", ""))
+
+            # If live trading is enabled, place the real order first.
+            # Only proceed with paper accounting if the live order succeeds.
+            live_order_id = ""
+            if self.live_executor is not None:
+                try:
+                    result = self.live_executor.buy(token_id, price, notional)
+                    live_order_id = result.get("orderID") or result.get("id") or ""
+                except Exception as exc:
+                    print(f"[LIVE] BUY rejected for '{signal.get('question')}': {exc}")
+                    continue
+
             self.cash -= notional
+            existing_markets.add(str(signal["condition_id"]))
             position_id = f"{signal['condition_id']}:{int(signal['outcome_index'])}:{run_at.isoformat()}"
             self.positions.append(
                 {
@@ -1301,6 +1464,8 @@ class PaperPortfolio:
                     "question": str(signal["question"]),
                     "outcome": str(signal["outcome"]),
                     "outcome_index": int(signal["outcome_index"]),
+                    "asset": token_id,
+                    "live_order_id": live_order_id,
                     "entry_price": price,
                     "current_price": price,
                     "size": size,
@@ -1397,6 +1562,8 @@ class PaperPortfolio:
             "question",
             "outcome",
             "outcome_index",
+            "asset",
+            "live_order_id",
             "entry_price",
             "current_price",
             "size",
@@ -1441,12 +1608,13 @@ class PaperTradingBot:
         output_dir: Path | str = "output/paper_trading/polymarket",
         strategy: VolumeMomentumStrategy | None = None,
         portfolio: PaperPortfolio | None = None,
+        live_executor: LiveExecutor | None = None,
     ):
         self.snapshot = PolymarketSnapshot(data_dir=data_dir)
         self.kalshi_snapshot = KalshiSnapshot(data_dir=kalshi_data_dir)
         self.output_dir = Path(output_dir)
         self.strategy = strategy or VolumeMomentumStrategy()
-        self.portfolio = portfolio or PaperPortfolio()
+        self.portfolio = portfolio or PaperPortfolio(live_executor=live_executor)
 
     def _load_signal_history(self) -> pd.DataFrame:
         history_path = self.output_dir / "signal_history.csv"
@@ -1838,6 +2006,18 @@ class PaperTradingBot:
         performance_breakdown_path = self._write_performance_breakdown(closed_df)
         summary = self._performance_report(ledger_df, positions_df, self.portfolio.summary())
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+
+        # Print a concise status line each cycle so the user can monitor progress.
+        new_signals = int((scored.get("signal", pd.Series()) == "buy").sum()) if "signal" in scored.columns else 0
+        top_momentum = scored["price_momentum"].max() if "price_momentum" in scored.columns else 0.0
+        print(
+            f"  equity=${summary['equity']:.2f} | "
+            f"open={summary['open_positions']} | "
+            f"closed={summary['closed_trades']} ({summary['wins']}W/{summary['losses']}L) | "
+            f"realized=${summary['realized_pnl']:.2f} | "
+            f"unrealized=${summary['unrealized_pnl']:.2f} | "
+            f"signals={new_signals} | top_momentum={top_momentum:.3f}"
+        )
 
         return {
             "signals": signals_path,

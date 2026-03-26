@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-ChildItem -Path $env:USERPROFILE -Filter ''uv.exe'' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 3 FullName\")",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.pmxt.dev)",
+      "Bash(uv add:*)",
+      "Bash(uv run:*)",
+      "Bash(uv python:*)",
+      "Bash(uv sync:*)"
+    ]
+  }
+}

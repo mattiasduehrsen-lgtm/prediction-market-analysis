@@ -4,6 +4,10 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def _configure_matplotlib_cache() -> None:
     project_root = Path(__file__).resolve().parent
@@ -171,15 +175,85 @@ def paper():
 
 
 def paper_loop():
-    """Run the Polymarket paper-trading bot on a timer."""
+    """Run the Polymarket paper-trading bot on a timer, refreshing data each cycle."""
+    import time as _time
+
     _configure_matplotlib_cache()
 
     from src.bot.polymarket import PaperTradingBot
+    from src.current.collector import collect_current_data
 
-    iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 5
-    saved = PaperTradingBot().run_loop(iterations=iterations, sleep_seconds=sleep_seconds)
+    iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 0  # 0 = run forever
+    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 900  # 15 minutes
+    max_iterations = iterations or None
+
+    bot = PaperTradingBot()
+    run_count = 0
+    last_saved: dict = {}
+
+    while True:
+        run_count += 1
+        print(f"\n=== Paper loop iteration {run_count} ===")
+        collect_current_data()
+        last_saved = bot.run_once()
+        print("Paper-trading run complete.")
+        for name, path in last_saved.items():
+            print(f"  {name}: {path}")
+        if max_iterations is not None and run_count >= max_iterations:
+            break
+        print(f"Sleeping {sleep_seconds}s until next cycle... (Ctrl+C to stop)")
+        _time.sleep(sleep_seconds)
+
     print("Paper-trading loop complete.")
+    sys.exit(0)
+
+
+def dashboard():
+    """Launch the web dashboard at http://localhost:5000"""
+    from src.dashboard.app import run
+    print("Dashboard running at http://localhost:5000")
+    print("Open that address in your browser. Press Ctrl+C to stop.")
+    run()
+
+
+def live():
+    """Run the live-trading bot once (requires LIVE_TRADING=true in .env)."""
+    _configure_matplotlib_cache()
+
+    from src.bot.live_executor import build_live_executor_if_enabled
+    from src.bot.polymarket import PaperTradingBot
+
+    executor = build_live_executor_if_enabled()
+    if executor is None:
+        print("LIVE_TRADING is not enabled. Set LIVE_TRADING=true in your .env file.")
+        print("Running in paper mode instead.")
+    saved = PaperTradingBot(live_executor=executor).run_once()
+    mode = "Live-trading" if executor else "Paper-trading"
+    print(f"{mode} run complete.")
+    for name, path in saved.items():
+        print(f"  {name}: {path}")
+    sys.exit(0)
+
+
+def live_loop():
+    """Run the live-trading bot on a timer (requires LIVE_TRADING=true in .env)."""
+    _configure_matplotlib_cache()
+
+    from src.bot.live_executor import build_live_executor_if_enabled
+    from src.bot.polymarket import PaperTradingBot
+
+    iterations = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+
+    executor = build_live_executor_if_enabled()
+    if executor is None:
+        print("LIVE_TRADING is not enabled. Set LIVE_TRADING=true in your .env file.")
+        print("Running in paper mode instead.")
+    saved = PaperTradingBot(live_executor=executor).run_loop(
+        iterations=iterations, sleep_seconds=sleep_seconds
+    )
+    mode = "Live-trading" if executor else "Paper-trading"
+    print(f"{mode} loop complete.")
     for name, path in saved.items():
         print(f"  {name}: {path}")
     sys.exit(0)
@@ -188,7 +262,7 @@ def paper_loop():
 def main():
     if len(sys.argv) < 2:
         print("\nUsage: uv run main.py <command>")
-        print("Commands: analyze, index, current, package, paper, paper-loop")
+        print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop")
         sys.exit(0)
 
     command = sys.argv[1]
@@ -218,8 +292,20 @@ def main():
         paper_loop()
         sys.exit(0)
 
+    if command == "dashboard":
+        dashboard()
+        sys.exit(0)
+
+    if command == "live":
+        live()
+        sys.exit(0)
+
+    if command == "live-loop":
+        live_loop()
+        sys.exit(0)
+
     print(f"Unknown command: {command}")
-    print("Commands: analyze, index, current, package, paper, paper-loop")
+    print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop")
     sys.exit(1)
 
 

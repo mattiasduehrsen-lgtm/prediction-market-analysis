@@ -10,7 +10,6 @@ from typing import Any
 
 import httpx
 import pandas as pd
-import pmxt
 
 from src.indexers.kalshi.client import KalshiClient
 from src.indexers.polymarket.client import PolymarketClient
@@ -155,10 +154,20 @@ def _fetch_order_book_signals(markets: list[Any]) -> list[dict[str, Any]]:
     Order book imbalance = (total bid size - total ask size) / (total bid size + total ask size)
     Range: -1.0 (all sellers) to +1.0 (all buyers). Positive = buying pressure.
     """
+    try:
+        import pmxt  # requires Node.js + `npm install -g pmxtjs`
+    except Exception as exc:
+        print(f"Order book signals skipped: pmxt unavailable ({exc})")
+        return []
+
     sorted_markets = sorted(markets, key=lambda m: float(getattr(m, "liquidity", 0) or 0), reverse=True)[:50]
 
     records: list[dict[str, Any]] = []
-    pm = pmxt.Polymarket()
+    try:
+        pm = pmxt.Polymarket()
+    except Exception as exc:
+        print(f"Order book signals skipped: pmxtjs server failed to start ({exc})")
+        return []
     fetched = 0
     errors = 0
 
@@ -264,9 +273,14 @@ def collect_current_data() -> None:
                 break
             offset += len(batch)
 
-    # Fetch order book depth for top markets via pmxt.
+    # Fetch order book depth for top markets via pmxt (requires Node.js + pmxtjs).
+    # Fails gracefully if pmxtjs is not installed — bot continues without order book data.
     print("Fetching order book signals for top markets...")
-    ob_signals = _fetch_order_book_signals(polymarket_markets)
+    try:
+        ob_signals = _fetch_order_book_signals(polymarket_markets)
+    except Exception as exc:
+        print(f"Order book signals skipped: {exc}")
+        ob_signals = []
     if ob_signals:
         _write_snapshot(POLYMARKET_DIR / "order_books.parquet", ob_signals)
         print(f"Saved order book signals: {len(ob_signals)} rows")

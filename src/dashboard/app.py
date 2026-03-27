@@ -80,6 +80,64 @@ def signals():
     return jsonify(result[:20])
 
 
+@app.route("/api/debug")
+def debug():
+    """Diagnostic endpoint: raw stats from signals.csv and data snapshot files."""
+    import math
+    import os
+
+    project_root = Path(__file__).resolve().parents[2]
+    result = {}
+
+    # signals.csv stats
+    signals_path = OUTPUT_DIR / "signals.csv"
+    if signals_path.exists():
+        rows = _read_csv(signals_path)
+        edges = [r.get("edge") for r in rows if r.get("edge") is not None]
+        momentum = [r.get("price_momentum") for r in rows if r.get("price_momentum") is not None]
+        trade_counts = [r.get("recent_trade_count") for r in rows if r.get("recent_trade_count") is not None]
+        staleness = [r.get("seconds_since_last_trade") for r in rows if r.get("seconds_since_last_trade") is not None]
+        result["signals_csv"] = {
+            "total_rows": len(rows),
+            "buy_count": sum(1 for r in rows if r.get("signal") == "buy"),
+            "edge_max": max(edges) if edges else None,
+            "edge_min": min(edges) if edges else None,
+            "momentum_max": max(momentum) if momentum else None,
+            "momentum_min": min(momentum) if momentum else None,
+            "recent_trade_count_max": max(trade_counts) if trade_counts else None,
+            "recent_trade_count_zero_pct": sum(1 for t in trade_counts if t == 0) / len(trade_counts) if trade_counts else None,
+            "staleness_min_s": min(staleness) if staleness else None,
+            "staleness_max_s": max(staleness) if staleness else None,
+            "file_mtime": os.path.getmtime(signals_path),
+        }
+    else:
+        result["signals_csv"] = "missing"
+
+    # parquet snapshot stats
+    for name, path in [
+        ("polymarket_markets", project_root / "data/current/polymarket/markets.parquet"),
+        ("polymarket_trades", project_root / "data/current/polymarket/trades.parquet"),
+        ("kalshi_markets", project_root / "data/current/kalshi/markets.parquet"),
+        ("kalshi_trades", project_root / "data/current/kalshi/trades.parquet"),
+    ]:
+        if path.exists():
+            try:
+                df = pd.read_parquet(path)
+                info = {"rows": len(df), "columns": list(df.columns), "file_mtime": os.path.getmtime(path)}
+                if "timestamp" in df.columns:
+                    ts = pd.to_numeric(df["timestamp"], errors="coerce").dropna()
+                    if not ts.empty:
+                        info["timestamp_min"] = int(ts.min())
+                        info["timestamp_max"] = int(ts.max())
+                result[name] = info
+            except Exception as e:
+                result[name] = {"error": str(e)}
+        else:
+            result[name] = "missing"
+
+    return jsonify(result)
+
+
 @app.route("/api/bot/log")
 def bot_log():
     log_path = Path(__file__).resolve().parents[2] / "bot.log"

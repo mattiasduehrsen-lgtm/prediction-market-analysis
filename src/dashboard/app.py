@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 from flask import Flask, jsonify, render_template
 
-OUTPUT_DIR = Path("output/paper_trading/polymarket")
+OUTPUT_DIR = Path(__file__).resolve().parents[2] / "output/paper_trading/polymarket"
 
 app = Flask(__name__)
 
@@ -80,6 +80,16 @@ def signals():
     return jsonify(result[:20])
 
 
+@app.route("/api/bot/log")
+def bot_log():
+    log_path = Path(__file__).resolve().parents[2] / "bot.log"
+    if not log_path.exists():
+        return jsonify({"lines": []})
+    with open(log_path) as f:
+        lines = f.readlines()
+    return jsonify({"lines": [l.rstrip() for l in lines[-50:]]})
+
+
 @app.route("/api/bot/status")
 def bot_status():
     global _bot_process
@@ -92,10 +102,13 @@ def bot_start():
     global _bot_process
     if _bot_process is not None and _bot_process.poll() is None:
         return jsonify({"ok": False, "message": "Bot is already running"})
-    uv = os.path.join(sys.prefix, "..", "..", "bin", "uv")
+    log_path = Path(__file__).resolve().parents[2] / "bot.log"
+    log_file = open(log_path, "a")
     _bot_process = subprocess.Popen(
         ["uv", "run", "main.py", "paper-loop"],
         cwd=Path(__file__).resolve().parents[2],
+        stdout=log_file,
+        stderr=log_file,
     )
     return jsonify({"ok": True, "message": "Bot started"})
 

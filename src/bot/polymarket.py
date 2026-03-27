@@ -467,43 +467,43 @@ def _select_existing(base_dir: Path, stem: str) -> Path:
 
 @dataclass
 class StrategyConfig:
-    edge_threshold: float = 0.03
-    edge_ratio_threshold: float = 0.08
-    min_recent_trades: int = 2
-    min_recent_notional: float = 25.0
+    edge_threshold: float = 0.005
+    edge_ratio_threshold: float = 0.01
+    min_recent_trades: int = 1
+    min_recent_notional: float = 10.0
     min_liquidity: float = 1000.0
-    min_buy_share: float = 0.55
-    min_market_price: float = 0.10
-    max_market_price: float = 0.90
-    lookback_seconds: int = 3600
+    min_buy_share: float = 0.52
+    min_market_price: float = 0.05
+    max_market_price: float = 0.95
+    lookback_seconds: int = 21600
     max_candidates: int = 5
-    max_seconds_since_last_trade: int = 900
+    max_seconds_since_last_trade: int = 7200
     min_hours_to_expiry: float = 2.0
     exit_edge_threshold: float = -0.01
-    take_profit_pct: float = 0.25
-    stop_loss_pct: float = 0.20
-    trailing_stop_drawdown_pct: float = 0.12
+    take_profit_pct: float = 0.15
+    stop_loss_pct: float = 0.12
+    trailing_stop_drawdown_pct: float = 0.08
     max_holding_seconds: int = 86400
     min_cross_market_overlap: float = 0.6
     kalshi_confirmation_bonus: float = 0.15
     kalshi_disagreement_penalty: float = 0.20
     kalshi_price_gap_threshold: float = 0.05
-    min_price_momentum: float = 0.02
+    min_price_momentum: float = 0.003
 
     @classmethod
     def from_env(cls) -> StrategyConfig:
         return cls(
-            edge_threshold=_env_float("PAPER_EDGE_THRESHOLD", 0.03),
-            edge_ratio_threshold=_env_float("PAPER_EDGE_RATIO_THRESHOLD", 0.08),
-            min_recent_trades=_env_int("PAPER_MIN_RECENT_TRADES", 2),
-            min_recent_notional=_env_float("PAPER_MIN_RECENT_NOTIONAL", 25.0),
+            edge_threshold=_env_float("PAPER_EDGE_THRESHOLD", 0.005),
+            edge_ratio_threshold=_env_float("PAPER_EDGE_RATIO_THRESHOLD", 0.01),
+            min_recent_trades=_env_int("PAPER_MIN_RECENT_TRADES", 1),
+            min_recent_notional=_env_float("PAPER_MIN_RECENT_NOTIONAL", 10.0),
             min_liquidity=_env_float("PAPER_MIN_LIQUIDITY", 1000.0),
-            min_buy_share=_env_float("PAPER_MIN_BUY_SHARE", 0.55),
-            min_market_price=_env_float("PAPER_MIN_MARKET_PRICE", 0.10),
-            max_market_price=_env_float("PAPER_MAX_MARKET_PRICE", 0.90),
-            lookback_seconds=_env_int("PAPER_LOOKBACK_SECONDS", 3600),
+            min_buy_share=_env_float("PAPER_MIN_BUY_SHARE", 0.52),
+            min_market_price=_env_float("PAPER_MIN_MARKET_PRICE", 0.05),
+            max_market_price=_env_float("PAPER_MAX_MARKET_PRICE", 0.95),
+            lookback_seconds=_env_int("PAPER_LOOKBACK_SECONDS", 21600),
             max_candidates=_env_int("PAPER_MAX_CANDIDATES", 5),
-            max_seconds_since_last_trade=_env_int("PAPER_MAX_SECONDS_SINCE_LAST_TRADE", 900),
+            max_seconds_since_last_trade=_env_int("PAPER_MAX_SECONDS_SINCE_LAST_TRADE", 7200),
             min_hours_to_expiry=_env_float("PAPER_MIN_HOURS_TO_EXPIRY", 2.0),
             exit_edge_threshold=_env_float("PAPER_EXIT_EDGE_THRESHOLD", -0.01),
             take_profit_pct=_env_float("PAPER_TAKE_PROFIT_PCT", 0.25),
@@ -514,7 +514,7 @@ class StrategyConfig:
             kalshi_confirmation_bonus=_env_float("PAPER_KALSHI_CONFIRMATION_BONUS", 0.15),
             kalshi_disagreement_penalty=_env_float("PAPER_KALSHI_DISAGREEMENT_PENALTY", 0.20),
             kalshi_price_gap_threshold=_env_float("PAPER_KALSHI_PRICE_GAP_THRESHOLD", 0.05),
-            min_price_momentum=_env_float("PAPER_MIN_PRICE_MOMENTUM", 0.02),
+            min_price_momentum=_env_float("PAPER_MIN_PRICE_MOMENTUM", 0.003),
         )
 
 

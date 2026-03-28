@@ -420,8 +420,8 @@
       return `<tr>
         <td>${r.question || "—"}</td>
         <td><span class="pill ${pillClass}">${outcome}</span></td>
-        <td>${fmt(r.entry_price)}</td>
-        <td>${fmt(r.current_price)}</td>
+        <td>${fmt(r.entry_price, 4)}</td>
+        <td>${fmt(r.current_price, 4)}</td>
         <td>${fmt(r.size, 0)}</td>
         <td class="${colorClass(pnl)}">${fmtDollars(pnl)}</td>
         <td>${opened}</td>
@@ -446,8 +446,8 @@
       return `<tr>
         <td>${r.question || "—"}</td>
         <td><span class="pill ${pillClass}">${outcome}</span></td>
-        <td>${fmt(r.entry_price)}</td>
-        <td>${fmt(r.exit_price)}</td>
+        <td>${fmt(r.entry_price, 4)}</td>
+        <td>${fmt(r.exit_price, 4)}</td>
         <td><span class="pill ${pnlClass}">${fmtDollars(pnl)}</span></td>
         <td>${(r.exit_reason || "—").replace(/_/g, " ")}</td>
         <td>${fmtHours(r.holding_seconds)}</td>

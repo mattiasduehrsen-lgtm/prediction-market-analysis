@@ -1068,7 +1068,6 @@ class VolumeMomentumStrategy:
             & (signals["liquidity"] >= cfg.min_liquidity)
             & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
             & (momentum >= cfg.min_price_momentum)
-            & (signals["recent_trade_count"] >= cfg.min_recent_trades)
             & ~signals["kalshi_disagrees"]
         )
 

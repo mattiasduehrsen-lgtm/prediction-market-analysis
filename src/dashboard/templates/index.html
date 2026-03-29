@@ -272,6 +272,7 @@
             <th>Entry</th>
             <th>Current</th>
             <th>Shares</th>
+            <th>Value</th>
             <th>Unrealized P&L</th>
             <th>Opened</th>
           </tr>
@@ -423,6 +424,7 @@
         <td>${fmt(r.entry_price, 4)}</td>
         <td>${fmt(r.current_price, 4)}</td>
         <td>${fmt(r.size, 0)}</td>
+        <td>${fmtDollars((r.size || 0) * (r.current_price || 0))}</td>
         <td class="${colorClass(pnl)}">${fmtDollars(pnl)}</td>
         <td>${opened}</td>
       </tr>`;

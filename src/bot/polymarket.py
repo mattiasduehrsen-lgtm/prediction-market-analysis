@@ -1959,6 +1959,153 @@ class PaperTradingBot:
             "ledger_rows": int(len(ledger_df)),
         }
 
+    def fast_exit_check(self) -> None:
+        """Fetch live CLOB prices for open positions and exit on stop-loss / take-profit / trailing-stop.
+
+        Called every ~20 seconds between full cycles so price-based exits aren't delayed by the
+        15-minute data-collection window.  Does NOT enter new positions or re-score signals.
+        """
+        import time as _time
+
+        import httpx
+
+        if not self.portfolio.positions:
+            return
+
+        run_at = datetime.now(timezone.utc)
+        cfg = self.strategy.config
+        now_ts = int(_time.time())
+        clob_url = "https://clob.polymarket.com"
+        slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)
+
+        # --- Fetch current price for each open position via CLOB prices-history (2-min window) ---
+        prices: dict[str, float] = {}
+        with httpx.Client(timeout=8.0) as http:
+            for position in self.portfolio.positions:
+                token_id = str(position.get("asset", ""))
+                if not token_id:
+                    continue
+                try:
+                    resp = http.get(
+                        f"{clob_url}/prices-history",
+                        params={"market": token_id, "startTs": now_ts - 120, "endTs": now_ts, "fidelity": 1},
+                    )
+                    if resp.status_code == 200:
+                        history = resp.json().get("history", [])
+                        if history:
+                            prices[token_id] = float(history[-1]["p"])
+                except Exception:
+                    continue
+
+        if not prices:
+            return
+
+        # --- Update mark-to-market and determine exits ---
+        exits: list[tuple[dict, str, float]] = []  # (position, reason, current_price)
+        for position in self.portfolio.positions:
+            token_id = str(position.get("asset", ""))
+            if token_id not in prices:
+                continue
+            current_price = prices[token_id]
+            entry_price = float(position["entry_price"])
+            peak_price = float(position.get("peak_price", entry_price))
+            new_peak = max(peak_price, current_price)
+
+            position["current_price"] = current_price
+            position["peak_price"] = new_peak
+            position["mark_value"] = float(position["size"]) * current_price
+            position["unrealized_pnl"] = position["mark_value"] - float(position["cost_basis"])
+            position["last_updated_at"] = run_at.isoformat()
+
+            return_pct = (current_price - entry_price) / max(entry_price, 1e-9)
+            drawdown_pct = (current_price - new_peak) / max(new_peak, 1e-9)
+
+            exit_reason: str | None = None
+            if return_pct <= -cfg.stop_loss_pct:
+                exit_reason = "stop_loss"
+            elif return_pct >= cfg.take_profit_pct:
+                exit_reason = "take_profit"
+            elif return_pct > 0 and drawdown_pct <= -cfg.trailing_stop_drawdown_pct:
+                exit_reason = "trailing_stop"
+
+            if exit_reason:
+                exits.append((position, exit_reason, current_price))
+
+        # Always persist updated prices so the dashboard reflects live marks.
+        self.portfolio.positions_frame().to_csv(self.output_dir / "positions.csv", index=False)
+
+        if not exits:
+            return
+
+        # --- Execute exits ---
+        starting_order_count = len(self.portfolio.orders)
+        for position, exit_reason, current_price in exits:
+            exit_price = max(current_price * (1 - slippage), 0.01)
+            size = float(position["size"])
+            notional = size * exit_price
+            realized_pnl = notional - float(position["cost_basis"])
+            key = (str(position["condition_id"]), int(position["outcome_index"]))
+            try:
+                opened_at = datetime.fromisoformat(str(position["opened_at"]).replace("Z", "+00:00"))
+                holding_seconds = (run_at - opened_at).total_seconds()
+            except Exception:
+                holding_seconds = 0.0
+
+            self.portfolio.cash += notional
+            self.portfolio.realized_pnl += realized_pnl
+            self.portfolio.last_exit_at[key] = run_at
+            self.portfolio.orders.append(
+                self.portfolio._build_order(
+                    position_id=str(position["position_id"]),
+                    condition_id=str(position["condition_id"]),
+                    question=str(position["question"]),
+                    outcome=str(position["outcome"]),
+                    outcome_index=int(position["outcome_index"]),
+                    side="sell",
+                    price=exit_price,
+                    size=size,
+                    edge=0.0,
+                    score=0.0,
+                    conviction=float(position.get("conviction", 0.0)),
+                    buy_share=0.0,
+                    recent_trade_count=0,
+                    recent_notional=0.0,
+                    market_price=exit_price,
+                    price_gap_pct=(exit_price - float(position["entry_price"])) / max(float(position["entry_price"]), 1e-9),
+                    signal_runs=int(position.get("signal_runs", 1) or 1),
+                    signal_age_seconds=float(position.get("signal_age_seconds", 0.0) or 0.0),
+                    signal_persistence_bucket=str(position.get("signal_persistence_bucket", "fresh")),
+                    kalshi_match_score=0.0,
+                    kalshi_match_bucket="none",
+                    cross_market_support=0.0,
+                    cross_market_support_bucket="neutral",
+                    cross_market_reason="",
+                    reason=exit_reason,
+                    holding_seconds=holding_seconds,
+                    realized_pnl=realized_pnl,
+                    unrealized_pnl_after=0.0,
+                )
+            )
+            self.portfolio.positions.remove(position)
+            print(
+                f"[FAST EXIT] {exit_reason} | {str(position['question'])[:60]} | "
+                f"entry={float(position['entry_price']):.4f} exit={exit_price:.4f} pnl=${realized_pnl:.2f}"
+            )
+
+        # --- Persist state after exits ---
+        positions_df = self.portfolio.positions_frame()
+        positions_df.to_csv(self.output_dir / "positions.csv", index=False)
+        orders_df = self.portfolio.orders_frame()
+        orders_df.to_csv(self.output_dir / "orders.csv", index=False)
+        new_orders_df = orders_df.iloc[starting_order_count:].reset_index(drop=True)
+        ledger_path = self._append_ledger(new_orders_df, run_at)
+        ledger_df = pd.read_csv(ledger_path)
+        closed_trades_path = self._write_closed_trades(ledger_df)
+        closed_df = pd.read_csv(closed_trades_path) if closed_trades_path.exists() else pd.DataFrame()
+        self._write_performance_breakdown(closed_df)
+        summary = self._performance_report(ledger_df, positions_df, self.portfolio.summary())
+        (self.output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
     def run_once(self) -> dict[str, Path]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         run_at = datetime.now(timezone.utc)

@@ -190,6 +190,7 @@ def paper_loop():
     bot = PaperTradingBot()
     run_count = 0
     last_saved: dict = {}
+    fast_check_interval = 20  # seconds between price checks for open positions
 
     while True:
         run_count += 1
@@ -201,8 +202,17 @@ def paper_loop():
             print(f"  {name}: {path}")
         if max_iterations is not None and run_count >= max_iterations:
             break
-        print(f"Sleeping {sleep_seconds}s until next cycle... (Ctrl+C to stop)")
-        _time.sleep(sleep_seconds)
+
+        # Between full cycles: check open-position prices every 20s for fast stop/take exits.
+        elapsed = 0
+        while elapsed < sleep_seconds:
+            chunk = min(fast_check_interval, sleep_seconds - elapsed)
+            _time.sleep(chunk)
+            elapsed += chunk
+            try:
+                bot.fast_exit_check()
+            except Exception as exc:
+                print(f"[FAST EXIT CHECK] error (non-fatal): {exc}")
 
     print("Paper-trading loop complete.")
     sys.exit(0)

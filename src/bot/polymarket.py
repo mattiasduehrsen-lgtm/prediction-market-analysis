@@ -1445,11 +1445,44 @@ class PaperPortfolio:
             if str(signal["condition_id"]) in existing_markets:
                 continue
 
-            price = float(signal["market_price"])
-            if price <= 0:
+            signal_price = float(signal["market_price"])
+            if signal_price <= 0:
                 continue
+
+            # Fetch the live midpoint price immediately before entry.
+            # Signal prices can be up to 15 minutes stale — a price that moved 10%+
+            # since the signal was generated is a different trade entirely, so skip it.
+            token_id_for_price = str(signal.get("asset", ""))
+            live_price: float | None = None
+            if token_id_for_price:
+                import httpx as _httpx
+                try:
+                    _resp = _httpx.get(
+                        f"https://clob.polymarket.com/midpoint",
+                        params={"token_id": token_id_for_price},
+                        timeout=5.0,
+                    )
+                    if _resp.status_code == 200:
+                        _mid = _resp.json().get("mid")
+                        if _mid is not None:
+                            live_price = float(_mid)
+                except Exception:
+                    pass
+
+            if live_price is not None:
+                price_drift = abs(live_price - signal_price) / max(signal_price, 1e-9)
+                max_drift = _env_float("PAPER_MAX_ENTRY_DRIFT", 0.05)  # 5% max staleness
+                if price_drift > max_drift:
+                    print(
+                        f"[SKIP STALE] {str(signal.get('question',''))[:50]} | "
+                        f"signal={signal_price:.4f} live={live_price:.4f} drift={price_drift:.1%}"
+                    )
+                    continue
+                price = live_price
+            else:
+                price = signal_price
+
             # Simulate slippage: pay slightly more than the quoted price on entry.
-            # On Polymarket, 0.5% slippage is realistic for liquid markets.
             slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)
             price = min(price * (1 + slippage), 0.99)
 

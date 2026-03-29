@@ -15,6 +15,7 @@ from src.indexers.kalshi.client import KalshiClient
 from src.indexers.polymarket.client import PolymarketClient
 
 CURRENT_DATA_DIR = Path("data/current")
+HISTORICAL_DATA_DIR = Path("data/historical")
 KALSHI_DIR = CURRENT_DATA_DIR / "kalshi"
 POLYMARKET_DIR = CURRENT_DATA_DIR / "polymarket"
 CLOB_API_URL = "https://clob.polymarket.com"
@@ -304,7 +305,15 @@ def collect_current_data() -> None:
     _write_snapshot(POLYMARKET_DIR / "markets.parquet", _records(polymarket_markets, fetched_at))
     _write_snapshot(POLYMARKET_DIR / "trades.parquet", all_trade_records)
 
+    # Archive a timestamped copy for historical analysis and backtesting.
+    ts = now.strftime("%Y-%m-%dT%H-%M-%S")
+    _write_snapshot(HISTORICAL_DATA_DIR / "polymarket" / f"trades_{ts}.parquet", all_trade_records)
+    _write_snapshot(HISTORICAL_DATA_DIR / "polymarket" / f"markets_{ts}.parquet", _records(polymarket_markets, fetched_at))
+    _write_snapshot(HISTORICAL_DATA_DIR / "kalshi" / f"trades_{ts}.parquet", _records(kalshi_recent_trades, fetched_at))
+    _write_snapshot(HISTORICAL_DATA_DIR / "kalshi" / f"markets_{ts}.parquet", _records(kalshi_markets, fetched_at))
+
     print(f"Saved Kalshi markets snapshot: {len(kalshi_markets)} rows")
     print(f"Saved Kalshi trades snapshot: {len(kalshi_recent_trades)} rows")
     print(f"Saved Polymarket markets snapshot: {len(polymarket_markets)} rows")
     print(f"Saved Polymarket trades snapshot: {len(all_trade_records)} rows ({len(data_api_records)} live + {len(clob_history)} CLOB history)")
+    print(f"Archived historical snapshot: {ts}")

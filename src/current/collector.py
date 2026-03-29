@@ -61,8 +61,9 @@ def _collect_kalshi_markets(client: KalshiClient, min_close_ts: int, max_close_t
     We still apply the close-time filter in post so we only keep markets that resolve
     within the same window we care about.
     """
+    max_kalshi_markets = _env_int("CURRENT_KALSHI_EVENTS_LIMIT", 3000)
     markets = []
-    for batch, cursor in client.iter_markets_via_events(limit=200, max_markets=5000):
+    for batch, cursor in client.iter_markets_via_events(limit=200, max_markets=max_kalshi_markets):
         for m in batch:
             # Keep markets that close within our desired window (or have no close time).
             close_time = getattr(m, "close_time", None)
@@ -74,6 +75,8 @@ def _collect_kalshi_markets(client: KalshiClient, min_close_ts: int, max_close_t
                 except Exception:
                     pass
             markets.append(m)
+        if len(markets) >= max_kalshi_markets:
+            break
         if not cursor:
             break
     return markets

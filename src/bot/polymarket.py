@@ -1783,7 +1783,13 @@ class PriceMonitor:
                                 data = json.loads(raw)
                             except Exception:
                                 continue
-                            self._handle_message(data)
+                            # Server sometimes sends a list of messages in one frame.
+                            if isinstance(data, list):
+                                for item in data:
+                                    if isinstance(item, dict):
+                                        self._handle_message(item)
+                            elif isinstance(data, dict):
+                                self._handle_message(data)
                     finally:
                         ping_task.cancel()
             except Exception as exc:

@@ -188,31 +188,37 @@ def paper_loop():
     max_iterations = iterations or None
 
     bot = PaperTradingBot()
+    bot.price_monitor.start()
+    print("[PRICE MONITOR] Started WebSocket price monitor")
+
     run_count = 0
     last_saved: dict = {}
-    fast_check_interval = 20  # seconds between price checks for open positions
 
-    while True:
-        run_count += 1
-        print(f"\n=== Paper loop iteration {run_count} ===")
-        collect_current_data()
-        last_saved = bot.run_once()
-        print("Paper-trading run complete.")
-        for name, path in last_saved.items():
-            print(f"  {name}: {path}")
-        if max_iterations is not None and run_count >= max_iterations:
-            break
+    try:
+        while True:
+            run_count += 1
+            print(f"\n=== Paper loop iteration {run_count} ===")
+            collect_current_data()
+            last_saved = bot.run_once()
+            # Subscribe any newly opened positions to the price monitor.
+            bot.subscribe_open_positions()
+            print("Paper-trading run complete.")
+            for name, path in last_saved.items():
+                print(f"  {name}: {path}")
+            if max_iterations is not None and run_count >= max_iterations:
+                break
 
-        # Between full cycles: check open-position prices every 20s for fast stop/take exits.
-        elapsed = 0
-        while elapsed < sleep_seconds:
-            chunk = min(fast_check_interval, sleep_seconds - elapsed)
-            _time.sleep(chunk)
-            elapsed += chunk
-            try:
-                bot.fast_exit_check()
-            except Exception as exc:
-                print(f"[FAST EXIT CHECK] error (non-fatal): {exc}")
+            # Between full cycles: check prices every 1s using the live WS cache.
+            elapsed = 0
+            while elapsed < sleep_seconds:
+                _time.sleep(1)
+                elapsed += 1
+                try:
+                    bot.fast_exit_check()
+                except Exception as exc:
+                    print(f"[FAST EXIT CHECK] error (non-fatal): {exc}")
+    finally:
+        bot.price_monitor.stop()
 
     print("Paper-trading loop complete.")
     sys.exit(0)

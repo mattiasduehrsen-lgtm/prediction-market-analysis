@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import math
 import os
 import re
+import threading
 import time
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
@@ -1609,6 +1611,213 @@ class PaperPortfolio:
         }
 
 
+class PriceMonitor:
+    """Background WebSocket thread that maintains a live mid-price cache for open positions.
+
+    Subscribes to ``wss://ws-subscriptions-clob.polymarket.com/ws/market`` and updates
+    an in-memory dict whenever the CLOB pushes a ``price_change``, ``last_trade_price``,
+    or ``book`` event.  A REST ``POST /midpoints`` fallback seeds the cache for tokens
+    that haven't received a WS message yet.
+
+    Usage::
+
+        monitor = PriceMonitor()
+        monitor.start()
+        monitor.subscribe(["token_id_1", "token_id_2"])
+        price = monitor.get_price("token_id_1")   # None until first update
+        monitor.stop()
+    """
+
+    WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    CLOB_REST = "https://clob.polymarket.com"
+
+    def __init__(self) -> None:
+        self._prices: dict[str, float] = {}
+        self._lock = threading.Lock()
+        self._subscribed: set[str] = set()
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._ws: Any = None  # websockets connection, set inside the async loop
+        self._running = False
+
+    # ------------------------------------------------------------------
+    # Public API (called from the main thread)
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True, name="price-monitor")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        # Close the WebSocket gracefully so the async loop exits on its own.
+        if self._loop and self._ws is not None:
+            asyncio.run_coroutine_threadsafe(self._ws.close(), self._loop)
+        elif self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+    def get_price(self, token_id: str) -> float | None:
+        with self._lock:
+            return self._prices.get(token_id)
+
+    def subscribe(self, token_ids: list[str]) -> None:
+        """Add token IDs to the subscription set.  Safe to call from any thread."""
+        new_ids = [t for t in token_ids if t and t not in self._subscribed]
+        if not new_ids:
+            return
+        self._subscribed.update(new_ids)
+        # Seed cache via REST immediately so we don't wait for the first WS message.
+        self._seed_rest(new_ids)
+        # If WS is connected, dynamically subscribe without reconnecting.
+        if self._loop and self._ws is not None:
+            msg = json.dumps({"assets_ids": new_ids, "operation": "subscribe"})
+            asyncio.run_coroutine_threadsafe(self._send(msg), self._loop)
+
+    def unsubscribe(self, token_ids: list[str]) -> None:
+        for t in token_ids:
+            self._subscribed.discard(t)
+            with self._lock:
+                self._prices.pop(t, None)
+        if self._loop and self._ws is not None and token_ids:
+            msg = json.dumps({"assets_ids": token_ids, "operation": "unsubscribe"})
+            asyncio.run_coroutine_threadsafe(self._send(msg), self._loop)
+
+    # ------------------------------------------------------------------
+    # REST seed (called from main thread when subscribing)
+    # ------------------------------------------------------------------
+
+    def _seed_rest(self, token_ids: list[str]) -> None:
+        """Fetch midpoints via REST and populate cache so prices are available immediately."""
+        import httpx
+        try:
+            resp = httpx.post(
+                f"{self.CLOB_REST}/midpoints",
+                json=[{"token_id": t} for t in token_ids],
+                timeout=8.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                # Response may be a list or a dict keyed by token_id.
+                items = data if isinstance(data, list) else [{"token_id": k, "mid": v} for k, v in data.items()]
+                with self._lock:
+                    for item in items:
+                        tid = item.get("token_id") or item.get("asset_id")
+                        mid = item.get("mid") or item.get("price")
+                        if tid and mid is not None:
+                            try:
+                                self._prices[str(tid)] = float(mid)
+                            except (TypeError, ValueError):
+                                pass
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Background async loop (runs in daemon thread)
+    # ------------------------------------------------------------------
+
+    def _run(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._listen())
+        except Exception:
+            pass
+
+    async def _send(self, msg: str) -> None:
+        if self._ws is not None:
+            try:
+                await self._ws.send(msg)
+            except Exception:
+                pass
+
+    async def _ping_loop(self, ws: Any) -> None:
+        while True:
+            await asyncio.sleep(10)
+            try:
+                await ws.send("PING")
+            except Exception:
+                break
+
+    async def _listen(self) -> None:
+        import websockets
+
+        while self._running:
+            try:
+                async with websockets.connect(self.WS_URL, ping_interval=None, open_timeout=15) as ws:
+                    self._ws = ws
+                    print("[PRICE MONITOR] WebSocket connected")
+
+                    # Subscribe to all known tokens on connect / reconnect.
+                    if self._subscribed:
+                        await ws.send(json.dumps({
+                            "assets_ids": list(self._subscribed),
+                            "type": "market",
+                            "custom_feature_enabled": True,
+                        }))
+
+                    ping_task = asyncio.create_task(self._ping_loop(ws))
+                    try:
+                        async for raw in ws:
+                            if not self._running:
+                                break
+                            if raw == "PONG":
+                                continue
+                            try:
+                                data = json.loads(raw)
+                            except Exception:
+                                continue
+                            self._handle_message(data)
+                    finally:
+                        ping_task.cancel()
+            except Exception as exc:
+                if self._running:
+                    print(f"[PRICE MONITOR] WS error: {exc} — reconnecting in 5s")
+                    await asyncio.sleep(5)
+            finally:
+                self._ws = None
+
+    def _handle_message(self, data: dict) -> None:
+        event_type = data.get("event_type")
+
+        if event_type == "price_change":
+            for change in data.get("price_changes", []):
+                asset_id = str(change.get("asset_id", ""))
+                best_bid = change.get("best_bid")
+                best_ask = change.get("best_ask")
+                if asset_id and best_bid is not None and best_ask is not None:
+                    try:
+                        mid = (float(best_bid) + float(best_ask)) / 2.0
+                        with self._lock:
+                            self._prices[asset_id] = mid
+                    except (TypeError, ValueError):
+                        pass
+
+        elif event_type == "last_trade_price":
+            asset_id = str(data.get("asset_id", ""))
+            price = data.get("price")
+            if asset_id and price is not None:
+                try:
+                    with self._lock:
+                        self._prices[asset_id] = float(price)
+                except (TypeError, ValueError):
+                    pass
+
+        elif event_type == "book":
+            asset_id = str(data.get("asset_id", ""))
+            bids = data.get("bids", [])
+            asks = data.get("asks", [])
+            if asset_id and bids and asks:
+                try:
+                    mid = (float(bids[0]["price"]) + float(asks[0]["price"])) / 2.0
+                    with self._lock:
+                        self._prices[asset_id] = mid
+                except (TypeError, ValueError, KeyError, IndexError):
+                    pass
+
+
 class PaperTradingBot:
     def __init__(
         self,
@@ -1624,6 +1833,14 @@ class PaperTradingBot:
         self.output_dir = Path(output_dir)
         self.strategy = strategy or VolumeMomentumStrategy()
         self.portfolio = portfolio or PaperPortfolio(live_executor=live_executor)
+        self.price_monitor = PriceMonitor()
+        self._last_positions_write: float = 0.0  # unix timestamp of last positions.csv write
+
+    def subscribe_open_positions(self) -> None:
+        """Subscribe the price monitor to all currently open position token IDs."""
+        token_ids = [str(p.get("asset", "")) for p in self.portfolio.positions if p.get("asset")]
+        if token_ids:
+            self.price_monitor.subscribe(token_ids)
 
     def _load_signal_history(self) -> pd.DataFrame:
         history_path = self.output_dir / "signal_history.csv"
@@ -1960,42 +2177,53 @@ class PaperTradingBot:
         }
 
     def fast_exit_check(self) -> None:
-        """Fetch live CLOB prices for open positions and exit on stop-loss / take-profit / trailing-stop.
+        """Check open-position prices and exit on stop-loss / take-profit / trailing-stop.
 
-        Called every ~20 seconds between full cycles so price-based exits aren't delayed by the
-        15-minute data-collection window.  Does NOT enter new positions or re-score signals.
+        Prices come from the live WebSocket cache (sub-second latency).  Any tokens not yet
+        in the cache fall back to a single batched REST ``POST /midpoints`` call.
+        Called every ~1 second between full cycles — does NOT enter new positions.
         """
-        import time as _time
-
-        import httpx
-
         if not self.portfolio.positions:
             return
 
         run_at = datetime.now(timezone.utc)
         cfg = self.strategy.config
-        now_ts = int(_time.time())
-        clob_url = "https://clob.polymarket.com"
         slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)
 
-        # --- Fetch current price for each open position via CLOB prices-history (2-min window) ---
+        # --- Collect prices: WS cache first, REST batch fallback for misses ---
         prices: dict[str, float] = {}
-        with httpx.Client(timeout=8.0) as http:
-            for position in self.portfolio.positions:
-                token_id = str(position.get("asset", ""))
-                if not token_id:
-                    continue
-                try:
-                    resp = http.get(
-                        f"{clob_url}/prices-history",
-                        params={"market": token_id, "startTs": now_ts - 120, "endTs": now_ts, "fidelity": 1},
-                    )
-                    if resp.status_code == 200:
-                        history = resp.json().get("history", [])
-                        if history:
-                            prices[token_id] = float(history[-1]["p"])
-                except Exception:
-                    continue
+        missing: list[str] = []
+        for position in self.portfolio.positions:
+            token_id = str(position.get("asset", ""))
+            if not token_id:
+                continue
+            cached = self.price_monitor.get_price(token_id)
+            if cached is not None:
+                prices[token_id] = cached
+            else:
+                missing.append(token_id)
+
+        if missing:
+            import httpx
+            try:
+                resp = httpx.post(
+                    "https://clob.polymarket.com/midpoints",
+                    json=[{"token_id": t} for t in missing],
+                    timeout=8.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    items = data if isinstance(data, list) else [{"token_id": k, "mid": v} for k, v in data.items()]
+                    for item in items:
+                        tid = str(item.get("token_id") or item.get("asset_id") or "")
+                        mid = item.get("mid") or item.get("price")
+                        if tid and mid is not None:
+                            try:
+                                prices[tid] = float(mid)
+                            except (TypeError, ValueError):
+                                pass
+            except Exception:
+                pass
 
         if not prices:
             return
@@ -2031,8 +2259,11 @@ class PaperTradingBot:
             if exit_reason:
                 exits.append((position, exit_reason, current_price))
 
-        # Always persist updated prices so the dashboard reflects live marks.
-        self.portfolio.positions_frame().to_csv(self.output_dir / "positions.csv", index=False)
+        # Write positions.csv at most every 30s (keeps dashboard fresh without hammering disk).
+        now_ts = time.time()
+        if exits or (now_ts - self._last_positions_write >= 30):
+            self.portfolio.positions_frame().to_csv(self.output_dir / "positions.csv", index=False)
+            self._last_positions_write = now_ts
 
         if not exits:
             return

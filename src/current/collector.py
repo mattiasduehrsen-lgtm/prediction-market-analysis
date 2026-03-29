@@ -53,23 +53,29 @@ def _write_snapshot(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def _collect_kalshi_markets(client: KalshiClient, min_close_ts: int, max_close_ts: int) -> list[Any]:
-    markets = []
-    cursor = None
+    """Fetch active Kalshi binary markets via the /events endpoint.
 
-    while True:
-        batch, cursor = next(
-            client.iter_markets(
-                limit=1000,
-                cursor=cursor,
-                min_close_ts=min_close_ts,
-                max_close_ts=max_close_ts,
-            )
-        )
-        if batch:
-            markets.extend(batch)
+    The /markets endpoint is overwhelmed by pre-created KXMVE exotic sports and weather
+    markets (all 'initialized', no prices).  /events?with_nested_markets=true returns
+    only real, live prediction markets with actual bid/ask prices.
+    We still apply the close-time filter in post so we only keep markets that resolve
+    within the same window we care about.
+    """
+    markets = []
+    for batch, cursor in client.iter_markets_via_events(limit=200, max_markets=5000):
+        for m in batch:
+            # Keep markets that close within our desired window (or have no close time).
+            close_time = getattr(m, "close_time", None)
+            if close_time is not None:
+                try:
+                    close_ts_ms = int(close_time.timestamp() * 1000)
+                    if close_ts_ms < min_close_ts or close_ts_ms > max_close_ts:
+                        continue
+                except Exception:
+                    pass
+            markets.append(m)
         if not cursor:
             break
-
     return markets
 
 

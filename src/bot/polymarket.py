@@ -508,10 +508,10 @@ class StrategyConfig:
             max_candidates=_env_int("PAPER_MAX_CANDIDATES", 5),
             max_seconds_since_last_trade=_env_int("PAPER_MAX_SECONDS_SINCE_LAST_TRADE", 7200),
             min_hours_to_expiry=_env_float("PAPER_MIN_HOURS_TO_EXPIRY", 2.0),
-            max_hours_to_expiry=_env_float("PAPER_MAX_HOURS_TO_EXPIRY", 168.0),
+            max_hours_to_expiry=_env_float("PAPER_MAX_HOURS_TO_EXPIRY", 48.0),
             exit_edge_threshold=_env_float("PAPER_EXIT_EDGE_THRESHOLD", -0.01),
             take_profit_pct=_env_float("PAPER_TAKE_PROFIT_PCT", 0.25),
-            stop_loss_pct=_env_float("PAPER_STOP_LOSS_PCT", 0.20),
+            stop_loss_pct=_env_float("PAPER_STOP_LOSS_PCT", 0.07),
             trailing_stop_drawdown_pct=_env_float("PAPER_TRAILING_STOP_DRAWDOWN_PCT", 0.12),
             max_holding_seconds=_env_int("PAPER_MAX_HOLDING_SECONDS", 86400),
             min_cross_market_overlap=_env_float("PAPER_MIN_CROSS_MARKET_OVERLAP", 0.35),
@@ -805,7 +805,8 @@ class KalshiSnapshot:
             return pd.Series([default] * len(frame), index=frame.index)
 
         frame["status"] = _series("status", "").fillna("").astype(str).str.lower()
-        frame = frame[~frame["status"].isin(["settled", "finalized"])]
+        # Only keep live, tradeable markets — skip initialized (not yet open), settled, finalized.
+        frame = frame[frame["status"].isin(["active", "open"])]
         if frame.empty:
             return pd.DataFrame()
 
@@ -815,10 +816,23 @@ class KalshiSnapshot:
             # If values are clearly in cents (>1.0), divide by 100. Otherwise already in dollars.
             return numeric.where(numeric <= 1.0, numeric / 100.0)
 
+        # Read prices — model stores them as yes_bid (parsed float) but also check raw _dollars fields
+        # in case the parquet was written before models.py parsed them correctly.
         yes_bid = _to_price(_series("yes_bid", math.nan))
         yes_ask = _to_price(_series("yes_ask", math.nan))
         last_price = _to_price(_series("last_price", math.nan))
+        # Fallback: raw API dollar-string fields stored verbatim in older snapshots
+        if yes_ask.isna().all():
+            yes_ask = _to_price(pd.to_numeric(_series("yes_ask_dollars", math.nan), errors="coerce"))
+        if yes_bid.isna().all():
+            yes_bid = _to_price(pd.to_numeric(_series("yes_bid_dollars", math.nan), errors="coerce"))
+        if last_price.isna().all():
+            last_price = _to_price(pd.to_numeric(_series("last_price_dollars", math.nan), errors="coerce"))
         frame["kalshi_yes_price"] = yes_ask.fillna(yes_bid).fillna(last_price)
+        # Drop rows with no price — they are pre-created but inactive markets with no liquidity.
+        frame = frame[frame["kalshi_yes_price"].notna()]
+        if frame.empty:
+            return pd.DataFrame()
         frame["kalshi_no_price"] = 1 - frame["kalshi_yes_price"]
         frame["kalshi_mid_price"] = pd.concat([yes_bid, yes_ask], axis=1).mean(axis=1).fillna(frame["kalshi_yes_price"])
         frame["kalshi_question"] = _series("title", "").fillna("").astype(str)

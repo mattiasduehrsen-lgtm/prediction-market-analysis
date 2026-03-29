@@ -134,6 +134,7 @@ class KalshiClient:
         cursor: Optional[str] = None,
         min_close_ts: Optional[int] = None,
         max_close_ts: Optional[int] = None,
+        status: Optional[str] = "active",
     ) -> Generator[tuple[list[Market], Optional[str]], None, None]:
         while True:
             params = {"limit": limit}
@@ -143,6 +144,8 @@ class KalshiClient:
                 params["min_close_ts"] = min_close_ts
             if max_close_ts is not None:
                 params["max_close_ts"] = max_close_ts
+            if status is not None:
+                params["status"] = status
 
             data = self._get("/markets", params=params)
 
@@ -157,3 +160,36 @@ class KalshiClient:
     def get_recent_trades(self, limit: int = 100) -> list[Trade]:
         data = self._get("/markets/trades", params={"limit": limit})
         return [Trade.from_dict(t) for t in data.get("trades", [])]
+
+    def iter_markets_via_events(
+        self,
+        limit: int = 200,
+        max_markets: int = 5000,
+    ) -> Generator[tuple[list[Market], Optional[str]], None, None]:
+        """Fetch live binary markets via the /events endpoint with nested markets.
+
+        The /markets endpoint is dominated by pre-created exotic multi-leg (KXMVE) and
+        weather markets with no prices.  /events?with_nested_markets=true returns the
+        actual prediction markets (politics, crypto, sports, etc.) with real bid/ask data.
+        """
+        cursor = None
+        fetched = 0
+        while fetched < max_markets:
+            params: dict = {"limit": limit, "with_nested_markets": "true"}
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get("/events", params=params)
+            events = data.get("events", [])
+            cursor = data.get("cursor")
+
+            markets: list[Market] = []
+            for event in events:
+                for m in event.get("markets", []):
+                    try:
+                        markets.append(Market.from_dict(m))
+                    except Exception:
+                        continue
+            fetched += len(markets)
+            yield markets, cursor
+            if not cursor:
+                break

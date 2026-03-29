@@ -1813,8 +1813,13 @@ class PriceMonitor:
                 pass
 
     async def _ping_loop(self, ws: Any) -> None:
+        # Send first PING immediately — server drops idle connections after ~10s.
+        try:
+            await ws.send("PING")
+        except Exception:
+            return
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(9)
             try:
                 await ws.send("PING")
             except Exception:
@@ -1829,13 +1834,14 @@ class PriceMonitor:
                     self._ws = ws
                     print("[PRICE MONITOR] WebSocket connected")
 
-                    # Subscribe to all known tokens on connect / reconnect.
-                    if self._subscribed:
-                        await ws.send(json.dumps({
-                            "assets_ids": list(self._subscribed),
-                            "type": "market",
-                            "custom_feature_enabled": True,
-                        }))
+                    # Subscribe to known tokens, or send a minimal keepalive subscription
+                    # so the server doesn't close an idle connection immediately.
+                    sub_ids = list(self._subscribed) if self._subscribed else []
+                    await ws.send(json.dumps({
+                        "assets_ids": sub_ids,
+                        "type": "market",
+                        "custom_feature_enabled": True,
+                    }))
 
                     ping_task = asyncio.create_task(self._ping_loop(ws))
                     try:

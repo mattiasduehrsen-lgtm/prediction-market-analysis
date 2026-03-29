@@ -304,6 +304,12 @@
     </div>
   </div>
 
+  <!-- Performance breakdown -->
+  <div class="section">
+    <h2>Signal Quality Breakdown</h2>
+    <div id="perf-breakdown" style="display:flex; gap:24px; flex-wrap:wrap;"></div>
+  </div>
+
   <div class="last-updated" id="last-updated"></div>
   <div class="last-updated" id="next-refresh"></div>
 
@@ -533,6 +539,36 @@
     await checkBotStatus();
   }
 
+  async function loadPerformanceBreakdown() {
+    const data = await fetch("/api/performance").then(r => r.json());
+    const container = document.getElementById("perf-breakdown");
+    if (!container) return;
+    const sections = {
+      "by_support_bucket": "Kalshi Confirmation",
+      "by_persistence_bucket": "Signal Persistence",
+      "by_entry_timing_bucket": "Entry Timing",
+    };
+    container.innerHTML = Object.entries(sections).map(([key, title]) => {
+      const buckets = data[key] || {};
+      if (!Object.keys(buckets).length) return "";
+      const rows = Object.entries(buckets).map(([bucket, s]) =>
+        `<tr>
+          <td>${bucket.replace(/_/g, " ")}</td>
+          <td>${s.trades}</td>
+          <td class="${s.win_rate >= 0.5 ? 'pnl-pos' : 'pnl-neg'}">${(s.win_rate * 100).toFixed(0)}%</td>
+          <td class="${s.avg_realized_pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${s.avg_realized_pnl >= 0 ? "+" : ""}$${s.avg_realized_pnl.toFixed(2)}</td>
+        </tr>`
+      ).join("");
+      return `<div style="flex:1; min-width:220px;">
+        <h3 style="font-size:13px; color:#a0aec0; margin-bottom:8px;">${title}</h3>
+        <table style="width:100%; font-size:12px;">
+          <thead><tr><th>Bucket</th><th>Trades</th><th>Win%</th><th>Avg P&L</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    }).join("");
+  }
+
   async function refresh() {
     await Promise.all([
       loadSummary(),
@@ -540,6 +576,7 @@
       loadPositions(),
       loadClosedTrades(),
       loadEquityChart(),
+      loadPerformanceBreakdown(),
       checkBotStatus(),
     ]);
     document.getElementById("last-updated").textContent =

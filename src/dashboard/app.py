@@ -149,6 +149,11 @@ def debug():
     return jsonify(result)
 
 
+@app.route("/api/performance")
+def performance():
+    return jsonify(_read_json(OUTPUT_DIR / "performance_breakdown.json"))
+
+
 @app.route("/api/bot/log")
 def bot_log():
     log_path = Path(__file__).resolve().parents[2] / "bot.log"

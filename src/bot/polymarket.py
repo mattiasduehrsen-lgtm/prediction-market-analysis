@@ -1039,88 +1039,82 @@ class VolumeMomentumStrategy:
         else:
             signals["signal_persistence_bucket"] = signals["signal_persistence_bucket"].fillna("fresh")
 
-        # Standard signal: recent trades show VWAP above current price
-        vwap_eligible = (
+        base_eligible = (
             signals["active"]
             & ~signals["closed"]
             & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
             & (signals["liquidity"] >= cfg.min_liquidity)
+            & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
+            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
+            & ~signals["kalshi_disagrees"]
+        )
+
+        # Signal 1: Cross-exchange mispricing — Kalshi prices this outcome meaningfully higher than Polymarket.
+        # Two independent exchanges disagreeing on probability is a real, exploitable edge.
+        kalshi_price_gap = signals["kalshi_price_gap"].fillna(0.0)
+        kalshi_eligible = (
+            base_eligible
+            & signals["kalshi_confirms"].fillna(False)
+            & (kalshi_price_gap >= cfg.kalshi_price_gap_threshold)
+        )
+
+        # Signal 2: Order book buying pressure — more buyers than sellers right now in the live order book.
+        # Requires a meaningful imbalance (>20% net buyer) confirmed by liquidity.
+        ob_imbalance = signals["ob_imbalance"].fillna(0.0) if "ob_imbalance" in signals.columns else pd.Series(0.0, index=signals.index)
+        ob_eligible = (
+            base_eligible
+            & (ob_imbalance >= 0.20)
+            & (signals["liquidity"] >= cfg.min_liquidity * 2)
+            & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
+        )
+
+        # Signal 3: VWAP edge confirmed by either Kalshi or order book.
+        # Pure momentum alone was shown to lose — require a second confirming signal.
+        vwap_confirmed = (
+            base_eligible
             & (signals["recent_trade_count"] >= cfg.min_recent_trades)
             & (signals["recent_notional"] >= cfg.min_recent_notional)
             & (signals["buy_share"] >= cfg.min_buy_share)
             & (signals["edge"] >= cfg.edge_threshold)
             & (signals["edge_ratio"] >= cfg.edge_ratio_threshold)
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
-            & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
-            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
             & (signals["last_trade_price"] >= signals["market_price"])
-            & ~signals["kalshi_disagrees"]
+            & (kalshi_eligible | (ob_imbalance >= 0.10))  # must have cross-market or order book support
         )
 
-        # Kalshi price signal: Kalshi prices this outcome higher than Polymarket
-        # This works without trade history — just compares current prices across exchanges.
-        kalshi_price_gap = signals["kalshi_price_gap"].fillna(0.0)
-        kalshi_eligible = (
-            signals["active"]
-            & ~signals["closed"]
-            & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
-            & (signals["liquidity"] >= cfg.min_liquidity)
-            & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
-            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
-            & signals["kalshi_confirms"].fillna(False)
-            & (kalshi_price_gap >= cfg.kalshi_price_gap_threshold * 2)
-        )
+        eligible = kalshi_eligible | ob_eligible | vwap_confirmed
 
-        # Momentum signal: price has been consistently trending up over the lookback window.
-        # Uses early vs late VWAP split from the CLOB 6-hour price history.
-        momentum = signals["price_momentum"].fillna(0.0) if "price_momentum" in signals.columns else pd.Series(0.0, index=signals.index)
-        momentum_eligible = (
-            signals["active"]
-            & ~signals["closed"]
-            & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
-            & (signals["liquidity"] >= cfg.min_liquidity)
-            & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
-            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
-            & (momentum >= cfg.min_price_momentum)
-            & ~signals["kalshi_disagrees"]
-        )
-
-        eligible = vwap_eligible | kalshi_eligible | momentum_eligible
-
+        # Conviction: weight cross-market and order book signals heavily since they're higher quality.
+        kalshi_component = (kalshi_price_gap / max(cfg.kalshi_price_gap_threshold * 3, 1e-9)).apply(_clamp)
+        ob_component = (ob_imbalance / 0.5).apply(_clamp)
         edge_component = (signals["edge"] / max(cfg.edge_threshold * 2, 1e-9)).apply(_clamp)
-        ratio_component = (signals["edge_ratio"] / max(cfg.edge_ratio_threshold * 2, 1e-9)).apply(_clamp)
         flow_component = ((signals["buy_share"] - cfg.min_buy_share) / max(1 - cfg.min_buy_share, 1e-9)).apply(_clamp)
         notional_component = (
             signals["recent_notional"].apply(lambda x: math.log1p(max(x, 0)))
             / max(math.log1p(cfg.min_recent_notional * 8), 1e-9)
         ).apply(_clamp)
-        freshness_component = (1 - (signals["seconds_since_last_trade"] / cfg.max_seconds_since_last_trade)).apply(
-            _clamp
-        )
 
         signals["conviction"] = (
-            0.30 * edge_component
-            + 0.20 * ratio_component
-            + 0.20 * flow_component
-            + 0.20 * notional_component
-            + 0.10 * freshness_component
+            0.35 * kalshi_component   # cross-exchange mispricing is strongest signal
+            + 0.25 * ob_component     # live order book imbalance
+            + 0.20 * edge_component   # VWAP edge
+            + 0.10 * flow_component   # buy/sell ratio
+            + 0.10 * notional_component  # market activity
         )
         persistence_boost = (signals["signal_runs"] - 1).clip(lower=0, upper=3) * 0.02
         stale_penalty = ((signals["signal_age_seconds"] - 6 * 3600).clip(lower=0) / (24 * 3600)).clip(upper=0.15)
-        signals["conviction"] = signals["conviction"] + persistence_boost - stale_penalty
-        signals["conviction"] = (signals["conviction"] + signals["cross_market_support"]).clip(lower=0.0, upper=1.0)
-        signals["score"] = signals["score"] * (1 + signals["cross_market_support"])
+        signals["conviction"] = (signals["conviction"] + persistence_boost - stale_penalty).clip(lower=0.0, upper=1.0)
+        signals["score"] = signals["score"] * (1 + signals["cross_market_support"]) * (1 + ob_component * 0.5)
 
         signals.loc[eligible, "signal"] = "buy"
         eligible_rows = signals.loc[eligible]
         signals.loc[eligible, "entry_reason"] = eligible_rows.apply(
             lambda row: (
-                f"edge={row['edge']:.3f}, momentum={row.get('price_momentum', 0):.3f}, "
-                f"edge_pct={row['edge_ratio']:.1%}, "
-                f"buy_share={row['buy_share']:.1%}, recent_notional=${row['recent_notional']:.0f}, "
-                f"trades={int(row['recent_trade_count'])}, last_trade_age={int(row['seconds_since_last_trade'])}s, "
+                f"kalshi_gap={row.get('kalshi_price_gap', 0) or 0:.3f}, "
+                f"ob_imbalance={row.get('ob_imbalance', 0) or 0:.2f}, "
+                f"edge={row['edge']:.3f}, buy_share={row['buy_share']:.1%}, "
                 f"expiry={row['hours_to_expiry']:.1f}h, signal_runs={int(row['signal_runs'])}, "
-                f"signal_age={int(row['signal_age_seconds'])}s, {row['cross_market_reason']}"
+                f"{row['cross_market_reason']}"
             ),
             axis=1,
         )
@@ -1179,12 +1173,11 @@ class VolumeMomentumStrategy:
         )
 
         merged["exit_reason"] = ""
+        # Apply exits in priority order: higher priority assignments overwrite lower ones.
+        # market_inactive < max_hold < edge_reversal < momentum_reversal < trailing_stop < stop_loss < take_profit
         merged.loc[merged["closed"] | ~merged["active"], "exit_reason"] = "market_inactive"
         merged.loc[merged["holding_seconds"] >= cfg.max_holding_seconds, "exit_reason"] = "max_hold"
         merged.loc[merged["edge"] <= cfg.exit_edge_threshold, "exit_reason"] = "edge_reversal"
-        merged.loc[merged["return_pct"] >= cfg.take_profit_pct, "exit_reason"] = "take_profit"
-        merged.loc[merged["return_pct"] <= -cfg.stop_loss_pct, "exit_reason"] = "stop_loss"
-        # Momentum reversal: if the price trend that drove entry has flipped negative, exit early.
         if "price_momentum" in merged.columns:
             merged.loc[
                 (merged["price_momentum"] < -cfg.min_price_momentum)
@@ -1195,6 +1188,9 @@ class VolumeMomentumStrategy:
             (merged["return_pct"] > 0) & (merged["drawdown_from_peak_pct"] <= -cfg.trailing_stop_drawdown_pct),
             "exit_reason",
         ] = "trailing_stop"
+        # stop_loss and take_profit always win — applied last so they can't be overwritten.
+        merged.loc[merged["return_pct"] <= -cfg.stop_loss_pct, "exit_reason"] = "stop_loss"
+        merged.loc[merged["return_pct"] >= cfg.take_profit_pct, "exit_reason"] = "take_profit"
 
         return merged[merged["exit_reason"] != ""].reset_index(drop=True)
 
@@ -1692,6 +1688,9 @@ class PaperTradingBot:
         buy_signals = (
             scored_df[scored_df["signal"] == "buy"].copy() if "signal" in scored_df.columns else pd.DataFrame()
         )
+        # Carry forward history for markets that briefly drop off the buy list (missed 1-2 cycles).
+        # Without this, a market that misses one cycle resets to signal_runs=1 and loses conviction.
+        cycle_seconds = 900  # 15-minute cycle
         for _, row in buy_signals.iterrows():
             key = (str(row["condition_id"]), int(row["outcome_index"]))
             previous = prior_map.get(key)
@@ -1701,7 +1700,13 @@ class PaperTradingBot:
                 first_seen_at = pd.to_datetime(previous["first_seen_at"], utc=True, errors="coerce")
                 if pd.isna(first_seen_at):
                     first_seen_at = pd.Timestamp(run_at)
-                signal_runs = int(previous.get("signal_runs", 0) or 0) + 1
+                prev_last_seen = pd.to_datetime(previous.get("last_seen_at"), utc=True, errors="coerce")
+                # If the signal was last seen within 3 cycles, treat as continuous (not reset).
+                if pd.notna(prev_last_seen) and (pd.Timestamp(run_at) - prev_last_seen).total_seconds() <= cycle_seconds * 3:
+                    signal_runs = int(previous.get("signal_runs", 0) or 0) + 1
+                else:
+                    # Gap too large — start fresh but keep first_seen_at for age tracking
+                    signal_runs = 1
             signal_age_seconds = max((pd.Timestamp(run_at) - first_seen_at).total_seconds(), 0.0)
             records.append(
                 {

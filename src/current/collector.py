@@ -218,7 +218,7 @@ def collect_current_data() -> None:
     now = datetime.now(timezone.utc)
     fetched_at = datetime.utcnow()
 
-    kalshi_market_hours = _env_int("CURRENT_KALSHI_MARKET_HOURS", 48)
+    kalshi_market_hours = _env_int("CURRENT_KALSHI_MARKET_HOURS", 17520)  # 2 years — fetch all active markets
     kalshi_recent_trades_limit = _env_int("CURRENT_KALSHI_RECENT_TRADES_LIMIT", 1000)
     polymarket_markets_limit = _env_int("CURRENT_POLYMARKET_MARKETS_LIMIT", 500)
     polymarket_trades_limit = _env_int("CURRENT_POLYMARKET_TRADES_LIMIT", 500)

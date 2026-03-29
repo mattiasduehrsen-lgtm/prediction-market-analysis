@@ -807,9 +807,15 @@ class KalshiSnapshot:
         if frame.empty:
             return pd.DataFrame()
 
-        yes_bid = pd.to_numeric(_series("yes_bid", math.nan), errors="coerce") / 100.0
-        yes_ask = pd.to_numeric(_series("yes_ask", math.nan), errors="coerce") / 100.0
-        last_price = pd.to_numeric(_series("last_price", math.nan), errors="coerce") / 100.0
+        def _to_price(series: pd.Series) -> pd.Series:
+            """Convert Kalshi price to 0-1 range. Handles both old integer-cents and new dollar formats."""
+            numeric = pd.to_numeric(series, errors="coerce")
+            # If values are clearly in cents (>1.0), divide by 100. Otherwise already in dollars.
+            return numeric.where(numeric <= 1.0, numeric / 100.0)
+
+        yes_bid = _to_price(_series("yes_bid", math.nan))
+        yes_ask = _to_price(_series("yes_ask", math.nan))
+        last_price = _to_price(_series("last_price", math.nan))
         frame["kalshi_yes_price"] = yes_ask.fillna(yes_bid).fillna(last_price)
         frame["kalshi_no_price"] = 1 - frame["kalshi_yes_price"]
         frame["kalshi_mid_price"] = pd.concat([yes_bid, yes_ask], axis=1).mean(axis=1).fillna(frame["kalshi_yes_price"])

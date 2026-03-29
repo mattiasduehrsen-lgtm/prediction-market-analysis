@@ -69,6 +69,22 @@ class Market:
                 return None
             return parse_datetime(val)
 
+        def _price(key: str, dollars_key: str) -> Optional[float]:
+            """Read price from integer cents field or fallback to dollars string field."""
+            v = data.get(key)
+            if v is not None:
+                try:
+                    return float(v) / 100.0
+                except (TypeError, ValueError):
+                    pass
+            d = data.get(dollars_key)
+            if d is not None:
+                try:
+                    return float(d)
+                except (TypeError, ValueError):
+                    pass
+            return None
+
         return cls(
             ticker=data["ticker"],
             event_ticker=data["event_ticker"],
@@ -77,11 +93,11 @@ class Market:
             yes_sub_title=data.get("yes_sub_title", ""),
             no_sub_title=data.get("no_sub_title", ""),
             status=data["status"],
-            yes_bid=data.get("yes_bid"),
-            yes_ask=data.get("yes_ask"),
-            no_bid=data.get("no_bid"),
-            no_ask=data.get("no_ask"),
-            last_price=data.get("last_price"),
+            yes_bid=_price("yes_bid", "yes_bid_dollars"),
+            yes_ask=_price("yes_ask", "yes_ask_dollars"),
+            no_bid=_price("no_bid", "no_bid_dollars"),
+            no_ask=_price("no_ask", "no_ask_dollars"),
+            last_price=_price("last_price", "last_price_dollars"),
             volume=data.get("volume", 0),
             volume_24h=data.get("volume_24h", 0),
             open_interest=data.get("open_interest", 0),

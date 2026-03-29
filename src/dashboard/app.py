@@ -43,7 +43,18 @@ def summary():
 def positions():
     rows = _read_csv(OUTPUT_DIR / "positions.csv")
     keep = ["question", "outcome", "entry_price", "current_price", "size", "unrealized_pnl", "opened_at"]
-    return jsonify([{k: r.get(k) for k in keep} for r in rows])
+    import os, datetime as dt
+    max_hold = int(os.getenv("PAPER_MAX_HOLDING_SECONDS", 28800))
+    result = []
+    for r in rows:
+        row = {k: r.get(k) for k in keep}
+        try:
+            opened = dt.datetime.fromisoformat(str(r["opened_at"]).replace("Z", "+00:00"))
+            row["force_close_at"] = (opened + dt.timedelta(seconds=max_hold)).isoformat()
+        except Exception:
+            row["force_close_at"] = None
+        result.append(row)
+    return jsonify(result)
 
 
 @app.route("/api/closed_trades")

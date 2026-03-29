@@ -275,6 +275,7 @@
             <th>Value</th>
             <th>Unrealized P&L</th>
             <th>Opened</th>
+            <th>Force Close</th>
           </tr>
         </thead>
         <tbody id="positions-body"></tbody>
@@ -427,6 +428,7 @@
         <td>${fmtDollars((r.size || 0) * (r.current_price || 0))}</td>
         <td class="${colorClass(pnl)}">${fmtDollars(pnl)}</td>
         <td>${opened}</td>
+        <td>${r.force_close_at ? new Date(r.force_close_at).toLocaleString() : "—"}</td>
       </tr>`;
     }).join("");
   }

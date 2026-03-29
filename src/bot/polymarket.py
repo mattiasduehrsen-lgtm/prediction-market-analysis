@@ -1449,36 +1449,61 @@ class PaperPortfolio:
             if signal_price <= 0:
                 continue
 
-            # Fetch the live midpoint price immediately before entry.
-            # Signal prices can be up to 15 minutes stale — a price that moved 10%+
-            # since the signal was generated is a different trade entirely, so skip it.
+            # Fetch the live order book immediately before entry.
+            # We need:
+            #   1. The actual ask price (what you pay to buy YES) — not the midpoint
+            #   2. The spread — if bid/ask gap > max_spread, market is too illiquid to trade
+            #   3. Staleness check — if live ask differs from signal price by > max_drift, skip
             token_id_for_price = str(signal.get("asset", ""))
-            live_price: float | None = None
+            live_ask: float | None = None
+            live_bid: float | None = None
             if token_id_for_price:
                 import httpx as _httpx
                 try:
                     _resp = _httpx.get(
-                        f"https://clob.polymarket.com/midpoint",
+                        "https://clob.polymarket.com/book",
                         params={"token_id": token_id_for_price},
                         timeout=5.0,
                     )
                     if _resp.status_code == 200:
-                        _mid = _resp.json().get("mid")
-                        if _mid is not None:
-                            live_price = float(_mid)
+                        _book = _resp.json()
+                        _bids = _book.get("bids", [])
+                        _asks = _book.get("asks", [])
+                        if _bids:
+                            live_bid = float(_bids[0].get("price", 0))
+                        if _asks:
+                            live_ask = float(_asks[0].get("price", 0))
                 except Exception:
                     pass
 
-            if live_price is not None:
-                price_drift = abs(live_price - signal_price) / max(signal_price, 1e-9)
-                max_drift = _env_float("PAPER_MAX_ENTRY_DRIFT", 0.05)  # 5% max staleness
+            max_spread = _env_float("PAPER_MAX_ENTRY_SPREAD", 0.10)   # skip if bid/ask gap > 10%
+            max_drift = _env_float("PAPER_MAX_ENTRY_DRIFT", 0.05)     # skip if ask moved > 5% from signal
+
+            if live_ask is not None and live_bid is not None:
+                spread = live_ask - live_bid
+                if spread > max_spread:
+                    print(
+                        f"[SKIP SPREAD] {str(signal.get('question',''))[:50]} | "
+                        f"bid={live_bid:.4f} ask={live_ask:.4f} spread={spread:.4f}"
+                    )
+                    continue
+                price_drift = abs(live_ask - signal_price) / max(signal_price, 1e-9)
                 if price_drift > max_drift:
                     print(
                         f"[SKIP STALE] {str(signal.get('question',''))[:50]} | "
-                        f"signal={signal_price:.4f} live={live_price:.4f} drift={price_drift:.1%}"
+                        f"signal={signal_price:.4f} ask={live_ask:.4f} drift={price_drift:.1%}"
                     )
                     continue
-                price = live_price
+                price = live_ask  # pay the ask — this is what you actually pay on Polymarket
+            elif live_ask is not None:
+                price_drift = abs(live_ask - signal_price) / max(signal_price, 1e-9)
+                if price_drift > max_drift:
+                    print(
+                        f"[SKIP STALE] {str(signal.get('question',''))[:50]} | "
+                        f"signal={signal_price:.4f} ask={live_ask:.4f} drift={price_drift:.1%}"
+                    )
+                    continue
+                price = live_ask
             else:
                 price = signal_price
 
@@ -1680,6 +1705,7 @@ class PriceMonitor:
 
     def __init__(self) -> None:
         self._prices: dict[str, float] = {}
+        self._last_trade_prices: dict[str, float] = {}  # only actual trade executions
         self._lock = threading.Lock()
         self._subscribed: set[str] = set()
         self._thread: threading.Thread | None = None
@@ -1835,28 +1861,45 @@ class PriceMonitor:
     def _handle_message(self, data: dict) -> None:
         event_type = data.get("event_type")
 
-        if event_type == "price_change":
-            for change in data.get("price_changes", []):
-                asset_id = str(change.get("asset_id", ""))
-                best_bid = change.get("best_bid")
-                best_ask = change.get("best_ask")
-                if asset_id and best_bid is not None and best_ask is not None:
-                    try:
-                        mid = (float(best_bid) + float(best_ask)) / 2.0
-                        with self._lock:
-                            self._prices[asset_id] = mid
-                    except (TypeError, ValueError):
-                        pass
+        # Maximum spread we trust for price updates from book/price_change events.
+        # Wide-spread books (illiquid markets) produce unreliable midpoints.
+        # last_trade_price is always trustworthy — it reflects an actual execution.
+        MAX_TRUSTED_SPREAD = 0.10
 
-        elif event_type == "last_trade_price":
+        if event_type == "last_trade_price":
+            # Actual trade execution — highest quality price signal, always trust it.
             asset_id = str(data.get("asset_id", ""))
             price = data.get("price")
             if asset_id and price is not None:
                 try:
                     with self._lock:
                         self._prices[asset_id] = float(price)
+                        self._last_trade_prices[asset_id] = float(price)
                 except (TypeError, ValueError):
                     pass
+
+        elif event_type == "price_change":
+            for change in data.get("price_changes", []):
+                asset_id = str(change.get("asset_id", ""))
+                best_bid = change.get("best_bid")
+                best_ask = change.get("best_ask")
+                if asset_id and best_bid is not None and best_ask is not None:
+                    try:
+                        bid_f = float(best_bid)
+                        ask_f = float(best_ask)
+                        spread = ask_f - bid_f
+                        if spread <= MAX_TRUSTED_SPREAD:
+                            mid = (bid_f + ask_f) / 2.0
+                            with self._lock:
+                                self._prices[asset_id] = mid
+                        # If spread is wide, only update if we have no last_trade_price yet
+                        else:
+                            with self._lock:
+                                if asset_id not in self._last_trade_prices:
+                                    mid = (bid_f + ask_f) / 2.0
+                                    self._prices[asset_id] = mid
+                    except (TypeError, ValueError):
+                        pass
 
         elif event_type == "book":
             asset_id = str(data.get("asset_id", ""))
@@ -1864,9 +1907,18 @@ class PriceMonitor:
             asks = data.get("asks", [])
             if asset_id and bids and asks:
                 try:
-                    mid = (float(bids[0]["price"]) + float(asks[0]["price"])) / 2.0
-                    with self._lock:
-                        self._prices[asset_id] = mid
+                    bid_f = float(bids[0]["price"])
+                    ask_f = float(asks[0]["price"])
+                    spread = ask_f - bid_f
+                    if spread <= MAX_TRUSTED_SPREAD:
+                        mid = (bid_f + ask_f) / 2.0
+                        with self._lock:
+                            self._prices[asset_id] = mid
+                    else:
+                        with self._lock:
+                            if asset_id not in self._last_trade_prices:
+                                mid = (bid_f + ask_f) / 2.0
+                                self._prices[asset_id] = mid
                 except (TypeError, ValueError, KeyError, IndexError):
                     pass
 

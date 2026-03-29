@@ -1849,22 +1849,34 @@ class PriceMonitor:
                             except Exception:
                                 continue
                             # Server sometimes sends a list of messages in one frame.
-                            if isinstance(data, list):
-                                for item in data:
-                                    if isinstance(item, dict):
-                                        self._handle_message(item)
-                            elif isinstance(data, dict):
-                                self._handle_message(data)
+                            # Wrap each call so one bad message never kills the connection.
+                            try:
+                                if isinstance(data, list):
+                                    for item in data:
+                                        if isinstance(item, dict):
+                                            try:
+                                                self._handle_message(item)
+                                            except Exception:
+                                                pass
+                                elif isinstance(data, dict):
+                                    self._handle_message(data)
+                            except Exception:
+                                pass
                     finally:
                         ping_task.cancel()
             except Exception as exc:
                 if self._running:
-                    print(f"[PRICE MONITOR] WS error: {exc} — reconnecting in 5s")
+                    import traceback as _tb
+                    print(f"[PRICE MONITOR] WS error: {exc}")
+                    _tb.print_exc()
+                    print("[PRICE MONITOR] Reconnecting in 5s...")
                     await asyncio.sleep(5)
             finally:
                 self._ws = None
 
     def _handle_message(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            return
         event_type = data.get("event_type")
 
         # Maximum spread we trust for price updates from book/price_change events.

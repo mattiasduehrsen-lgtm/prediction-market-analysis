@@ -479,6 +479,7 @@ class StrategyConfig:
     max_candidates: int = 5
     max_seconds_since_last_trade: int = 7200
     min_hours_to_expiry: float = 2.0
+    max_hours_to_expiry: float = 168.0
     exit_edge_threshold: float = -0.01
     take_profit_pct: float = 0.15
     stop_loss_pct: float = 0.12
@@ -505,6 +506,7 @@ class StrategyConfig:
             max_candidates=_env_int("PAPER_MAX_CANDIDATES", 5),
             max_seconds_since_last_trade=_env_int("PAPER_MAX_SECONDS_SINCE_LAST_TRADE", 7200),
             min_hours_to_expiry=_env_float("PAPER_MIN_HOURS_TO_EXPIRY", 2.0),
+            max_hours_to_expiry=_env_float("PAPER_MAX_HOURS_TO_EXPIRY", 168.0),
             exit_edge_threshold=_env_float("PAPER_EXIT_EDGE_THRESHOLD", -0.01),
             take_profit_pct=_env_float("PAPER_TAKE_PROFIT_PCT", 0.25),
             stop_loss_pct=_env_float("PAPER_STOP_LOSS_PCT", 0.20),
@@ -744,12 +746,15 @@ class PolymarketSnapshot:
         liquidity_bonus = merged["recent_notional"].apply(lambda x: math.log1p(max(x, 0)))
         momentum_signal = merged["price_momentum"].clip(lower=0)
         edge_signal = merged["edge"].clip(lower=0)
+        # Boost score for markets resolving sooner — they move faster so momentum matters more.
+        expiry_boost = 1 + (1 / (1 + merged["hours_to_expiry"].clip(lower=1) / 24)).clip(lower=0, upper=0.5)
         merged["score"] = (
             (edge_signal + momentum_signal * 2)
             * (1 + merged["edge_ratio"].clip(lower=0))
             * (merged["flow_imbalance"].clip(lower=0) + 0.05)
             * freshness
             * liquidity_bonus
+            * expiry_boost
         )
 
         # Merge order book imbalance from pmxt data if available.
@@ -1041,6 +1046,7 @@ class VolumeMomentumStrategy:
             & (signals["edge_ratio"] >= cfg.edge_ratio_threshold)
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
             & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
+            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
             & (signals["last_trade_price"] >= signals["market_price"])
             & ~signals["kalshi_disagrees"]
         )
@@ -1054,6 +1060,7 @@ class VolumeMomentumStrategy:
             & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
             & (signals["liquidity"] >= cfg.min_liquidity)
             & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
+            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
             & signals["kalshi_confirms"].fillna(False)
             & (kalshi_price_gap >= cfg.kalshi_price_gap_threshold * 2)
         )
@@ -1067,6 +1074,7 @@ class VolumeMomentumStrategy:
             & signals["market_price"].between(cfg.min_market_price, cfg.max_market_price, inclusive="both")
             & (signals["liquidity"] >= cfg.min_liquidity)
             & (signals["hours_to_expiry"] >= cfg.min_hours_to_expiry)
+            & (signals["hours_to_expiry"] <= cfg.max_hours_to_expiry)
             & (momentum >= cfg.min_price_momentum)
             & ~signals["kalshi_disagrees"]
         )

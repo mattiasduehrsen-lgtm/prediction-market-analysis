@@ -246,7 +246,10 @@ def _time_alignment_score(left_end: Any, right_end: Any) -> float:
     right_ts = pd.to_datetime(right_end, utc=True, errors="coerce")
     if pd.isna(left_ts) or pd.isna(right_ts):
         return 0.5
-    delta_hours = abs((left_ts - right_ts).total_seconds()) / 3600
+    try:
+        delta_hours = abs((left_ts - right_ts).total_seconds()) / 3600
+    except (OverflowError, Exception):
+        return 0.0
     if delta_hours <= 3:
         return 1.0
     if delta_hours <= 12:

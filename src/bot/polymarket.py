@@ -919,6 +919,20 @@ def _merge_cross_market_data(
     if kalshi_df.empty:
         return enriched
 
+    # Drop Kalshi records whose close_time is outside pd.Timestamp's representable
+    # range (~year 2262). Subtracting extreme timestamps in _time_alignment_score
+    # triggers a C-level overflow in pandas Cython that raises KeyboardInterrupt
+    # via PyErr_SetInterrupt — which bypasses even except BaseException.
+    _MAX_TS_NS = pd.Timestamp.max.value  # nanoseconds
+    _MIN_TS_NS = pd.Timestamp.min.value
+    def _safe_ts(val: Any) -> bool:
+        ts = pd.to_datetime(val, utc=True, errors="coerce")
+        if pd.isna(ts):
+            return False
+        return _MIN_TS_NS <= ts.value <= _MAX_TS_NS
+    if "close_time" in kalshi_df.columns:
+        kalshi_df = kalshi_df[kalshi_df["close_time"].apply(_safe_ts)]
+
     # Cap Kalshi records to the top 2000 by volume so matching stays fast.
     # These are the most liquid markets and most likely to match Polymarket.
     cap_df = kalshi_df.copy()

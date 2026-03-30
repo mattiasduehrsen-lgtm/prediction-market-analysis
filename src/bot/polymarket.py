@@ -1429,6 +1429,8 @@ class PaperPortfolio:
         self.positions = remaining_positions
 
     def execute(self, signals: pd.DataFrame, run_at: datetime) -> None:
+        if not signals.empty:
+            print(f"[EXECUTE] {len(signals)} signals passed in: {list(signals.get('question', pd.Series()).str[:40])}")
         existing = {(position["condition_id"], int(position["outcome_index"])) for position in self.positions}
         # Track which condition_ids already have a position — never hold both Yes and No on the same market.
         existing_markets = {position["condition_id"] for position in self.positions}

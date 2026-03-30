@@ -214,7 +214,7 @@ def paper_loop():
                 print("Paper-trading run complete.")
                 for name, path in last_saved.items():
                     print(f"  {name}: {path}")
-            except Exception as exc:
+            except BaseException as exc:
                 import traceback
                 print(f"[LOOP ERROR] cycle {run_count} failed, retrying next cycle: {exc}")
                 traceback.print_exc()

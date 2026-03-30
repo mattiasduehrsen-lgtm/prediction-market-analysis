@@ -234,7 +234,10 @@ def paper_loop():
             # Between full cycles: check prices every 1s using the live WS cache.
             elapsed = 0
             while elapsed < sleep_seconds:
-                _time.sleep(1)
+                try:
+                    _time.sleep(1)
+                except BaseException:
+                    pass
                 elapsed += 1
                 try:
                     bot.fast_exit_check()

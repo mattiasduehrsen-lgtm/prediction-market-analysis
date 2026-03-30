@@ -481,10 +481,10 @@ class StrategyConfig:
     max_candidates: int = 5
     max_seconds_since_last_trade: int = 7200
     min_hours_to_expiry: float = 2.0
-    max_hours_to_expiry: float = 168.0
+    max_hours_to_expiry: float = 48.0
     exit_edge_threshold: float = -0.01
     take_profit_pct: float = 0.15
-    stop_loss_pct: float = 0.12
+    stop_loss_pct: float = 0.07
     trailing_stop_drawdown_pct: float = 0.08
     max_holding_seconds: int = 86400
     min_cross_market_overlap: float = 0.6
@@ -1429,8 +1429,6 @@ class PaperPortfolio:
         self.positions = remaining_positions
 
     def execute(self, signals: pd.DataFrame, run_at: datetime) -> None:
-        if not signals.empty:
-            print(f"[EXECUTE] {len(signals)} signals passed in: {list(signals.get('question', pd.Series()).str[:40])}")
         existing = {(position["condition_id"], int(position["outcome_index"])) for position in self.positions}
         # Track which condition_ids already have a position — never hold both Yes and No on the same market.
         existing_markets = {position["condition_id"] for position in self.positions}

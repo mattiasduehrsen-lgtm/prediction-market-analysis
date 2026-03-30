@@ -198,13 +198,19 @@ def paper_loop():
         while True:
             run_count += 1
             print(f"\n=== Paper loop iteration {run_count} ===")
-            collect_current_data()
-            last_saved = bot.run_once()
-            # Subscribe any newly opened positions to the price monitor.
-            bot.subscribe_open_positions()
-            print("Paper-trading run complete.")
-            for name, path in last_saved.items():
-                print(f"  {name}: {path}")
+            try:
+                collect_current_data()
+                last_saved = bot.run_once()
+                # Subscribe any newly opened positions to the price monitor.
+                bot.subscribe_open_positions()
+                print("Paper-trading run complete.")
+                for name, path in last_saved.items():
+                    print(f"  {name}: {path}")
+            except Exception as exc:
+                import traceback
+                print(f"[LOOP ERROR] cycle {run_count} failed, retrying next cycle: {exc}")
+                traceback.print_exc()
+
             if max_iterations is not None and run_count >= max_iterations:
                 break
 

@@ -192,7 +192,7 @@ def paper_loop():
     from src.current.collector import collect_current_data
 
     iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 0  # 0 = run forever
-    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 900  # 15 minutes
+    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else int(os.environ.get("PAPER_LOOP_SLEEP_SECONDS", 900))
     max_iterations = iterations or None
 
     bot = PaperTradingBot()

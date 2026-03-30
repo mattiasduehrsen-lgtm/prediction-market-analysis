@@ -473,10 +473,10 @@ class StrategyConfig:
     edge_ratio_threshold: float = 0.01
     min_recent_trades: int = 1
     min_recent_notional: float = 10.0
-    min_liquidity: float = 1000.0
+    min_liquidity: float = 5000.0
     min_buy_share: float = 0.52
-    min_market_price: float = 0.05
-    max_market_price: float = 0.95
+    min_market_price: float = 0.15
+    max_market_price: float = 0.85
     lookback_seconds: int = 21600
     max_candidates: int = 5
     max_seconds_since_last_trade: int = 7200

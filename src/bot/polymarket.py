@@ -1577,13 +1577,14 @@ class PaperPortfolio:
                     continue
                 price = live_ask
             else:
-                # Could not get a live order book — market is likely illiquid or API failed.
-                # Never enter on a stale signal price with no live confirmation.
+                # No live order book — fall back to the signal's last-trade price.
+                # Market is likely thinly traded but valid (staleness already filtered
+                # upstream by PAPER_MAX_SECONDS_SINCE_LAST_TRADE).
+                price = signal_price
                 print(
-                    f"[SKIP NO BOOK] {str(signal.get('question',''))[:50]} | "
-                    f"signal={signal_price:.4f} — no live order book"
+                    f"[NO BOOK FALLBACK] {str(signal.get('question',''))[:50]} | "
+                    f"signal={signal_price:.4f} — using last-trade price"
                 )
-                continue
 
             # Simulate slippage: pay slightly more than the quoted price on entry.
             slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)

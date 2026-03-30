@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import sys
 from pathlib import Path
@@ -7,6 +8,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Force UTF-8 stdout/stderr so market names with non-ASCII characters
+# (Turkish, accented, etc.) never crash the process on Windows.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
 def _configure_matplotlib_cache() -> None:

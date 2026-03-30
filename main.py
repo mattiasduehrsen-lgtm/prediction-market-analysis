@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import io
 import os
+import signal
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# pandas Cython code raises SIGINT (not a Python exception) on Timedelta overflow.
+# Install a handler that converts OS-level SIGINT into a Python KeyboardInterrupt
+# so it can be caught by except BaseException inside the loop.
+def _sigint_handler(signum, frame):
+    raise KeyboardInterrupt("SIGINT from pandas overflow — will retry next cycle")
+
+signal.signal(signal.SIGINT, _sigint_handler)
 
 load_dotenv()
 

@@ -1123,9 +1123,11 @@ class VolumeMomentumStrategy:
             + 0.10 * flow_component   # buy/sell ratio
             + 0.10 * notional_component  # market activity
         )
-        persistence_boost = (signals["signal_runs"] - 1).clip(lower=0, upper=3) * 0.02
+        # Repeated signals without price movement mean the edge is not closing — penalize conviction.
+        # Grace period: first 3 runs get no penalty. After that, -2% per additional run, capped at -12%.
+        persistence_penalty = (signals["signal_runs"] - 3).clip(lower=0, upper=6) * 0.02
         stale_penalty = ((signals["signal_age_seconds"] - 6 * 3600).clip(lower=0) / (24 * 3600)).clip(upper=0.15)
-        signals["conviction"] = (signals["conviction"] + persistence_boost - stale_penalty).clip(lower=0.0, upper=1.0)
+        signals["conviction"] = (signals["conviction"] - persistence_penalty - stale_penalty).clip(lower=0.0, upper=1.0)
         signals["score"] = signals["score"] * (1 + signals["cross_market_support"]) * (1 + ob_component * 0.5)
 
         signals.loc[eligible, "signal"] = "buy"
@@ -1196,9 +1198,16 @@ class VolumeMomentumStrategy:
 
         merged["exit_reason"] = ""
         # Apply exits in priority order: higher priority assignments overwrite lower ones.
-        # market_inactive < max_hold < edge_reversal < momentum_reversal < trailing_stop < stop_loss < take_profit
+        # market_inactive < max_hold < signal_reversal < edge_reversal < momentum_reversal < trailing_stop < stop_loss < take_profit
         merged.loc[merged["closed"] | ~merged["active"], "exit_reason"] = "market_inactive"
         merged.loc[merged["holding_seconds"] >= cfg.max_holding_seconds, "exit_reason"] = "max_hold"
+        # Exit when BOTH edge and momentum have flipped negative together — the original entry
+        # thesis has reversed even if neither signal has crossed its individual exit threshold yet.
+        if "price_momentum" in merged.columns:
+            merged.loc[
+                (merged["edge"] < 0) & (merged["price_momentum"] < 0),
+                "exit_reason",
+            ] = "signal_reversal"
         merged.loc[merged["edge"] <= cfg.exit_edge_threshold, "exit_reason"] = "edge_reversal"
         if "price_momentum" in merged.columns:
             merged.loc[

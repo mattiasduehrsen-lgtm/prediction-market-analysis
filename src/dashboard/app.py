@@ -167,33 +167,89 @@ def bot_log():
 @app.route("/api/bot/status")
 def bot_status():
     global _bot_process
-    running = _bot_process is not None and _bot_process.poll() is None
-    return jsonify({"running": running})
+    # First check our own subprocess handle.
+    if _bot_process is not None and _bot_process.poll() is None:
+        return jsonify({"running": True})
+    # Also detect bots started outside the dashboard (e.g. from terminal).
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["tasklist", "/FI", "IMAGENAME eq python.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=3
+        )
+        # Check if any python process has paper-loop in its command line
+        wmic = _sp.run(
+            ["wmic", "process", "where", "name='python.exe'", "get", "commandline", "/format:list"],
+            capture_output=True, text=True, timeout=5
+        )
+        if "paper-loop" in wmic.stdout or "paper_loop" in wmic.stdout:
+            return jsonify({"running": True})
+    except Exception:
+        pass
+    return jsonify({"running": False})
+
+
+def _kill_existing_bot() -> None:
+    """Kill any running paper-loop process regardless of how it was started."""
+    global _bot_process
+    # Kill our own handle first.
+    if _bot_process is not None:
+        try:
+            _bot_process.terminate()
+        except Exception:
+            pass
+        _bot_process = None
+    # Also kill any externally-started bot via wmic.
+    try:
+        wmic = subprocess.run(
+            ["wmic", "process", "where", "name='python.exe'", "get", "processid,commandline", "/format:list"],
+            capture_output=True, text=True, timeout=5
+        )
+        pid = None
+        for line in wmic.stdout.splitlines():
+            if "paper-loop" in line or "paper_loop" in line:
+                pass
+            if line.startswith("ProcessId=") and pid is None:
+                pid = line.split("=", 1)[1].strip()
+        # Re-parse properly: group by process
+        current_cmd = ""
+        for line in wmic.stdout.splitlines():
+            if line.startswith("CommandLine="):
+                current_cmd = line
+            elif line.startswith("ProcessId=") and ("paper-loop" in current_cmd or "paper_loop" in current_cmd):
+                pid = line.split("=", 1)[1].strip()
+                if pid:
+                    subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
+    except Exception:
+        pass
 
 
 @app.route("/api/bot/start", methods=["POST"])
 def bot_start():
     global _bot_process
-    if _bot_process is not None and _bot_process.poll() is None:
-        return jsonify({"ok": False, "message": "Bot is already running"})
-    log_path = Path(__file__).resolve().parents[2] / "bot.log"
+    # Kill any existing instance first so we never double-start.
+    _kill_existing_bot()
+    import time as _time
+    _time.sleep(1)
+    root = Path(__file__).resolve().parents[2]
+    log_path = root / "bot.log"
     log_file = open(log_path, "a")
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
     _bot_process = subprocess.Popen(
         ["uv", "run", "main.py", "paper-loop"],
-        cwd=Path(__file__).resolve().parents[2],
+        cwd=root,
         stdout=log_file,
         stderr=log_file,
+        env=env,
     )
     return jsonify({"ok": True, "message": "Bot started"})
 
 
 @app.route("/api/bot/stop", methods=["POST"])
 def bot_stop():
-    global _bot_process
-    if _bot_process is None or _bot_process.poll() is not None:
-        return jsonify({"ok": False, "message": "Bot is not running"})
-    _bot_process.terminate()
-    _bot_process = None
+    _kill_existing_bot()
     return jsonify({"ok": True, "message": "Bot stopped"})
 
 

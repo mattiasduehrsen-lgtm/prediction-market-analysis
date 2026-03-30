@@ -248,7 +248,7 @@ def _time_alignment_score(left_end: Any, right_end: Any) -> float:
         return 0.5
     try:
         delta_hours = abs((left_ts - right_ts).total_seconds()) / 3600
-    except (OverflowError, Exception):
+    except BaseException:
         return 0.0
     if delta_hours <= 3:
         return 1.0

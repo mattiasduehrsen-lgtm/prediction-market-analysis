@@ -1372,9 +1372,29 @@ class PaperPortfolio:
                 continue
 
             exit_row = exits[key]
-            # Simulate slippage: receive slightly less than quoted price on exit.
             slippage = _env_float("PAPER_SLIPPAGE_PCT", 0.005)
-            exit_price = max(float(exit_row["market_price"]) * (1 - slippage), 0.01)
+            # Fetch live bid — when selling on the CLOB you receive the best bid, not midpoint.
+            token_id_exit = str(position.get("asset", ""))
+            live_bid_exit: float | None = None
+            if token_id_exit:
+                import httpx as _httpx
+                try:
+                    _r = _httpx.get(
+                        "https://clob.polymarket.com/book",
+                        params={"token_id": token_id_exit},
+                        timeout=5.0,
+                    )
+                    if _r.status_code == 200:
+                        _bids = _r.json().get("bids", [])
+                        if _bids:
+                            live_bid_exit = float(_bids[0].get("price", 0))
+                except Exception:
+                    pass
+            # Use live bid if available; fall back to midpoint with slippage.
+            if live_bid_exit and live_bid_exit > 0:
+                exit_price = max(live_bid_exit * (1 - slippage), 0.01)
+            else:
+                exit_price = max(float(exit_row["market_price"]) * (1 - slippage), 0.01)
             size = float(position["size"])
             notional = size * exit_price
             realized_pnl = notional - float(position["cost_basis"])
@@ -1798,7 +1818,13 @@ class PriceMonitor:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
-        self._loop = asyncio.new_event_loop()
+        # Windows ProactorEventLoop has GIL issues in background threads.
+        # SelectorEventLoop works reliably on all platforms.
+        import sys
+        if sys.platform == "win32":
+            self._loop = asyncio.SelectorEventLoop()
+        else:
+            self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._listen())
@@ -2400,7 +2426,27 @@ class PaperTradingBot:
         # --- Execute exits ---
         starting_order_count = len(self.portfolio.orders)
         for position, exit_reason, current_price in exits:
-            exit_price = max(current_price * (1 - slippage), 0.01)
+            # Fetch live bid — selling on the CLOB means hitting the best bid, not the midpoint.
+            token_id_exit = str(position.get("asset", ""))
+            live_bid_exit: float | None = None
+            if token_id_exit:
+                import httpx as _httpx
+                try:
+                    _r = _httpx.get(
+                        "https://clob.polymarket.com/book",
+                        params={"token_id": token_id_exit},
+                        timeout=5.0,
+                    )
+                    if _r.status_code == 200:
+                        _bids = _r.json().get("bids", [])
+                        if _bids:
+                            live_bid_exit = float(_bids[0].get("price", 0))
+                except Exception:
+                    pass
+            if live_bid_exit and live_bid_exit > 0:
+                exit_price = max(live_bid_exit * (1 - slippage), 0.01)
+            else:
+                exit_price = max(current_price * (1 - slippage), 0.01)
             size = float(position["size"])
             notional = size * exit_price
             realized_pnl = notional - float(position["cost_basis"])

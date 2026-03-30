@@ -247,10 +247,11 @@ def _time_alignment_score(left_end: Any, right_end: Any) -> float:
     if pd.isna(left_ts) or pd.isna(right_ts):
         return 0.5
     try:
-        # Use float unix seconds to avoid pd.Timedelta overflow (a Cython bug that
-        # raises KeyboardInterrupt from C code, bypassing except BaseException).
-        delta_hours = abs(left_ts.timestamp() - right_ts.timestamp()) / 3600
-    except Exception:
+        # Use raw int nanosecond values (.value) so no pd.Timestamp arithmetic is
+        # involved — pandas raises KeyboardInterrupt (a BaseException) from Cython
+        # on Timedelta overflow, which escapes except Exception entirely.
+        delta_hours = abs(int(left_ts.value) - int(right_ts.value)) / 3_600_000_000_000
+    except BaseException:
         return 0.0
     if delta_hours <= 3:
         return 1.0

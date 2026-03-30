@@ -1387,7 +1387,7 @@ class PaperPortfolio:
                     if _r.status_code == 200:
                         _bids = _r.json().get("bids", [])
                         if _bids:
-                            live_bid_exit = float(_bids[0].get("price", 0))
+                            live_bid_exit = max(float(b.get("price", 0)) for b in _bids)
                 except Exception:
                     pass
             # Use live bid if available; fall back to midpoint with slippage.
@@ -1490,9 +1490,9 @@ class PaperPortfolio:
                         _bids = _book.get("bids", [])
                         _asks = _book.get("asks", [])
                         if _bids:
-                            live_bid = float(_bids[0].get("price", 0))
+                            live_bid = max(float(b.get("price", 0)) for b in _bids)
                         if _asks:
-                            live_ask = float(_asks[0].get("price", 0))
+                            live_ask = min(float(a.get("price", 0)) for a in _asks)
                 except Exception:
                     pass
 
@@ -1957,8 +1957,8 @@ class PriceMonitor:
             asks = data.get("asks", [])
             if asset_id and bids and asks:
                 try:
-                    bid_f = float(bids[0]["price"])
-                    ask_f = float(asks[0]["price"])
+                    bid_f = max(float(b["price"]) for b in bids)
+                    ask_f = min(float(a["price"]) for a in asks)
                     spread = ask_f - bid_f
                     if spread <= MAX_TRUSTED_SPREAD:
                         mid = (bid_f + ask_f) / 2.0
@@ -2440,7 +2440,7 @@ class PaperTradingBot:
                     if _r.status_code == 200:
                         _bids = _r.json().get("bids", [])
                         if _bids:
-                            live_bid_exit = float(_bids[0].get("price", 0))
+                            live_bid_exit = max(float(b.get("price", 0)) for b in _bids)
                 except Exception:
                     pass
             if live_bid_exit and live_bid_exit > 0:

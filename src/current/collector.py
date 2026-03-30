@@ -138,6 +138,9 @@ def _fetch_clob_price_history(markets: list[Any], lookback_seconds: int = 3600) 
                         continue
                     if price <= 0 or price >= 1:
                         continue
+                    # Normalize to Unix seconds. The CLOB API returns seconds, but
+                    # guard against milliseconds (t > year 2100 in seconds ≈ 4e9).
+                    ts_sec = int(t) // 1000 if int(t) > 4_000_000_000 else int(t)
                     synthetic_trades.append(
                         {
                             "condition_id": condition_id,
@@ -145,7 +148,7 @@ def _fetch_clob_price_history(markets: list[Any], lookback_seconds: int = 3600) 
                             "side": "BUY",
                             "size": 100.0,
                             "price": price,
-                            "timestamp": int(t),
+                            "timestamp": ts_sec,
                             "outcome": outcome,
                             "outcome_index": outcome_index,
                             "transaction_hash": f"clob_{token_id}_{t}",
@@ -227,7 +230,7 @@ def _fetch_order_book_signals(markets: list[Any]) -> list[dict[str, Any]]:
 def collect_current_data() -> None:
     """Fetch bounded, recent market snapshots without historical backfills."""
     now = datetime.now(timezone.utc)
-    fetched_at = datetime.utcnow()
+    fetched_at = datetime.now(timezone.utc)
 
     kalshi_market_hours = _env_int("CURRENT_KALSHI_MARKET_HOURS", 17520)  # 2 years — fetch all active markets
     kalshi_recent_trades_limit = _env_int("CURRENT_KALSHI_RECENT_TRADES_LIMIT", 1000)

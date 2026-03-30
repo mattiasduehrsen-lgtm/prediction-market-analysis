@@ -205,13 +205,7 @@ def _kill_existing_bot() -> None:
             ["wmic", "process", "where", "name='python.exe'", "get", "processid,commandline", "/format:list"],
             capture_output=True, text=True, timeout=5
         )
-        pid = None
-        for line in wmic.stdout.splitlines():
-            if "paper-loop" in line or "paper_loop" in line:
-                pass
-            if line.startswith("ProcessId=") and pid is None:
-                pid = line.split("=", 1)[1].strip()
-        # Re-parse properly: group by process
+        # Parse wmic output: group CommandLine= and ProcessId= lines by process block
         current_cmd = ""
         for line in wmic.stdout.splitlines():
             if line.startswith("CommandLine="):
@@ -244,6 +238,9 @@ def bot_start():
         stderr=log_file,
         env=env,
     )
+    # Close our handle — the child process keeps its own fd open for writing.
+    # Leaving this open would lock the file on Windows, preventing reads/rotation.
+    log_file.close()
     return jsonify({"ok": True, "message": "Bot started"})
 
 

@@ -597,7 +597,7 @@ class PolymarketSnapshot:
         except FileNotFoundError:
             pass
 
-        fetched_at = datetime.utcnow()
+        fetched_at = datetime.now(timezone.utc)
         markets_limit = _env_int("CURRENT_POLYMARKET_MARKETS_LIMIT", 500)
         trades_limit = _env_int("CURRENT_POLYMARKET_TRADES_LIMIT", 500)
 
@@ -922,6 +922,7 @@ def _merge_cross_market_data(
     # These are the most liquid markets and most likely to match Polymarket.
     cap_df = kalshi_df.copy()
     if "kalshi_volume" in cap_df.columns:
+        cap_df["kalshi_volume"] = cap_df["kalshi_volume"].fillna(0.0)
         cap_df = cap_df.nlargest(2000, "kalshi_volume")
     else:
         cap_df = cap_df.head(2000)
@@ -1227,6 +1228,14 @@ class PaperPortfolio:
         self.realized_pnl = 0.0
 
     def load_state(self, output_dir: Path) -> None:
+        # Snapshot previous in-memory state so we can fall back to it if any
+        # output file is missing or partially written (e.g. after a mid-cycle crash).
+        prev_cash = self.cash
+        prev_positions = list(self.positions)
+        prev_orders = list(self.orders)
+        prev_last_exit_at = dict(self.last_exit_at)
+        prev_realized_pnl = self.realized_pnl
+
         self.cash = self.config.starting_cash
         self.positions = []
         self.orders = []
@@ -1238,13 +1247,27 @@ class PaperPortfolio:
         ledger_path = output_dir / "ledger.csv"
 
         if summary_path.exists():
-            summary = json.loads(summary_path.read_text())
-            self.cash = float(summary.get("cash", self.config.starting_cash))
-            self.realized_pnl = float(summary.get("realized_pnl", 0.0))
+            try:
+                summary = json.loads(summary_path.read_text())
+                self.cash = float(summary.get("cash", self.config.starting_cash))
+                self.realized_pnl = float(summary.get("realized_pnl", 0.0))
+            except Exception:
+                # Corrupt or partial write — preserve previous in-memory values.
+                self.cash = prev_cash
+                self.realized_pnl = prev_realized_pnl
+        elif prev_cash != self.config.starting_cash or prev_realized_pnl != 0.0:
+            # No summary file but we have live in-memory state — don't reset it.
+            self.cash = prev_cash
+            self.realized_pnl = prev_realized_pnl
 
         if positions_path.exists():
-            positions = pd.read_csv(positions_path)
-            self.positions = positions.to_dict("records")
+            try:
+                positions = pd.read_csv(positions_path)
+                self.positions = positions.to_dict("records")
+            except Exception:
+                self.positions = prev_positions
+        elif prev_positions:
+            self.positions = prev_positions
 
         if ledger_path.exists():
             ledger = pd.read_csv(ledger_path)
@@ -2034,7 +2057,10 @@ class PaperTradingBot:
         merged = outcome_df.merge(history, on=["condition_id", "outcome_index"], how="left")
         merged["first_seen_at"] = pd.to_datetime(merged["first_seen_at"], utc=True, errors="coerce")
         merged["last_seen_at"] = pd.to_datetime(merged["last_seen_at"], utc=True, errors="coerce")
-        previous_age = (pd.Timestamp(run_at) - merged["first_seen_at"]).dt.total_seconds()
+        # Ensure run_at is UTC-aware so the subtraction doesn't produce NaT on
+        # tz-naive vs tz-aware mismatches (e.g. datetime.utcnow() vs UTC-aware timestamps).
+        run_at_ts = pd.Timestamp(run_at, tz="UTC") if getattr(run_at, "tzinfo", None) is None else pd.Timestamp(run_at)
+        previous_age = (run_at_ts - merged["first_seen_at"]).dt.total_seconds()
         merged["signal_runs"] = merged["signal_runs"].fillna(1)
         merged.loc[merged["first_seen_at"].isna(), "signal_runs"] = 1
         merged["signal_age_seconds"] = previous_age.fillna(0.0)
@@ -2155,6 +2181,8 @@ class PaperTradingBot:
 
         if ledger_path.exists():
             existing = pd.read_csv(ledger_path)
+            # Enforce consistent schema so column drift across code updates doesn't corrupt the file.
+            existing = existing.reindex(columns=columns)
             ledger_rows = pd.concat([existing, ledger_rows], ignore_index=True)
 
         ledger_rows.to_csv(ledger_path, index=False)

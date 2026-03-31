@@ -264,6 +264,11 @@ def collect_current_data() -> None:
                 break
             market_offset += len(batch)
 
+        # Sort by liquidity descending so the most active markets are processed first.
+        # The Gamma API returns markets in arbitrary order; without sorting, illiquid
+        # long-tail markets dominate the top-1000 candidates for signal scoring.
+        polymarket_markets.sort(key=lambda m: float(getattr(m, "liquidity", 0) or 0), reverse=True)
+
         # Paginate trades until we have at least 30 minutes of history.
         # Stops early if the API rejects the offset (it caps around 3000).
         cutoff_ts = time.time() - 1800  # 30 minutes ago

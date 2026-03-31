@@ -1465,6 +1465,12 @@ class PaperPortfolio:
             self.cash += notional
             self.realized_pnl += realized_pnl
             self.last_exit_at[key] = run_at
+            pnl_sign = "+" if realized_pnl >= 0 else ""
+            print(
+                f"[CLOSE] {str(position.get('question',''))[:55]} | {position.get('outcome')} | "
+                f"entry={float(position['entry_price']):.4f} exit={exit_price:.4f} | "
+                f"pnl={pnl_sign}{realized_pnl:.2f} | reason={exit_row.get('exit_reason','')}"
+            )
             self.orders.append(
                 self._build_order(
                     position_id=str(position["position_id"]),
@@ -1627,6 +1633,10 @@ class PaperPortfolio:
             self.cash -= notional
             existing_markets.add(str(signal["condition_id"]))
             position_id = f"{signal['condition_id']}:{int(signal['outcome_index'])}:{run_at.isoformat()}"
+            print(
+                f"[OPEN] {str(signal.get('question',''))[:55]} | {signal.get('outcome')} | "
+                f"price={price:.4f} notional=${notional:.2f} | {signal.get('entry_reason','')}"
+            )
             self.positions.append(
                 {
                     "position_id": position_id,

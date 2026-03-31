@@ -1577,13 +1577,21 @@ class PaperPortfolio:
                     continue
                 price = live_ask
             else:
-                # No live order book — fall back to the signal's last-trade price.
-                # Market is likely thinly traded but valid (staleness already filtered
-                # upstream by PAPER_MAX_SECONDS_SINCE_LAST_TRADE).
+                # No live order book — only fall back to last-trade price if the
+                # trade was very recent (default 10 min), otherwise the price is too
+                # stale to trust for entry and the stop-loss will fire immediately.
+                max_fallback_seconds = _env_int("PAPER_MAX_FALLBACK_SECONDS", 600)
+                seconds_stale = float(signal.get("seconds_since_last_trade") or math.inf)
+                if seconds_stale > max_fallback_seconds:
+                    print(
+                        f"[SKIP STALE BOOK] {str(signal.get('question',''))[:50]} | "
+                        f"last_trade={seconds_stale:.0f}s ago > {max_fallback_seconds}s limit"
+                    )
+                    continue
                 price = signal_price
                 print(
                     f"[NO BOOK FALLBACK] {str(signal.get('question',''))[:50]} | "
-                    f"signal={signal_price:.4f} — using last-trade price"
+                    f"signal={signal_price:.4f} last_trade={seconds_stale:.0f}s ago"
                 )
 
             # Simulate slippage: pay slightly more than the quoted price on entry.

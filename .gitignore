@@ -1,5 +1,6 @@
 .DS_Store
 .env
+CLAUDE.md
 
 # Python-generated files
 __pycache__/

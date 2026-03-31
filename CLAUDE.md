@@ -11,7 +11,7 @@ Paper-trading bot that arbitrages price discrepancies between Polymarket and Kal
 
 **Laptop (production):** `C:\Users\matti\Desktop\prediction-market-analysis`
 - Runs the bot 24/7, IP: `192.168.2.212`
-- SSH: `ssh matti@192.168.2.212` (password: Tiasdue123.)
+- SSH: `ssh matti@192.168.2.212` (password stored locally — do not commit)
 
 Code changes must be: edited here → `git push` → `git pull` on laptop → restart bot on laptop.
 

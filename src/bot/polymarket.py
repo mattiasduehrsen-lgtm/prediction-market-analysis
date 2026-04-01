@@ -19,6 +19,26 @@ from src.bot.live_executor import LiveExecutor, build_live_executor_if_enabled
 from src.indexers.polymarket.client import PolymarketClient
 
 
+# ── LLM-verified pairs cache ──────────────────────────────────────────────────
+_PAIRS_CACHE: dict = {}
+_PAIRS_CACHE_LOADED_AT: float = 0.0
+_PAIRS_CACHE_PATH = Path(__file__).resolve().parents[2] / "output/paper_trading/polymarket/verified_pairs.json"
+
+
+def _load_verified_pairs_cache() -> dict:
+    """Return the LLM-verified pairs cache, reloading from disk at most once per hour."""
+    global _PAIRS_CACHE, _PAIRS_CACHE_LOADED_AT
+    if time.time() - _PAIRS_CACHE_LOADED_AT < 3600:
+        return _PAIRS_CACHE
+    if _PAIRS_CACHE_PATH.exists():
+        try:
+            _PAIRS_CACHE = json.loads(_PAIRS_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _PAIRS_CACHE = {}
+    _PAIRS_CACHE_LOADED_AT = time.time()
+    return _PAIRS_CACHE
+
+
 def _env_float(name: str, default: float) -> float:
     value = os.getenv(name)
     if value is None:
@@ -964,18 +984,39 @@ def _merge_cross_market_data(
         best_match: dict[str, Any] | None = None
         best_score = 0.0
         best_details: dict[str, float | str] | None = None
-        for i in candidate_indices:
-            candidate = kalshi_records[i]
-            score, details = _cross_market_match_score(
-                question,
-                row.get("end_date"),
-                str(candidate.get("kalshi_question", "")),
-                candidate.get("close_time"),
+
+        # ── LLM-verified pairs cache (highest priority) ──────────────────────
+        _vc = _load_verified_pairs_cache()
+        _cached = _vc.get(question.lower().strip())
+        if _cached and not _cached.get("no_match") and _cached.get("confidence", 0.0) >= 0.70:
+            _kq = _cached.get("kalshi_question", "").lower().strip()
+            _cm = next(
+                (r for r in kalshi_records if str(r.get("kalshi_question", "")).lower().strip() == _kq),
+                None,
             )
-            if score > best_score:
-                best_score = score
-                best_match = candidate
-                best_details = details
+            if _cm:
+                best_match = _cm
+                best_score = _cached["confidence"]
+                best_details = {
+                    "token_score": 1.0, "entity_score": 1.0, "number_score": 1.0,
+                    "category_score": 1.0, "time_score": 1.0, "domain_score": 1.0,
+                    "poly_category": "llm_verified", "kalshi_category": "llm_verified",
+                }
+
+        # ── Text-matching fallback (used when no LLM-verified pair exists) ───
+        if best_match is None:
+            for i in candidate_indices:
+                candidate = kalshi_records[i]
+                score, details = _cross_market_match_score(
+                    question,
+                    row.get("end_date"),
+                    str(candidate.get("kalshi_question", "")),
+                    candidate.get("close_time"),
+                )
+                if score > best_score:
+                    best_score = score
+                    best_match = candidate
+                    best_details = details
 
         if best_match is None or best_score < cfg.min_cross_market_overlap:
             continue

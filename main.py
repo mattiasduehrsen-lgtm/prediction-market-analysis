@@ -191,6 +191,30 @@ def paper():
     sys.exit(0)
 
 
+def _check_pairs_refresh() -> None:
+    """Refresh LLM-verified market pairs in the background if the cache is stale (>24 h)."""
+    import threading
+    from pathlib import Path as _P
+
+    cache_path = _P("output/paper_trading/polymarket/verified_pairs.json")
+    if cache_path.exists():
+        import time as _t
+        age_hours = (_t.time() - cache_path.stat().st_mtime) / 3600
+        if age_hours < 24:
+            return
+
+    print("[MATCHER] Pairs cache stale or missing — refreshing in background")
+
+    def _run() -> None:
+        try:
+            from src.bot.market_matcher import run as _match
+            _match()
+        except Exception as exc:
+            print(f"[MATCHER] Background refresh error: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _check_advisor_milestone() -> None:
     """Run the advisor in a background thread when a new 50-trade milestone is crossed."""
     import csv
@@ -266,6 +290,7 @@ def paper_loop():
             try:
                 collect_current_data()
                 last_saved = bot.run_once()
+                _check_pairs_refresh()
                 _check_advisor_milestone()
                 # Subscribe any newly opened positions to the price monitor.
                 bot.subscribe_open_positions()
@@ -324,6 +349,13 @@ def live():
     for name, path in saved.items():
         print(f"  {name}: {path}")
     sys.exit(0)
+
+
+def match_markets():
+    """Run LLM-based market pair verification and update the verified_pairs cache."""
+    force = "--force" in sys.argv
+    from src.bot.market_matcher import run as matcher_run
+    matcher_run(force=force)
 
 
 def advise():
@@ -406,8 +438,12 @@ def main():
         advise()
         sys.exit(0)
 
+    if command == "match-markets":
+        match_markets()
+        sys.exit(0)
+
     print(f"Unknown command: {command}")
-    print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop, advise")
+    print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop, advise, match-markets")
     sys.exit(1)
 
 

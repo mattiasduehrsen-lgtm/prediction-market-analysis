@@ -268,7 +268,17 @@ def run(force: bool = False) -> None:
             results = _verify_batch(batch)
             verified.extend(results)
         except Exception as exc:
-            print(f"[MATCHER] Batch {batch_i + 1} error (skipping): {exc}")
+            # Likely a rate-limit — wait 20 s and retry once before skipping.
+            print(f"[MATCHER] Batch {batch_i + 1} error ({exc}) — retrying in 20 s…")
+            time.sleep(20)
+            try:
+                results = _verify_batch(batch)
+                verified.extend(results)
+                print(f"[MATCHER] Batch {batch_i + 1} retry succeeded")
+            except Exception as exc2:
+                print(f"[MATCHER] Batch {batch_i + 1} retry failed (skipping): {exc2}")
+        # Small pause between batches to stay well under rate limits.
+        time.sleep(1)
 
     # Keep only the best (highest-confidence) match per Polymarket question.
     best_by_key: dict[str, dict[str, Any]] = {}

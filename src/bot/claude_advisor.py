@@ -246,7 +246,7 @@ def run(dry_run: bool = False) -> None:
     # Save full output to file so it can be retrieved without re-running.
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    out_path = OUTPUT_DIR / "advisor_recommendations.txt"
+    out_path = Path("advisor_recommendations.txt")
     full_output = "".join(output_chunks)
     out_path.write_text(
         f"Generated: {timestamp} | Trades analyzed: {len(trades)}\n"

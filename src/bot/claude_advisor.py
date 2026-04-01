@@ -179,6 +179,23 @@ Analyze this trade data and provide:
 3. **Top 1-2 priority changes** — If the user can only change one or two things right now, which changes would have the most impact?
 
 Be specific and data-driven. Avoid generic advice. Every recommendation must be traceable to the numbers above.
+
+---
+
+## Required: machine-readable JSON block
+
+After all analysis, output this JSON block as the VERY LAST thing in your response (no text after it):
+
+```json
+{
+  "summary": "one sentence summary of the single most important finding",
+  "changes": [
+    {"param": "PARAM_NAME", "current": "current_value", "recommended": "new_value", "rationale": "one sentence cited to the data"}
+  ]
+}
+```
+
+Only include parameters you are recommending to change. Use an empty array if no changes are needed. The values must be plain numbers or strings matching the .env format (no units, no quotes inside the JSON strings).
 """
     return prompt
 
@@ -244,6 +261,7 @@ def run(dry_run: bool = False) -> None:
     print(footer)
 
     # Save full output to file so it can be retrieved without re-running.
+    import re
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     out_path = Path("advisor_recommendations.txt")
@@ -257,3 +275,24 @@ def run(dry_run: bool = False) -> None:
         encoding="utf-8",
     )
     print(f"\nSaved to: {out_path}")
+
+    # Extract machine-readable JSON block and save separately for dashboard.
+    parsed_rec: dict = {"summary": "", "changes": []}
+    json_match = re.search(r"```json\s*(\{.*?\})\s*```", full_output, re.DOTALL)
+    if json_match:
+        try:
+            parsed_rec = json.loads(json_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    rec_data = {
+        "trade_count": len(trades),
+        "analyzed_at": timestamp,
+        "summary": parsed_rec.get("summary", ""),
+        "changes": parsed_rec.get("changes", []),
+        "applied": False,
+        "dismissed": False,
+    }
+    json_path = Path("advisor_recommendations.json")
+    json_path.write_text(json.dumps(rec_data, indent=2), encoding="utf-8")
+    print(f"Saved structured recommendations to: {json_path}")

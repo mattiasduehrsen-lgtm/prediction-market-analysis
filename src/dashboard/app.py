@@ -250,5 +250,83 @@ def bot_stop():
     return jsonify({"ok": True, "message": "Bot stopped"})
 
 
+_REC_JSON = Path(__file__).resolve().parents[2] / "advisor_recommendations.json"
+
+
+@app.route("/api/recommendations")
+def recommendations():
+    if not _REC_JSON.exists():
+        return jsonify({"available": False})
+    try:
+        rec = json.loads(_REC_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return jsonify({"available": False})
+    if rec.get("applied") or rec.get("dismissed"):
+        return jsonify({"available": False})
+    return jsonify({"available": True, "data": rec})
+
+
+@app.route("/api/recommendations/apply", methods=["POST"])
+def recommendations_apply():
+    import re
+    import time as _time
+    from datetime import datetime, timezone
+
+    if not _REC_JSON.exists():
+        return jsonify({"ok": False, "error": "No recommendations file"}), 404
+
+    try:
+        rec = json.loads(_REC_JSON.read_text(encoding="utf-8"))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    root = Path(__file__).resolve().parents[2]
+    env_path = root / ".env"
+    if not env_path.exists():
+        return jsonify({"ok": False, "error": ".env not found"}), 404
+
+    env_text = env_path.read_text(encoding="utf-8")
+    applied = []
+    for ch in rec.get("changes", []):
+        param = ch.get("param", "").strip()
+        recommended = str(ch.get("recommended", "")).strip()
+        if not param or not recommended:
+            continue
+        new_text, n = re.subn(
+            rf"^({re.escape(param)}=).*$",
+            f"{param}={recommended}",
+            env_text, flags=re.MULTILINE,
+        )
+        if n > 0:
+            env_text = new_text
+            applied.append(param)
+
+    env_path.write_text(env_text, encoding="utf-8")
+
+    rec["applied"] = True
+    rec["applied_at"] = datetime.now(timezone.utc).isoformat()
+    _REC_JSON.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+
+    # Restart bot: kill existing then re-schedule via task scheduler.
+    _kill_existing_bot()
+    _time.sleep(1)
+    subprocess.run(["schtasks", "/run", "/tn", "PolyBot"], capture_output=True)
+
+    return jsonify({"ok": True, "applied": applied})
+
+
+@app.route("/api/recommendations/dismiss", methods=["POST"])
+def recommendations_dismiss():
+    if not _REC_JSON.exists():
+        return jsonify({"ok": False}), 404
+    try:
+        rec = json.loads(_REC_JSON.read_text(encoding="utf-8"))
+        rec["dismissed"] = True
+        _REC_JSON.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
 def run(host: str = "0.0.0.0", port: int = 5000, debug: bool = False) -> None:
     app.run(host=host, port=port, debug=debug)

@@ -25,6 +25,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "flask>=3.0.0",
     "pmxt>=2.22.1",
+    "anthropic>=0.40.0",
 ]
 
 [dependency-groups]

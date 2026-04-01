@@ -277,6 +277,13 @@ def live():
     sys.exit(0)
 
 
+def advise():
+    """Analyze closed trades with Claude and suggest strategy improvements."""
+    dry_run = "--dry-run" in sys.argv
+    from src.bot.claude_advisor import run as advisor_run
+    advisor_run(dry_run=dry_run)
+
+
 def live_loop():
     """Run the live-trading bot on a timer (requires LIVE_TRADING=true in .env)."""
     _configure_matplotlib_cache()
@@ -346,8 +353,12 @@ def main():
         live_loop()
         sys.exit(0)
 
+    if command == "advise":
+        advise()
+        sys.exit(0)
+
     print(f"Unknown command: {command}")
-    print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop")
+    print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop, advise")
     sys.exit(1)
 
 

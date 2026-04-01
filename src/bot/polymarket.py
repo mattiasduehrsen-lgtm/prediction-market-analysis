@@ -1586,7 +1586,7 @@ class PaperPortfolio:
                 # No live order book — only fall back to last-trade price if the
                 # trade was very recent (default 10 min), otherwise the price is too
                 # stale to trust for entry and the stop-loss will fire immediately.
-                max_fallback_seconds = _env_int("PAPER_MAX_FALLBACK_SECONDS", 600)
+                max_fallback_seconds = _env_int("PAPER_MAX_FALLBACK_SECONDS", 60)
                 seconds_stale = float(signal.get("seconds_since_last_trade") or math.inf)
                 if seconds_stale > max_fallback_seconds:
                     print(

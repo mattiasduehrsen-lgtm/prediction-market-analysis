@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Dashboard",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-u", "main.py", "dashboard"],
+      "port": 5000
+    },
+    {
+      "name": "Bot (paper-loop)",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-u", "main.py", "paper-loop"],
+      "port": null
+    }
+  ]
+}

@@ -1,90 +1,96 @@
 # Bot Commands Reference
 
-## SSH into Laptop (from PC)
+## SSH into Laptop
 ```
-ssh matti@100.84.44.122
+ssh matti@<LAPTOP_IP>
 ```
-Password: your Microsoft account password
+Password: stored locally — do not commit.
 
 ---
 
-## Start Dashboard (from SSH - survives disconnect)
+## Dashboard URL
 ```
-cd C:\Users\matti\Desktop\prediction-market-analysis
-schtasks /run /tn "PolyDashboard"
+http://<LAPTOP_IP>:5000
 ```
-Then open http://100.84.44.122:5000 in browser and press Start Bot.
+- Summary: http://<LAPTOP_IP>:5000/api/summary
+- Positions: http://<LAPTOP_IP>:5000/api/positions
+- Closed Trades: http://<LAPTOP_IP>:5000/api/closed_trades
+- Signals: http://<LAPTOP_IP>:5000/api/signals
+- Debug: http://<LAPTOP_IP>:5000/api/debug
 
 ---
 
-## Stop All Python Processes on Laptop (from SSH)
+## Start Bot manually (from laptop SSH/PowerShell)
+```powershell
+schtasks /run /tn PolyBot
 ```
-taskkill /F /IM python.exe
+
+## Stop Bot (from laptop SSH/PowerShell)
+```powershell
+Stop-Process -Name python -Force
+```
+
+## Restart Bot (from laptop SSH/PowerShell)
+```powershell
+Stop-Process -Name python -Force
+schtasks /run /tn PolyBot
 ```
 
 ---
 
-## Restart Dashboard After Stopping (from SSH)
-```
-schtasks /run /tn "PolyDashboard"
+## Start Dashboard manually (from laptop SSH/PowerShell)
+```powershell
+schtasks /run /tn PolyDashboard
 ```
 
 ---
 
-## Pull Latest Code on Laptop (from SSH)
+## Auto-start on reboot (run once from elevated PowerShell — right-click PowerShell > Run as Administrator)
+```powershell
+$a = New-ScheduledTaskAction -Execute "C:\Users\matti\Desktop\prediction-market-analysis\.venv\Scripts\python.exe" -Argument "-u main.py paper-loop" -WorkingDirectory "C:\Users\matti\Desktop\prediction-market-analysis"
+$t = New-ScheduledTaskTrigger -AtLogOn
+$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
+Register-ScheduledTask -TaskName "PolyBot" -Action $a -Trigger $t -Settings $s -RunLevel Highest -Force
 ```
-cd C:\Users\matti\Desktop\prediction-market-analysis
+
+## If something isn't running after reboot
+```powershell
+Stop-Process -Name python -Force
+schtasks /run /tn PolyBot
+schtasks /run /tn PolyDashboard
+```
+
+---
+
+## Pull Latest Code (from laptop PowerShell)
+```powershell
+cd "C:\Users\matti\Desktop\prediction-market-analysis"
 git pull
 ```
 
----
-
-## Push Code Changes from PC
-```
-cd "c:/Users/home user/Desktop/prediction-market-analysis"
-git add -A
-git commit -m "describe your change"
-git push
+## Check Bot Log (from laptop PowerShell)
+```powershell
+Get-Content "C:\Users\matti\Desktop\prediction-market-analysis\bot.log" -Tail 50
 ```
 
----
-
-## Check Bot Status (from SSH)
+## Check Bot Errors (from laptop PowerShell)
+```powershell
+Get-Content "C:\Users\matti\Desktop\prediction-market-analysis\bot_err.log" -Tail 20
 ```
-type C:\Users\matti\Desktop\prediction-market-analysis\output\paper_trading\polymarket\summary.json
+
+## Check Bot Status (from laptop PowerShell)
+```powershell
+Get-Content "C:\Users\matti\Desktop\prediction-market-analysis\output\paper_trading\polymarket\summary.json"
 ```
 
 ---
 
-## Check Bot Log (from SSH)
+## Edit .env on Laptop
+View:
+```powershell
+Get-Content "C:\Users\matti\Desktop\prediction-market-analysis\.env"
 ```
-type C:\Users\matti\Desktop\prediction-market-analysis\bot.log
+Change a value:
+```powershell
+(Get-Content "C:\Users\matti\Desktop\prediction-market-analysis\.env") -replace 'OLD_VALUE', 'NEW_VALUE' | Set-Content "C:\Users\matti\Desktop\prediction-market-analysis\.env"
 ```
-
----
-
-## Edit .env on Laptop (from SSH)
-```
-powershell -Command "Get-Content C:\Users\matti\Desktop\prediction-market-analysis\.env"
-```
-To change a value:
-```
-powershell -Command "(Get-Content C:\Users\matti\Desktop\prediction-market-analysis\.env) -replace 'OLD_VALUE', 'NEW_VALUE' | Set-Content C:\Users\matti\Desktop\prediction-market-analysis\.env"
-```
-
----
-
-## Dashboard URLs
-- Dashboard: http://100.84.44.122:5000
-- Summary: http://100.84.44.122:5000/api/summary
-- Positions: http://100.84.44.122:5000/api/positions
-- Closed Trades: http://100.84.44.122:5000/api/closed_trades
-- Signals: http://100.84.44.122:5000/api/signals
-- Debug: http://100.84.44.122:5000/api/debug
-
----
-
-## After Windows Restart (laptop)
-1. SSH in: `ssh matti@100.84.44.122`
-2. Start dashboard: `schtasks /run /tn "PolyDashboard"`
-3. Open http://100.84.44.122:5000 and press Start Bot

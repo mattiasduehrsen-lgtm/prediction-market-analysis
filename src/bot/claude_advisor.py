@@ -216,6 +216,8 @@ def run(dry_run: bool = False) -> None:
     print("Sending to Claude Opus 4.6 (adaptive thinking)...\n")
     print("=" * 70)
 
+    output_chunks: list[str] = []
+
     with client.messages.stream(
         model="claude-opus-4-6",
         max_tokens=8192,
@@ -229,12 +231,29 @@ def run(dry_run: bool = False) -> None:
             elif event.type == "content_block_delta":
                 if event.delta.type == "text_delta":
                     print(event.delta.text, end="", flush=True)
+                    output_chunks.append(event.delta.text)
 
         final = stream.get_final_message()
 
     print("\n" + "=" * 70)
     usage = final.usage
-    print(
+    footer = (
         f"\nTokens — input: {usage.input_tokens} | output: {usage.output_tokens} | "
         f"cache_read: {getattr(usage, 'cache_read_input_tokens', 0)}"
     )
+    print(footer)
+
+    # Save full output to file so it can be retrieved without re-running.
+    from datetime import datetime, timezone
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    out_path = OUTPUT_DIR / "advisor_recommendations.txt"
+    full_output = "".join(output_chunks)
+    out_path.write_text(
+        f"Generated: {timestamp} | Trades analyzed: {len(trades)}\n"
+        + "=" * 70 + "\n"
+        + full_output
+        + "\n" + "=" * 70
+        + footer + "\n",
+        encoding="utf-8",
+    )
+    print(f"\nSaved to: {out_path}")

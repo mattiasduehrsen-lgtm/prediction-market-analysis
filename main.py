@@ -1,469 +1,231 @@
+"""
+BTC Strike Market Paper Trading Bot
+====================================
+Trades Polymarket "Bitcoin above $X on [date]?" markets based on live BTC
+price momentum from Binance WebSocket.
+
+Commands:
+  python main.py paper-loop   — run the trading bot
+  python main.py dashboard    — run the web dashboard
+  python main.py status       — print current state and exit
+"""
 from __future__ import annotations
 
 import io
+import json
 import os
-import signal
 import sys
-from pathlib import Path
+import time
 
 from dotenv import load_dotenv
 
-# pandas Cython code raises SIGINT (not a Python exception) on Timedelta overflow.
-# Install a handler that converts OS-level SIGINT into a Python KeyboardInterrupt
-# so it can be caught by except BaseException inside the loop.
-def _sigint_handler(signum, frame):
-    raise KeyboardInterrupt("SIGINT from pandas overflow — will retry next cycle")
-
-signal.signal(signal.SIGINT, _sigint_handler)
-
 load_dotenv()
 
-# Force UTF-8 stdout/stderr so market names with non-ASCII characters
-# (Turkish, accented, etc.) never crash the process on Windows.
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
-if hasattr(sys.stderr, "buffer"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", write_through=True)
+LOOP_SLEEP    = float(os.environ.get("LOOP_SLEEP_SECONDS", "30"))
+MAX_POSITIONS = int(os.environ.get("MAX_POSITIONS", "5"))
+LOG_FILE      = "bot.log"
 
 
-def _configure_matplotlib_cache() -> None:
-    project_root = Path(__file__).resolve().parent
-    mpl_config_dir = project_root / ".cache" / "matplotlib"
-    mpl_config_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("MPLCONFIGDIR", str(mpl_config_dir))
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+def _setup_logging() -> None:
+    """Redirect stdout/stderr to bot.log (write-through so nothing is buffered)."""
+    log = open(LOG_FILE, "a", encoding="utf-8")  # noqa: WPS515
+    wrapped = io.TextIOWrapper(log.buffer, encoding="utf-8", write_through=True)
+    sys.stdout = wrapped
+    sys.stderr = wrapped
 
 
-def analyze(name: str | None = None):
-    """Run analysis by name or show interactive menu."""
-    _configure_matplotlib_cache()
+# ── Core loop ─────────────────────────────────────────────────────────────────
 
-    from simple_term_menu import TerminalMenu
+def run_loop() -> None:
+    from src.bot import btc_feed, btc_markets, signal
+    from src.bot.paper_engine import PaperEngine
 
-    from src.common.analysis import Analysis
-    from src.common.util.strings import snake_to_title
+    print(f"\n{'='*60}")
+    print(f"BTC Paper Trading Bot — {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Loop interval: {LOOP_SLEEP}s | Max positions: {MAX_POSITIONS}")
+    print(f"{'='*60}\n")
 
-    analyses = Analysis.load()
-
-    if not analyses:
-        print("No analyses found in src/analysis/")
-        return
-
-    output_dir = Path("output")
-
-    # If name provided, run that specific analysis
-    if name:
-        if name == "all":
-            print("\nRunning all analyses...\n")
-            for analysis_cls in analyses:
-                instance = analysis_cls()
-                print(f"Running: {instance.name}")
-                saved = instance.save(output_dir, formats=["png", "pdf", "csv", "json", "gif"])
-                for fmt, path in saved.items():
-                    print(f"  {fmt}: {path}")
-            print("\nAll analyses complete.")
-            return
-
-        # Find matching analysis
-        for analysis_cls in analyses:
-            instance = analysis_cls()
-            if instance.name == name:
-                print(f"\nRunning: {instance.name}\n")
-                saved = instance.save(output_dir, formats=["png", "pdf", "csv", "json", "gif"])
-                print("Saved files:")
-                for fmt, path in saved.items():
-                    print(f"  {fmt}: {path}")
-                return
-
-        # No match found
-        print(f"Analysis '{name}' not found. Available analyses:")
-        for analysis_cls in analyses:
-            instance = analysis_cls()
-            print(f"  - {instance.name}")
+    # Start BTC price feed
+    btc_feed.start()
+    print("[MAIN] Waiting for BTC price feed...")
+    state = btc_feed.wait_for_price(timeout=15)
+    if not state:
+        print("[MAIN] ERROR: Could not connect to Binance. Exiting.")
         sys.exit(1)
+    print(f"[MAIN] BTC price: ${state.price:,.2f}\n")
 
-    # Interactive menu mode
-    options = ["[All] Run all analyses"]
-    for analysis_cls in analyses:
-        instance = analysis_cls()
-        options.append(f"{snake_to_title(instance.name)}: {instance.description}")
-    options.append("[Exit]")
+    engine = PaperEngine()
+    iteration = 0
 
-    menu = TerminalMenu(
-        options,
-        title="Select an analysis to run (use arrow keys):",
-        cycle_cursor=True,
-        clear_screen=False,
-    )
-    choice = menu.show()
+    while True:
+        iteration += 1
+        now = time.strftime("%H:%M:%S")
+        print(f"\n--- Iteration {iteration} [{now}] ---")
 
-    if choice is None or choice == len(options) - 1:
-        print("Exiting.")
-        return
-
-    if choice == 0:
-        # Run all analyses
-        print("\nRunning all analyses...\n")
-        for analysis_cls in analyses:
-            instance = analysis_cls()
-            print(f"Running: {instance.name}")
-            saved = instance.save(output_dir, formats=["png", "pdf", "csv", "json", "gif"])
-            for fmt, path in saved.items():
-                print(f"  {fmt}: {path}")
-        print("\nAll analyses complete.")
-    else:
-        # Run selected analysis
-        analysis_cls = analyses[choice - 1]
-        instance = analysis_cls()
-        print(f"\nRunning: {instance.name}\n")
-        saved = instance.save(output_dir, formats=["png", "pdf", "csv", "json", "gif"])
-        print("Saved files:")
-        for fmt, path in saved.items():
-            print(f"  {fmt}: {path}")
-
-
-def index():
-    """Interactive indexer selection menu."""
-    from simple_term_menu import TerminalMenu
-
-    from src.common.indexer import Indexer
-    from src.common.util.strings import snake_to_title
-
-    indexers = Indexer.load()
-
-    if not indexers:
-        print("No indexers found in src/indexers/")
-        return
-
-    # Build menu options
-    options = []
-    for indexer_cls in indexers:
-        instance = indexer_cls()
-        options.append(f"{snake_to_title(instance.name)}: {instance.description}")
-    options.append("[Exit]")
-
-    menu = TerminalMenu(
-        options,
-        title="Select an indexer to run (use arrow keys):",
-        cycle_cursor=True,
-        clear_screen=False,
-    )
-    choice = menu.show()
-
-    if choice is None or choice == len(options) - 1:
-        print("Exiting.")
-        return
-
-    indexer_cls = indexers[choice]
-    instance = indexer_cls()
-    print(f"\nRunning: {instance.name}\n")
-    instance.run()
-    print("\nIndexer complete.")
-
-
-def package():
-    """Package the data directory into a zstd-compressed tar archive."""
-    from src.common.util import package_data
-
-    success = package_data()
-    sys.exit(0 if success else 1)
-
-
-def current():
-    """Collect a lightweight snapshot of current market data."""
-    _configure_matplotlib_cache()
-
-    from src.current.collector import collect_current_data
-
-    collect_current_data()
-    sys.exit(0)
-
-
-def paper():
-    """Run the Polymarket paper-trading bot once."""
-    _configure_matplotlib_cache()
-
-    from src.bot.polymarket import PaperTradingBot
-
-    saved = PaperTradingBot().run_once()
-    print("Paper-trading run complete.")
-    for name, path in saved.items():
-        print(f"  {name}: {path}")
-    sys.exit(0)
-
-
-def _check_pairs_refresh() -> None:
-    """Refresh LLM-verified market pairs in the background if the cache is stale (>24 h)."""
-    import threading
-    from pathlib import Path as _P
-
-    cache_path = _P("output/paper_trading/polymarket/verified_pairs.json")
-    if cache_path.exists():
-        import time as _t
-        age_hours = (_t.time() - cache_path.stat().st_mtime) / 3600
-        if age_hours < 24:
-            return
-
-    print("[MATCHER] Pairs cache stale or missing — refreshing in background")
-
-    def _run() -> None:
         try:
-            from src.bot.market_matcher import run as _match
-            _match()
+            _run_once(engine, btc_feed, btc_markets, signal)
+        except KeyboardInterrupt:
+            raise
         except Exception as exc:
-            print(f"[MATCHER] Background refresh error: {exc}")
+            print(f"[MAIN] Iteration error: {exc}")
 
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _check_fundamental_scan() -> None:
-    """Run the fundamental scanner in a background thread every FUNDAMENTAL_SCAN_INTERVAL_MINUTES minutes."""
-    import threading
-    import time as _time
-    from pathlib import Path as _P
-
-    if not os.environ.get("TAVILY_API_KEY"):
-        return
-
-    interval_minutes = float(os.environ.get("FUNDAMENTAL_SCAN_INTERVAL_MINUTES", "30"))
-    cache_path = _P("output/paper_trading/polymarket/fundamental_signals.json")
-
-    if cache_path.exists():
-        age_minutes = (_time.time() - cache_path.stat().st_mtime) / 60
-        if age_minutes < interval_minutes:
-            return
-
-    print(f"[FUNDAMENTAL] Cache stale — running scan in background")
-
-    def _run() -> None:
         try:
-            from src.bot.fundamental_scanner import run as _scan
-            _scan()
-        except Exception as exc:
-            print(f"[FUNDAMENTAL] Scan error: {exc}")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _check_advisor_schedule() -> None:
-    """Run the advisor in a background thread every PAPER_ADVISOR_INTERVAL_HOURS hours."""
-    import json as _json
-    import threading
-    import time as _time
-    from pathlib import Path as _P
-
-    interval_hours = float(os.environ.get("PAPER_ADVISOR_INTERVAL_HOURS", "6"))
-    state_path = _P("advisor_state.json")
-
-    last_ts = 0.0
-    if state_path.exists():
-        try:
-            last_ts = float(_json.loads(state_path.read_text(encoding="utf-8")).get("last_advised_ts", 0.0))
-        except Exception:
+            time.sleep(LOOP_SLEEP)
+        except BaseException:
             pass
 
-    if _time.time() - last_ts < interval_hours * 3600:
+
+def _run_once(engine, btc_feed_mod, btc_markets_mod, signal_mod) -> None:
+    # 1. Get current BTC state
+    btc = btc_feed_mod.get_state()
+    if btc.price <= 0 or btc.is_stale():
+        print(f"[MAIN] BTC feed stale — skipping")
         return
 
-    print(f"[ADVISOR] {interval_hours}h schedule triggered — running advisor in background")
-
-    def _run() -> None:
-        try:
-            from src.bot.claude_advisor import run as _advise
-            _advise(dry_run=False)
-            state_path.write_text(
-                _json.dumps({"last_advised_ts": _time.time()}), encoding="utf-8"
-            )
-            print("[ADVISOR] Done — check dashboard for recommendations")
-        except Exception as exc:
-            print(f"[ADVISOR] Error running advisor: {exc}")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def paper_loop():
-    """Run the Polymarket paper-trading bot on a timer, refreshing data each cycle."""
-    import time as _time
-
-    _configure_matplotlib_cache()
-
-    from src.bot.polymarket import PaperTradingBot
-    from src.current.collector import collect_current_data
-
-    iterations = int(sys.argv[2]) if len(sys.argv) > 2 else 0  # 0 = run forever
-    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else int(os.environ.get("PAPER_LOOP_SLEEP_SECONDS", 900))
-    max_iterations = iterations or None
-
-    bot = PaperTradingBot()
-    bot.price_monitor.start()
-    print("[PRICE MONITOR] Started WebSocket price monitor")
-
-    run_count = 0
-    last_saved: dict = {}
-
-    try:
-        while True:
-            run_count += 1
-            print(f"\n=== Paper loop iteration {run_count} ===")
-            try:
-                collect_current_data()
-                last_saved = bot.run_once()
-                _check_pairs_refresh()
-                _check_fundamental_scan()
-                _check_advisor_schedule()
-                # Subscribe any newly opened positions to the price monitor.
-                bot.subscribe_open_positions()
-                print("Paper-trading run complete.")
-                for name, path in last_saved.items():
-                    print(f"  {name}: {path}")
-            except BaseException as exc:
-                import traceback
-                print(f"[LOOP ERROR] cycle {run_count} failed, retrying next cycle: {exc}")
-                traceback.print_exc()
-
-            if max_iterations is not None and run_count >= max_iterations:
-                break
-
-            # Between full cycles: check prices every 1s using the live WS cache.
-            elapsed = 0
-            while elapsed < sleep_seconds:
-                try:
-                    _time.sleep(1)
-                except BaseException:
-                    pass
-                elapsed += 1
-                try:
-                    bot.fast_exit_check()
-                except Exception as exc:
-                    print(f"[FAST EXIT CHECK] error (non-fatal): {exc}")
-    finally:
-        bot.price_monitor.stop()
-
-    print("Paper-trading loop complete.")
-    sys.exit(0)
-
-
-def dashboard():
-    """Launch the web dashboard at http://localhost:5000"""
-    from src.dashboard.app import run
-    print("Dashboard running at http://localhost:5000")
-    print("Open that address in your browser. Press Ctrl+C to stop.")
-    run()
-
-
-def live():
-    """Run the live-trading bot once (requires LIVE_TRADING=true in .env)."""
-    _configure_matplotlib_cache()
-
-    from src.bot.live_executor import build_live_executor_if_enabled
-    from src.bot.polymarket import PaperTradingBot
-
-    executor = build_live_executor_if_enabled()
-    if executor is None:
-        print("LIVE_TRADING is not enabled. Set LIVE_TRADING=true in your .env file.")
-        print("Running in paper mode instead.")
-    saved = PaperTradingBot(live_executor=executor).run_once()
-    mode = "Live-trading" if executor else "Paper-trading"
-    print(f"{mode} run complete.")
-    for name, path in saved.items():
-        print(f"  {name}: {path}")
-    sys.exit(0)
-
-
-def match_markets():
-    """Run LLM-based market pair verification and update the verified_pairs cache."""
-    force = "--force" in sys.argv
-    from src.bot.market_matcher import run as matcher_run
-    matcher_run(force=force)
-
-
-def advise():
-    """Analyze closed trades with Claude and suggest strategy improvements."""
-    dry_run = "--dry-run" in sys.argv
-    from src.bot.claude_advisor import run as advisor_run
-    advisor_run(dry_run=dry_run)
-
-
-def live_loop():
-    """Run the live-trading bot on a timer (requires LIVE_TRADING=true in .env)."""
-    _configure_matplotlib_cache()
-
-    from src.bot.live_executor import build_live_executor_if_enabled
-    from src.bot.polymarket import PaperTradingBot
-
-    iterations = int(sys.argv[2]) if len(sys.argv) > 2 else None
-    sleep_seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 60
-
-    executor = build_live_executor_if_enabled()
-    if executor is None:
-        print("LIVE_TRADING is not enabled. Set LIVE_TRADING=true in your .env file.")
-        print("Running in paper mode instead.")
-    saved = PaperTradingBot(live_executor=executor).run_loop(
-        iterations=iterations, sleep_seconds=sleep_seconds
+    print(
+        f"[BTC] price=${btc.price:,.2f} | "
+        f"1m={btc.momentum_1m:+.3f}% | "
+        f"5m={btc.momentum_5m:+.3f}% | "
+        f"dir={btc.direction}"
     )
-    mode = "Live-trading" if executor else "Paper-trading"
-    print(f"{mode} loop complete.")
-    for name, path in saved.items():
-        print(f"  {name}: {path}")
-    sys.exit(0)
+
+    # 2. Get market snapshot
+    snapshot = btc_markets_mod.fetch()
+    if not snapshot:
+        print("[MAIN] No market snapshot — skipping")
+        return
+
+    if snapshot.markets:
+        atm = snapshot.atm_markets(btc.price, n=3)
+        atm_str = " | ".join(
+            f"${m.strike//1000}k YES={m.yes_price:.2f}" for m in atm
+        )
+        print(f"[MARKETS] ATM: {atm_str} | expires {snapshot.event_end[:10]}")
+
+    # 3. Check exits for open positions
+    _check_exits(engine, snapshot, btc)
+
+    # 4. Check entries if we have room
+    open_count = len(engine.positions)
+    if open_count >= MAX_POSITIONS:
+        print(f"[MAIN] At max positions ({open_count}/{MAX_POSITIONS}) — no new entries")
+    else:
+        _check_entries(engine, snapshot, btc, signal_mod)
+
+    # 5. Save summary
+    engine.save_summary()
+    s = engine.summary()
+    print(
+        f"[SUMMARY] equity=${s['equity']:.2f} | "
+        f"open={s['open_positions']} | "
+        f"closed={s['closed_trades']} ({s['wins']}W/{s['losses']}L) | "
+        f"pnl=${s['total_pnl']:+.2f} | "
+        f"win_rate={s['win_rate']:.0f}%"
+    )
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("\nUsage: uv run main.py <command>")
-        print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop")
-        sys.exit(0)
+def _check_exits(engine, snapshot, btc) -> None:
+    from src.bot.signal import should_exit
+    if not engine.positions:
+        return
 
-    command = sys.argv[1]
+    for pos_id, pos in list(engine.positions.items()):
+        # Find current price for this market
+        market = snapshot.find_strike(pos.strike)
+        if market is None:
+            # Market not in snapshot — close on expiry or skip
+            if pos.strike not in [m.strike for m in snapshot.markets]:
+                # Might be a new-day rollover; close it
+                engine.close(pos_id, 0.5, "market_not_found")
+            continue
 
-    if command == "analyze":
-        name = sys.argv[2] if len(sys.argv) > 2 else None
-        analyze(name)
-        sys.exit(0)
+        current_yes = market.yes_price
+        hours_left  = market.hours_to_expiry
 
-    if command == "index":
-        index()
-        sys.exit(0)
+        do_exit, reason = should_exit(
+            side=pos.side,
+            entry_price=pos.entry_price,
+            current_yes_price=current_yes,
+            take_profit=pos.take_profit,
+            stop_loss=pos.stop_loss,
+            hours_to_expiry=hours_left,
+        )
 
-    if command == "package":
-        package()
-        sys.exit(0)
+        if do_exit:
+            engine.close(pos_id, current_yes, reason)
+        else:
+            current_pos_price = current_yes if pos.side == "YES" else 1 - current_yes
+            pnl_pct = (current_pos_price - pos.entry_price) / pos.entry_price * 100
+            print(
+                f"[HOLD] {pos.position_id} {pos.side} ${pos.strike:,} "
+                f"entry={pos.entry_price:.3f} now={current_pos_price:.3f} "
+                f"pnl={pnl_pct:+.1f}% | {hours_left:.1f}h left"
+            )
 
-    if command == "current":
-        current()
-        sys.exit(0)
 
-    if command == "paper":
-        paper()
-        sys.exit(0)
+def _check_entries(engine, snapshot, btc, signal_mod) -> None:
+    signals = signal_mod.generate(snapshot, btc)
+    if not signals:
+        print("[MAIN] No signals this cycle")
+        return
 
-    if command == "paper-loop":
-        paper_loop()
-        sys.exit(0)
+    for sig in signals:
+        if len(engine.positions) >= MAX_POSITIONS:
+            break
+        if engine.already_in(sig.condition_id):
+            continue
+        engine.open(sig)
 
-    if command == "dashboard":
-        dashboard()
-        sys.exit(0)
 
-    if command == "live":
-        live()
-        sys.exit(0)
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 
-    if command == "live-loop":
-        live_loop()
-        sys.exit(0)
+def run_dashboard() -> None:
+    from src.dashboard.app import create_app
+    app = create_app()
+    print("[DASHBOARD] Starting on http://0.0.0.0:5000")
+    app.run(host="0.0.0.0", port=5000, debug=False)
 
-    if command == "advise":
-        advise()
-        sys.exit(0)
 
-    if command == "match-markets":
-        match_markets()
-        sys.exit(0)
+# ── Status ────────────────────────────────────────────────────────────────────
 
-    print(f"Unknown command: {command}")
-    print("Commands: analyze, index, current, package, paper, paper-loop, live, live-loop, advise, match-markets")
-    sys.exit(1)
+def run_status() -> None:
+    import httpx
+    from src.bot.paper_engine import _compute_summary, _load_positions
 
+    # BTC price
+    try:
+        r = httpx.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=5)
+        btc = float(r.json()["price"])
+        print(f"BTC price: ${btc:,.2f}")
+    except Exception as exc:
+        print(f"BTC price: error ({exc})")
+
+    # Summary
+    summary = _compute_summary()
+    positions = _load_positions()
+    print(f"Equity:   ${summary['equity']:.2f}")
+    print(f"P&L:      ${summary['total_pnl']:+.2f}")
+    print(f"Trades:   {summary['closed_trades']} closed ({summary['wins']}W / {summary['losses']}L)")
+    print(f"Win rate: {summary['win_rate']:.0f}%")
+    print(f"Open:     {len(positions)} positions")
+    for p in positions.values():
+        print(f"  {p.position_id} | {p.side} ${p.strike:,} @ {p.entry_price:.3f} | {p.reason[:50]}")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
+
+    if cmd == "paper-loop":
+        _setup_logging()
+        run_loop()
+    elif cmd == "dashboard":
+        run_dashboard()
+    elif cmd == "status":
+        run_status()
+    else:
+        print(__doc__)
+        sys.exit(0)

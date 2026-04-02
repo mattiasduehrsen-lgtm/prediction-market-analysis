@@ -1146,18 +1146,15 @@ class VolumeMomentumStrategy:
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
         )
 
-        # Signal 3: Pure Polymarket momentum — VWAP above current price on a liquid, active market.
-        # Tight activity filters (min_recent_trades, min_recent_notional, max_seconds_since_last_trade)
-        # replace the old cross-market confirmation requirement.
+        # Signal 3: Order flow momentum — net buying pressure on an active, liquid market.
+        # Edge (VWAP gap) is near-zero for all liquid Polymarket markets so it is not used as a
+        # hard gate here; it remains in the conviction score as a bonus when non-zero.
         vwap_confirmed = (
             base_eligible
             & (signals["recent_trade_count"] >= cfg.min_recent_trades)
             & (signals["recent_notional"] >= cfg.min_recent_notional)
             & (signals["buy_share"] >= cfg.min_buy_share)
-            & (signals["edge"] >= cfg.edge_threshold)
-            & (signals["edge_ratio"] >= cfg.edge_ratio_threshold)
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
-            & (signals["last_trade_price"] >= signals["market_price"])
         )
 
         eligible = kalshi_eligible | ob_eligible | vwap_confirmed

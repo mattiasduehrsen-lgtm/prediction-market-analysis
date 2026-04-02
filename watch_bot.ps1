@@ -1,11 +1,13 @@
-Set-Location "C:\Users\matti\Desktop\prediction-market-analysis"
+$base = "C:\Users\matti\Desktop\prediction-market-analysis"
+Set-Location $base
 
-$watchlog = "watchdog.log"
+$python  = "$base\.venv\Scripts\python.exe"
+$watchlog = "$base\watchdog.log"
 
 while ($true) {
     $ts = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     Add-Content $watchlog "$ts [WATCHDOG] Starting bot..."
-    & ".\.venv\Scripts\python.exe" -u main.py paper-loop
+    & $python -u "$base\main.py" paper-loop
     $code = $LASTEXITCODE
     $ts2 = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     Add-Content $watchlog "$ts2 [WATCHDOG] Bot exited (code $code) - restarting in 10s..."

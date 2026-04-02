@@ -159,12 +159,15 @@ def run(markets_df=None) -> dict[str, Any]:
         print(f"[FUNDAMENTAL] signals.csv missing columns: {required - set(markets_df.columns)}")
         return cache
 
-    # Pick top N by liquidity, active markets only
+    # Pick top N by liquidity, active markets only, with meaningful price range.
+    # Skip near-impossible outcomes (< 3%) and near-certainties (> 97%) — Claude
+    # is miscalibrated on extreme probabilities and those markets have no edge anyway.
     df = markets_df.copy()
     if "active" in df.columns:
         df = df[df["active"] == True]
     if "closed" in df.columns:
         df = df[df["closed"] == False]
+    df = df[df["market_price"].between(0.03, 0.97)]
     df = df.sort_values("liquidity", ascending=False).head(SCAN_TOP_N)
 
     now_ts = time.time()

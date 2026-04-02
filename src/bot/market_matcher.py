@@ -272,8 +272,8 @@ def run(force: bool = False) -> None:
             success = True
         except Exception as exc:
             # Likely a rate-limit — wait 20 s and retry once before skipping.
-            print(f"[MATCHER] Batch {batch_i + 1} error ({exc}) — retrying in 20 s…")
-            time.sleep(20)
+            print(f"[MATCHER] Batch {batch_i + 1} error ({exc}) — retrying in 60 s…")
+            time.sleep(60)
             try:
                 results = _verify_batch(batch)
                 verified.extend(results)
@@ -284,8 +284,9 @@ def run(force: bool = False) -> None:
         if success:
             for p in batch:
                 verified_keys.add(p["poly_key"])
-        # Small pause between batches to stay well under rate limits.
-        time.sleep(1)
+        # Pause between batches — long enough to avoid concurrent-connection
+        # and output-TPM rate limits on the Anthropic API.
+        time.sleep(4)
 
     # Keep only the best (highest-confidence) match per Polymarket question.
     best_by_key: dict[str, dict[str, Any]] = {}

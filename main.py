@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import pathlib
 import sys
 import time
 
@@ -23,16 +24,18 @@ load_dotenv()
 
 LOOP_SLEEP    = float(os.environ.get("LOOP_SLEEP_SECONDS", "30"))
 MAX_POSITIONS = int(os.environ.get("MAX_POSITIONS", "5"))
-LOG_FILE      = "bot.log"
+# Absolute path so the log lands next to main.py regardless of CWD
+LOG_FILE      = str(pathlib.Path(__file__).resolve().parent / "bot.log")
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 def _setup_logging() -> None:
-    """Redirect stdout/stderr to bot.log (write-through so nothing is buffered)."""
-    # Open in binary append mode — TextIOWrapper holds the only reference to the
-    # underlying BufferedWriter, preventing premature GC/close of the file handle.
-    log = open(LOG_FILE, "ab")  # noqa: WPS515
+    """Redirect stdout/stderr to bot.log (fully unbuffered write-through)."""
+    # io.FileIO is a raw binary stream with NO intermediate buffer, so every
+    # write() reaches the OS immediately without an explicit flush() call.
+    # write_through=True then ensures TextIOWrapper also skips its own buffer.
+    log = io.FileIO(LOG_FILE, mode="ab")  # noqa: WPS515
     wrapped = io.TextIOWrapper(log, encoding="utf-8", write_through=True)
     sys.stdout = wrapped
     sys.stderr = wrapped

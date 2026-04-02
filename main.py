@@ -30,8 +30,10 @@ LOG_FILE      = "bot.log"
 
 def _setup_logging() -> None:
     """Redirect stdout/stderr to bot.log (write-through so nothing is buffered)."""
-    log = open(LOG_FILE, "a", encoding="utf-8")  # noqa: WPS515
-    wrapped = io.TextIOWrapper(log.buffer, encoding="utf-8", write_through=True)
+    # Open in binary append mode — TextIOWrapper holds the only reference to the
+    # underlying BufferedWriter, preventing premature GC/close of the file handle.
+    log = open(LOG_FILE, "ab")  # noqa: WPS515
+    wrapped = io.TextIOWrapper(log, encoding="utf-8", write_through=True)
     sys.stdout = wrapped
     sys.stderr = wrapped
 

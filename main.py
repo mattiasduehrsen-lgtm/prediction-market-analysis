@@ -186,15 +186,25 @@ def _check_entries(engine, snapshot, btc, signal_mod) -> None:
 
 def run_5m_loop(asset: str = "BTC") -> None:
     from src.bot.market_5m import fetch_market, FORCE_EXIT
-    from src.bot.signal_5m import should_enter, should_exit, take_profit_price, stop_loss_price
+    from src.bot.signal_5m import should_enter, should_exit, take_profit_price
     from src.bot.engine_5m import Engine5m
+    from src.bot import chainlink_feed
 
-    POLL_INTERVAL = 5   # seconds between price checks
+    POLL_INTERVAL = 2   # seconds — match Chainlink poll rate
 
     print(f"\n{'='*60}")
     print(f"5-Minute Up/Down Bot — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Poll every {POLL_INTERVAL}s | Force-exit at {FORCE_EXIT}s remaining")
+    print(f"Poll every {POLL_INTERVAL}s | No stop loss | Force-exit price=0.85 time={FORCE_EXIT}s")
     print(f"{'='*60}\n")
+
+    # Start Chainlink feed — actual window start prices, not stale API data
+    chainlink_feed.start()
+    print("[MAIN] Waiting for Chainlink price feed...")
+    cl = chainlink_feed.wait_for_price(timeout=15)
+    if cl:
+        print(f"[MAIN] Chainlink BTC: ${cl.price:,.2f}")
+    else:
+        print("[MAIN] Chainlink unavailable — continuing without window-start tracking")
 
     engine = Engine5m()
     iteration = 0
@@ -206,6 +216,8 @@ def run_5m_loop(asset: str = "BTC") -> None:
 
         try:
             market = fetch_market(asset)
+            cl = chainlink_feed.get_state()
+
             if not market:
                 print(f"[{now_str}] No active market found — retrying...")
                 time.sleep(POLL_INTERVAL)
@@ -215,19 +227,19 @@ def run_5m_loop(asset: str = "BTC") -> None:
             is_new_window = (market.slug != last_slug)
             if is_new_window:
                 last_slug = market.slug
-                print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s remaining | liq=${market.liquidity:,.0f}")
+                cl_str = f"CL=${cl.price:,.2f} start=${cl.window_start_price:,.2f} Δ{cl.pct_change:+.3f}%" if cl.price > 0 else "CL=unavailable"
+                print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s | liq=${market.liquidity:,.0f} | {cl_str}")
 
+            cl_info = f"CL={cl.pct_change:+.3f}%" if cl.price > 0 else ""
             print(
                 f"[{now_str}] {asset} UP={market.up_price:.3f} DOWN={market.down_price:.3f} "
-                f"| {secs:.0f}s left"
+                f"| {secs:.0f}s left {cl_info}"
             )
 
             # ── Check exits ────────────────────────────────────────────────────
             for pos_id, pos in list(engine.positions.items()):
-                # Use current price for this position's side
                 cur_up = market.up_price if market.condition_id == pos.condition_id else None
                 if cur_up is None:
-                    # Position is from a previous window — force close immediately
                     engine.close(pos_id, 0.01, "window_expired")
                     continue
 
@@ -236,7 +248,6 @@ def run_5m_loop(asset: str = "BTC") -> None:
                     entry_price=pos.entry_price,
                     current_up_price=cur_up,
                     take_profit=pos.take_profit,
-                    stop_loss=pos.stop_loss,
                     seconds_remaining=secs,
                 )
                 if do_exit:
@@ -261,12 +272,11 @@ def run_5m_loop(asset: str = "BTC") -> None:
                         side=side,
                         entry_price=entry_price,
                         take_profit=take_profit_price(entry_price),
-                        stop_loss=stop_loss_price(entry_price),
                         window_end_ts=market.window_end_ts,
                     )
 
-            # ── Summary every 12 polls (≈ 1 min) ──────────────────────────────
-            if iteration % 12 == 0:
+            # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────
+            if iteration % 30 == 0:
                 engine.save_summary()
                 s = engine.summary()
                 print(

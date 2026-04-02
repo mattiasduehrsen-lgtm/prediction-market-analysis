@@ -1,25 +1,34 @@
 """
 Signal engine for 5-minute Up/Down markets.
 
-Strategy: Mean reversion at extremes
-  - UP price ≤ 0.05  → buy UP  (bet it bounces back above 0.20)
-  - DOWN price ≤ 0.05 → buy DOWN (bet it bounces back above 0.20)
+Strategy: Mean reversion at extremes — learned from v61 of a successful bot.
 
-The thesis: when the market prices one side at 1-5¢, BTC has moved sharply
-in one direction in the last few minutes. These extreme moves often partially
-revert within the remaining window, pushing the cheap side back to 15-25¢.
+Entry:
+  - UP price  ≤ ENTRY_MAX (0.05) → buy UP
+  - DOWN price ≤ ENTRY_MAX (0.05) → buy DOWN
+  - Only if ≥ MIN_SECONDS remain in the window
 
-Only enter if ≥ MIN_SECONDS_TO_ENTER seconds remain (default 90s).
-Force-close any open position when ≤ FORCE_EXIT_SECONDS remain (default 60s).
+Exit rules (in priority order):
+  1. Price hits FORCE_EXIT_PRICE (0.85) → unconditional take — never give back a big win
+  2. Price hits TAKE_PROFIT (0.30)      → normal take profit
+  3. Time hits FORCE_EXIT seconds left  → close regardless of price
+  4. NO stop loss — binary markets need room; stop losses cut on noise right before reversals
+
+Key lessons from the v61 bot:
+  - Stop losses lose more than they save in binary markets
+  - Martingale is a death spiral — we don't do it
+  - 85¢ unconditional force-exit captures big wins before they evaporate
 """
 from __future__ import annotations
 
-from src.bot.market_5m import Market5m, ENTRY_MAX, TAKE_PROFIT, STOP_LOSS, MIN_SECONDS, FORCE_EXIT
+from src.bot.market_5m import (
+    Market5m,
+    ENTRY_MAX, TAKE_PROFIT, FORCE_EXIT_PRICE, MIN_SECONDS, FORCE_EXIT,
+)
 
 
 def should_enter(market: Market5m) -> tuple[bool, str, float]:
     """
-    Check if we should enter a position.
     Returns (should_enter, side, entry_price).
     side is "UP" or "DOWN".
     """
@@ -31,11 +40,9 @@ def should_enter(market: Market5m) -> tuple[bool, str, float]:
     if market.liquidity < 1000:
         return False, "", 0.0
 
-    # Buy UP when UP is near zero (BTC tanked, market thinks it won't recover)
     if market.up_price <= ENTRY_MAX:
         return True, "UP", market.up_price
 
-    # Buy DOWN when DOWN is near zero (BTC surged, market thinks it won't reverse)
     if market.down_price <= ENTRY_MAX:
         return True, "DOWN", market.down_price
 
@@ -47,36 +54,28 @@ def should_exit(
     entry_price: float,
     current_up_price: float,
     take_profit: float,
-    stop_loss: float,
     seconds_remaining: float,
 ) -> tuple[bool, str]:
     """
-    Check if an open position should be exited.
     Returns (should_exit, reason).
+    No stop loss — let positions breathe.
     """
-    # Force-exit when close to window end
-    if seconds_remaining <= FORCE_EXIT:
-        return True, "force_exit"
+    current = current_up_price if side == "UP" else (1.0 - current_up_price)
 
-    if side == "UP":
-        current = current_up_price
-    else:
-        current = 1.0 - current_up_price  # DOWN price
+    # Priority 1: unconditional exit at 85¢ — never give back a near-certain win
+    if current >= FORCE_EXIT_PRICE:
+        return True, "force_exit_price"
 
+    # Priority 2: normal take profit
     if current >= take_profit:
         return True, "take_profit"
 
-    if current <= stop_loss:
-        return True, "stop_loss"
+    # Priority 3: time-based force exit
+    if seconds_remaining <= FORCE_EXIT:
+        return True, "force_exit_time"
 
     return False, ""
 
 
 def take_profit_price(entry_price: float) -> float:
-    """Target exit price — revert from entry toward TAKE_PROFIT."""
     return TAKE_PROFIT
-
-
-def stop_loss_price(entry_price: float) -> float:
-    """Stop loss price — below this we cut the position."""
-    return STOP_LOSS

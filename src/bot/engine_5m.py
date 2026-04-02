@@ -31,7 +31,7 @@ TAKER_FEE       = 0.10    # 10% simulated taker fee each way
 
 POSITION_FIELDS = [
     "position_id", "condition_id", "slug", "asset", "side",
-    "entry_price", "take_profit", "stop_loss",
+    "entry_price", "take_profit",
     "size_usd", "shares", "entry_fee_usd",
     "window_end_ts", "opened_at",
 ]
@@ -49,9 +49,8 @@ class Position5m:
     slug: str
     asset: str
     side: str           # "UP" or "DOWN"
-    entry_price: float  # price paid per share (after spread, before fee)
-    take_profit: float  # price at which we exit with profit
-    stop_loss: float    # price at which we cut loss
+    entry_price: float  # price paid per share
+    take_profit: float  # target exit price (no stop loss — let positions breathe)
     size_usd: float     # gross position size
     shares: float       # effective shares after entry fee deducted
     entry_fee_usd: float
@@ -68,7 +67,6 @@ class ClosedTrade5m:
     side: str
     entry_price: float
     take_profit: float
-    stop_loss: float
     size_usd: float
     shares: float
     entry_fee_usd: float
@@ -98,7 +96,6 @@ def _load_positions() -> dict[str, Position5m]:
                     side=row["side"],
                     entry_price=float(row["entry_price"]),
                     take_profit=float(row["take_profit"]),
-                    stop_loss=float(row["stop_loss"]),
                     size_usd=float(row["size_usd"]),
                     shares=float(row["shares"]),
                     entry_fee_usd=float(row["entry_fee_usd"]),
@@ -184,7 +181,6 @@ class Engine5m:
         side: str,           # "UP" or "DOWN"
         entry_price: float,
         take_profit: float,
-        stop_loss: float,
         window_end_ts: float,
     ) -> Position5m | None:
         if self.already_in(condition_id):
@@ -203,7 +199,6 @@ class Engine5m:
             side=side,
             entry_price=entry_price,
             take_profit=take_profit,
-            stop_loss=stop_loss,
             size_usd=POSITION_SIZE,
             shares=shares,
             entry_fee_usd=round(entry_fee, 4),
@@ -216,7 +211,7 @@ class Engine5m:
         secs = max(0, window_end_ts - time.time())
         print(
             f"[ENGINE5M] OPEN  {pos.position_id} | {asset} {side} "
-            f"@ {entry_price:.3f} | tp={take_profit:.3f} sl={stop_loss:.3f} "
+            f"@ {entry_price:.3f} | tp={take_profit:.3f} (no SL) "
             f"| {secs:.0f}s left"
         )
         return pos

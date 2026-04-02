@@ -27,13 +27,14 @@ SLUG_PREFIXES: dict[str, str] = {
     "XRP": "xrp-updown-5m",
 }
 
-# Entry/exit thresholds (configurable via .env later)
-ENTRY_MAX   = 0.05   # buy UP when up_price ≤ this (or DOWN when down_price ≤ this)
-TAKE_PROFIT = 0.20   # exit when price reverts to this level
-STOP_LOSS   = 0.02   # exit if price moves further against us to here
-MIN_SECONDS = 90     # don't enter with less than this many seconds remaining
-FORCE_EXIT  = 60     # force-close all positions when this many seconds remain
-TAKER_FEE   = 0.10   # 10% taker fee — simulated in paper trading
+# Entry/exit thresholds
+ENTRY_MAX        = 0.05   # buy UP/DOWN when priced at or below this
+TAKE_PROFIT      = 0.30   # exit when our side hits 30¢ (6x from 5¢ entry)
+FORCE_EXIT_PRICE = 0.85   # unconditional exit if our side reaches 85¢ — never give back big wins
+# NO stop loss — binary markets need room; cutting on noise locks losses before reversals
+MIN_SECONDS = 90          # don't enter with less than this many seconds remaining
+FORCE_EXIT  = 60          # force-close by time when this many seconds remain
+TAKER_FEE   = 0.10        # 10% taker fee — simulated in paper trading
 
 
 @dataclass

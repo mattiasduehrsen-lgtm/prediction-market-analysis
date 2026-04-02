@@ -215,48 +215,36 @@ def _check_pairs_refresh() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _check_advisor_milestone() -> None:
-    """Run the advisor in a background thread when a new 50-trade milestone is crossed."""
-    import csv
+def _check_advisor_schedule() -> None:
+    """Run the advisor in a background thread every PAPER_ADVISOR_INTERVAL_HOURS hours."""
+    import json as _json
     import threading
+    import time as _time
     from pathlib import Path as _P
 
-    trades_path = _P("output/paper_trading/polymarket/closed_trades.csv")
-    state_path  = _P("advisor_state.json")
+    interval_hours = float(os.environ.get("PAPER_ADVISOR_INTERVAL_HOURS", "6"))
+    state_path = _P("advisor_state.json")
 
-    try:
-        if not trades_path.exists():
-            return
-        with open(trades_path, newline="", encoding="utf-8") as f:
-            trade_count = sum(1 for _ in csv.reader(f)) - 1  # subtract header row
-    except Exception:
-        return
-
-    if trade_count < 150:
-        return
-
-    milestone = (trade_count // 50) * 50  # floor to nearest 50
-
-    last_milestone = 0
+    last_ts = 0.0
     if state_path.exists():
         try:
-            import json as _json
-            last_milestone = _json.loads(state_path.read_text(encoding="utf-8")).get("last_advised_milestone", 0)
+            last_ts = float(_json.loads(state_path.read_text(encoding="utf-8")).get("last_advised_ts", 0.0))
         except Exception:
             pass
 
-    if milestone <= last_milestone:
+    if _time.time() - last_ts < interval_hours * 3600:
         return
 
-    print(f"[ADVISOR] Milestone {milestone} reached ({trade_count} trades) — running advisor in background")
+    print(f"[ADVISOR] {interval_hours}h schedule triggered — running advisor in background")
 
     def _run() -> None:
         try:
-            import json as _json
             from src.bot.claude_advisor import run as _advise
             _advise(dry_run=False)
-            state_path.write_text(_json.dumps({"last_advised_milestone": milestone}), encoding="utf-8")
-            print("[ADVISOR] Done — check advisor_recommendations.json and the dashboard")
+            state_path.write_text(
+                _json.dumps({"last_advised_ts": _time.time()}), encoding="utf-8"
+            )
+            print("[ADVISOR] Done — check dashboard for recommendations")
         except Exception as exc:
             print(f"[ADVISOR] Error running advisor: {exc}")
 
@@ -291,7 +279,7 @@ def paper_loop():
                 collect_current_data()
                 last_saved = bot.run_once()
                 _check_pairs_refresh()
-                _check_advisor_milestone()
+                _check_advisor_schedule()
                 # Subscribe any newly opened positions to the price monitor.
                 bot.subscribe_open_positions()
                 print("Paper-trading run complete.")

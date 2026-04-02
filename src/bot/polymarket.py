@@ -1146,8 +1146,9 @@ class VolumeMomentumStrategy:
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
         )
 
-        # Signal 3: VWAP edge confirmed by either Kalshi or order book.
-        # Pure momentum alone was shown to lose — require a second confirming signal.
+        # Signal 3: Pure Polymarket momentum — VWAP above current price on a liquid, active market.
+        # Tight activity filters (min_recent_trades, min_recent_notional, max_seconds_since_last_trade)
+        # replace the old cross-market confirmation requirement.
         vwap_confirmed = (
             base_eligible
             & (signals["recent_trade_count"] >= cfg.min_recent_trades)
@@ -1157,7 +1158,6 @@ class VolumeMomentumStrategy:
             & (signals["edge_ratio"] >= cfg.edge_ratio_threshold)
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
             & (signals["last_trade_price"] >= signals["market_price"])
-            & (kalshi_eligible | (ob_imbalance >= 0.10))  # must have cross-market or order book support
         )
 
         eligible = kalshi_eligible | ob_eligible | vwap_confirmed
@@ -1173,11 +1173,11 @@ class VolumeMomentumStrategy:
         ).apply(_clamp)
 
         signals["conviction"] = (
-            0.35 * kalshi_component   # cross-exchange mispricing is strongest signal
-            + 0.25 * ob_component     # live order book imbalance
-            + 0.20 * edge_component   # VWAP edge
-            + 0.10 * flow_component   # buy/sell ratio
+            0.35 * edge_component      # VWAP edge — primary signal
+            + 0.25 * ob_component      # live order book imbalance
+            + 0.20 * flow_component    # buy/sell ratio
             + 0.10 * notional_component  # market activity
+            + 0.10 * kalshi_component  # Kalshi bonus when a verified pair confirms
         )
         # Repeated signals without price movement mean the edge is not closing — penalize conviction.
         # Grace period: first 3 runs get no penalty. After that, -2% per additional run, capped at -12%.

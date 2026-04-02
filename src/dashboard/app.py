@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import csv
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "output/btc_trading"
+OUT_5M = Path(__file__).resolve().parents[2] / "output/5m_trading"
 
 app = Flask(__name__)
 
@@ -41,29 +42,30 @@ def index():
 
 @app.route("/api/summary")
 def api_summary():
-    data = _read_json(OUT_DIR / "summary.json")
+    data = _read_json(OUT_5M / "summary.json")
     return jsonify(data)
 
 
 @app.route("/api/positions")
 def api_positions():
-    rows = _read_csv(OUT_DIR / "positions.csv")
+    rows = _read_csv(OUT_5M / "positions.csv")
     return jsonify(rows)
 
 
 @app.route("/api/trades")
 def api_trades():
-    rows = _read_csv(OUT_DIR / "trades.csv")
-    # Return most recent 100
+    rows = _read_csv(OUT_5M / "trades.csv")
     return jsonify(rows[-100:])
 
 
-@app.route("/api/markets")
-def api_markets():
-    data = _read_json(OUT_DIR / "markets_cache.json")
-    markets = data.get("markets", [])
-    return jsonify({
-        "event_title": data.get("event_title", ""),
-        "event_end": data.get("event_end", ""),
-        "markets": markets,
-    })
+@app.route("/api/log")
+def api_log():
+    """Return last 80 lines of bot.log for live monitoring."""
+    log_path = Path(__file__).resolve().parents[2] / "bot.log"
+    if not log_path.exists():
+        return jsonify({"lines": []})
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return jsonify({"lines": lines[-80:]})
+    except Exception:
+        return jsonify({"lines": []})

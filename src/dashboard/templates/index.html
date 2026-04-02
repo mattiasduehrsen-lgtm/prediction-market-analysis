@@ -1,199 +1,233 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BTC Trading Bot</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; padding: 20px; }
-    h1 { font-size: 1.4rem; color: #fff; margin-bottom: 16px; }
-    h2 { font-size: 1rem; color: #aaa; margin-bottom: 10px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
-    .card { background: #1a1d27; border-radius: 8px; padding: 16px; }
-    .card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-    .card .value { font-size: 1.5rem; font-weight: 700; margin-top: 4px; }
-    .pos  { color: #34d399; }
-    .neg  { color: #f87171; }
-    .neu  { color: #60a5fa; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-    th { text-align: left; padding: 8px 10px; color: #666; font-weight: 500; border-bottom: 1px solid #222; }
-    td { padding: 7px 10px; border-bottom: 1px solid #1a1d27; }
-    tr:hover td { background: #1a1d27; }
-    .section { background: #13151f; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
-    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
-    .tag-yes { background: #064e3b; color: #34d399; }
-    .tag-no  { background: #450a0a; color: #f87171; }
-    #btc-price { font-size: 1.1rem; color: #facc15; }
-    .refresh-info { font-size: 0.72rem; color: #555; margin-bottom: 16px; }
-    .market-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.8rem; }
-    .bar-container { flex: 1; background: #222; border-radius: 3px; height: 8px; overflow: hidden; }
-    .bar-fill { height: 100%; background: #3b82f6; border-radius: 3px; transition: width 0.3s; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC 5m Up/Down — Paper Trading</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e0e0e0; font-family: 'Segoe UI', monospace; font-size: 14px; }
+  header { background: #1a1d27; border-bottom: 1px solid #2a2d3a; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 18px; color: #fff; }
+  .badge { background: #00c853; color: #000; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+  #btc-price { font-size: 20px; font-weight: 700; color: #ffd54f; margin-left: auto; }
+  #last-updated { font-size: 11px; color: #555; }
+
+  .cards { display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap; }
+  .card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 8px; padding: 14px 18px; min-width: 130px; flex: 1; }
+  .card .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card .value { font-size: 22px; font-weight: 700; color: #fff; }
+  .card .value.green { color: #00c853; }
+  .card .value.red { color: #ff5252; }
+  .card .value.yellow { color: #ffd54f; }
+
+  section { padding: 0 24px 20px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 10px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; color: #555; padding: 6px 10px; border-bottom: 1px solid #2a2d3a; }
+  td { padding: 7px 10px; border-bottom: 1px solid #1e2130; font-size: 13px; }
+  tr:hover td { background: #1e2130; }
+  .up { color: #00c853; font-weight: 600; }
+  .down { color: #ff5252; font-weight: 600; }
+  .win { color: #00c853; }
+  .loss { color: #ff5252; }
+
+  #log-box {
+    background: #0d0f18; border: 1px solid #2a2d3a; border-radius: 6px;
+    padding: 12px; height: 320px; overflow-y: auto;
+    font-family: monospace; font-size: 12px; line-height: 1.6; color: #aaa;
+  }
+  .log-price { color: #4fc3f7; }
+  .log-open  { color: #40c4ff; font-weight: bold; }
+  .log-close { color: #ffd54f; font-weight: bold; }
+  .log-err   { color: #ff5252; }
+  .log-new   { color: #ce93d8; font-weight: bold; }
+  .log-sum   { color: #a5d6a7; }
+</style>
 </head>
 <body>
-  <h1>BTC Strike Market Bot &nbsp;<span id="btc-price">loading...</span></h1>
-  <div class="refresh-info" id="refresh-time">Refreshing every 15s</div>
 
-  <div class="grid">
-    <div class="card"><div class="label">Equity</div><div class="value neu" id="s-equity">—</div></div>
-    <div class="card"><div class="label">P&L</div><div class="value" id="s-pnl">—</div></div>
-    <div class="card"><div class="label">Open</div><div class="value neu" id="s-open">—</div></div>
-    <div class="card"><div class="label">Closed</div><div class="value neu" id="s-closed">—</div></div>
-    <div class="card"><div class="label">Win Rate</div><div class="value" id="s-winrate">—</div></div>
-    <div class="card"><div class="label">Avg Win</div><div class="value pos" id="s-avgwin">—</div></div>
-    <div class="card"><div class="label">Avg Loss</div><div class="value neg" id="s-avgloss">—</div></div>
-  </div>
+<header>
+  <h1>⚡ BTC 5-Min Up/Down Bot</h1>
+  <span class="badge">PAPER</span>
+  <div id="btc-price">$—</div>
+  <div id="last-updated">—</div>
+</header>
 
-  <div class="section">
-    <h2 id="market-title">Strike Markets</h2>
-    <div id="market-bars"></div>
+<div class="cards">
+  <div class="card">
+    <div class="label">Equity</div>
+    <div class="value yellow" id="equity">$1,000.00</div>
   </div>
+  <div class="card">
+    <div class="label">Total P&L</div>
+    <div class="value" id="pnl">$0.00</div>
+  </div>
+  <div class="card">
+    <div class="label">Open</div>
+    <div class="value" id="open-pos">0</div>
+  </div>
+  <div class="card">
+    <div class="label">Closed Trades</div>
+    <div class="value" id="closed">0</div>
+  </div>
+  <div class="card">
+    <div class="label">Win Rate</div>
+    <div class="value" id="win-rate">0%</div>
+  </div>
+  <div class="card">
+    <div class="label">Avg Win</div>
+    <div class="value green" id="avg-win">$0.00</div>
+  </div>
+  <div class="card">
+    <div class="label">Avg Loss</div>
+    <div class="value red" id="avg-loss">$0.00</div>
+  </div>
+</div>
 
-  <div class="section">
-    <h2>Open Positions</h2>
-    <table>
-      <thead><tr>
-        <th>ID</th><th>Strike</th><th>Side</th><th>Entry</th><th>TP</th><th>SL</th>
-        <th>BTC @ Entry</th><th>Opened</th>
-      </tr></thead>
-      <tbody id="positions-body"></tbody>
-    </table>
-  </div>
+<section>
+  <h2>Open Positions</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>TP</th><th>SL</th><th>Time Left</th></tr>
+    </thead>
+    <tbody id="positions-body">
+      <tr><td colspan="7" style="color:#555;text-align:center;padding:12px">No open positions</td></tr>
+    </tbody>
+  </table>
+</section>
 
-  <div class="section">
-    <h2>Recent Trades</h2>
-    <table>
-      <thead><tr>
-        <th>ID</th><th>Strike</th><th>Side</th><th>Entry</th><th>Exit</th>
-        <th>P&L</th><th>Return</th><th>Reason</th><th>Hold</th>
-      </tr></thead>
-      <tbody id="trades-body"></tbody>
-    </table>
-  </div>
+<section>
+  <h2>Recent Trades</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Return</th><th>Hold</th><th>Reason</th></tr>
+    </thead>
+    <tbody id="trades-body">
+      <tr><td colspan="9" style="color:#555;text-align:center;padding:12px">No trades yet — waiting for signal</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Live Log</h2>
+  <div id="log-box">Loading...</div>
+</section>
 
 <script>
-const fmt = (n, dec=2) => n == null ? '—' : Number(n).toFixed(dec);
-const fmtUSD = n => n == null ? '—' : (Number(n) >= 0 ? '+' : '') + '$' + Math.abs(Number(n)).toFixed(2);
-const fmtPct = n => n == null ? '—' : Number(n).toFixed(1) + '%';
+const $ = id => document.getElementById(id);
 
-async function loadBTC() {
-  try {
-    const r = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT');
-    const d = await r.json();
-    document.getElementById('btc-price').textContent = '$' + Number(d.price).toLocaleString(undefined, {maximumFractionDigits: 0});
-  } catch(e) { document.getElementById('btc-price').textContent = 'n/a'; }
+function fmt(n, d=2) { return parseFloat(n||0).toFixed(d); }
+
+function timeUntil(ts) {
+  const s = Math.max(0, parseFloat(ts) - Date.now()/1000);
+  if (s < 60) return Math.round(s) + 's';
+  return Math.floor(s/60) + 'm ' + Math.round(s%60) + 's';
 }
 
-async function loadSummary() {
+async function refreshSummary() {
   try {
-    const r = await fetch('/api/summary');
-    const d = await r.json();
-    if (!d || !d.equity) return;
-    document.getElementById('s-equity').textContent = '$' + Number(d.equity).toFixed(2);
-    const pnl = Number(d.total_pnl);
-    const pnlEl = document.getElementById('s-pnl');
-    pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-    pnlEl.className = 'value ' + (pnl >= 0 ? 'pos' : 'neg');
-    document.getElementById('s-open').textContent = d.open_positions ?? '0';
-    document.getElementById('s-closed').textContent = d.closed_trades ?? '0';
-    const wr = document.getElementById('s-winrate');
-    wr.textContent = fmtPct(d.win_rate);
-    wr.className = 'value ' + (d.win_rate >= 50 ? 'pos' : 'neg');
-    document.getElementById('s-avgwin').textContent = '$' + Number(d.avg_win || 0).toFixed(2);
-    document.getElementById('s-avgloss').textContent = '$' + Number(d.avg_loss || 0).toFixed(2);
+    const d = await fetch('/api/summary').then(r=>r.json());
+    $('equity').textContent = '$' + fmt(d.equity);
+    const pnl = parseFloat(d.total_pnl||0);
+    $('pnl').textContent = (pnl>=0?'+':'') + '$' + fmt(Math.abs(pnl));
+    $('pnl').className = 'value ' + (pnl>=0?'green':'red');
+    $('open-pos').textContent = d.open_positions||0;
+    $('closed').textContent = d.closed_trades||0;
+    $('win-rate').textContent = fmt(d.win_rate,0)+'%';
+    $('avg-win').textContent = '$'+fmt(d.avg_win);
+    $('avg-loss').textContent = '$'+fmt(d.avg_loss);
   } catch(e) {}
 }
 
-async function loadMarkets() {
+async function refreshPositions() {
   try {
-    const r = await fetch('/api/markets');
-    const d = await r.json();
-    if (!d.markets || !d.markets.length) return;
-    document.getElementById('market-title').textContent =
-      (d.event_title || 'Strike Markets') + (d.event_end ? ' · expires ' + d.event_end.slice(0,10) : '');
-    const container = document.getElementById('market-bars');
-    container.innerHTML = '';
-    d.markets.forEach(m => {
-      const yes = (m.yes_price * 100).toFixed(1);
-      const div = document.createElement('div');
-      div.className = 'market-bar';
-      div.innerHTML = `
-        <span style="width:80px;color:#aaa">$${(m.strike/1000).toFixed(0)}k</span>
-        <div class="bar-container"><div class="bar-fill" style="width:${yes}%"></div></div>
-        <span style="width:50px;text-align:right;color:#60a5fa">${yes}%</span>
-        <span style="color:#555;font-size:0.7rem;width:120px">liq $${Math.round(m.liquidity).toLocaleString()}</span>
-      `;
-      container.appendChild(div);
-    });
-  } catch(e) {}
-}
-
-async function loadPositions() {
-  try {
-    const r = await fetch('/api/positions');
-    const rows = await r.json();
-    const tbody = document.getElementById('positions-body');
-    tbody.innerHTML = '';
+    const rows = await fetch('/api/positions').then(r=>r.json());
+    const tbody = $('positions-body');
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="color:#555;text-align:center;padding:16px">No open positions</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="color:#555;text-align:center;padding:12px">No open positions</td></tr>';
       return;
     }
-    rows.forEach(p => {
-      const tr = document.createElement('tr');
-      const opened = p.opened_at ? new Date(p.opened_at * 1000).toLocaleTimeString() : '—';
-      tr.innerHTML = `
+    tbody.innerHTML = rows.map(p => `
+      <tr>
         <td>${p.position_id}</td>
-        <td>$${Number(p.strike).toLocaleString()}</td>
-        <td><span class="tag ${p.side === 'YES' ? 'tag-yes' : 'tag-no'}">${p.side}</span></td>
-        <td>${fmt(p.entry_price, 3)}</td>
-        <td>${fmt(p.take_profit, 3)}</td>
-        <td>${fmt(p.stop_loss, 3)}</td>
-        <td>$${Number(p.entry_btc).toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
-        <td>${opened}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+        <td>${p.asset||'BTC'}</td>
+        <td class="${p.side==='UP'?'up':'down'}">${p.side}</td>
+        <td>${fmt(p.entry_price,3)}</td>
+        <td>${fmt(p.take_profit,3)}</td>
+        <td>${fmt(p.stop_loss,3)}</td>
+        <td>${timeUntil(p.window_end_ts)}</td>
+      </tr>`).join('');
   } catch(e) {}
 }
 
-async function loadTrades() {
+async function refreshTrades() {
   try {
-    const r = await fetch('/api/trades');
-    const rows = await r.json();
-    const tbody = document.getElementById('trades-body');
-    tbody.innerHTML = '';
+    const rows = await fetch('/api/trades').then(r=>r.json());
+    const tbody = $('trades-body');
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="color:#555;text-align:center;padding:16px">No closed trades yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="color:#555;text-align:center;padding:12px">No trades yet — waiting for signal</td></tr>';
       return;
     }
-    [...rows].reverse().slice(0, 50).forEach(t => {
-      const pnl = parseFloat(t.pnl_usd);
-      const ret = parseFloat(t.return_pct);
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
+    tbody.innerHTML = [...rows].reverse().map(t => {
+      const pnl = parseFloat(t.pnl_usd||0);
+      const cls = pnl>=0?'win':'loss';
+      const hold = parseFloat(t.hold_seconds||0);
+      const holdStr = hold<60 ? Math.round(hold)+'s' : Math.floor(hold/60)+'m';
+      return `<tr>
         <td>${t.position_id}</td>
-        <td>$${Number(t.strike).toLocaleString()}</td>
-        <td><span class="tag ${t.side === 'YES' ? 'tag-yes' : 'tag-no'}">${t.side}</span></td>
-        <td>${fmt(t.entry_price, 3)}</td>
-        <td>${fmt(t.exit_price, 3)}</td>
-        <td class="${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}</td>
-        <td class="${ret >= 0 ? 'pos' : 'neg'}">${ret >= 0 ? '+' : ''}${Math.abs(ret).toFixed(1)}%</td>
-        <td style="color:#888">${t.exit_reason}</td>
-        <td style="color:#666">${t.hold_seconds ? (t.hold_seconds/60).toFixed(0)+'m' : '—'}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+        <td>${t.asset||'BTC'}</td>
+        <td class="${t.side==='UP'?'up':'down'}">${t.side}</td>
+        <td>${fmt(t.entry_price,3)}</td>
+        <td>${fmt(t.exit_price,3)}</td>
+        <td class="${cls}">${pnl>=0?'+':''}$${fmt(Math.abs(pnl))}</td>
+        <td class="${cls}">${fmt(t.return_pct,1)}%</td>
+        <td>${holdStr}</td>
+        <td style="color:#666">${t.exit_reason}</td>
+      </tr>`;
+    }).join('');
   } catch(e) {}
 }
 
-async function refresh() {
-  document.getElementById('refresh-time').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
-  await Promise.all([loadBTC(), loadSummary(), loadMarkets(), loadPositions(), loadTrades()]);
+async function refreshLog() {
+  try {
+    const d = await fetch('/api/log').then(r=>r.json());
+    const box = $('log-box');
+    const lines = d.lines||[];
+    box.innerHTML = lines.map(line => {
+      let cls = '';
+      if (line.includes('UP=') || line.includes('DOWN=')) cls = 'log-price';
+      else if (line.includes('OPEN')) cls = 'log-open';
+      else if (line.includes('WIN') || line.includes('CLOSE') || line.includes('LOSS')) cls = 'log-close';
+      else if (line.includes('ERROR') || line.includes('error')) cls = 'log-err';
+      else if (line.includes('NEW WINDOW')) cls = 'log-new';
+      else if (line.includes('SUMMARY')) cls = 'log-sum';
+      const safe = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div class="${cls}">${safe}</div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch(e) {}
 }
 
-refresh();
-setInterval(refresh, 15000);
+async function refreshBTC() {
+  try {
+    const d = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT').then(r=>r.json());
+    $('btc-price').textContent = '$' + parseFloat(d.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  } catch(e) {}
+}
+
+function refreshAll() {
+  refreshSummary();
+  refreshPositions();
+  refreshTrades();
+  refreshLog();
+  refreshBTC();
+  $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+refreshAll();
+setInterval(refreshAll, 5000);
 </script>
 </body>
 </html>

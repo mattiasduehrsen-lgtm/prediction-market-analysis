@@ -1,12 +1,10 @@
 """
-BTC Strike Market Paper Trading Bot
-====================================
-Trades Polymarket "Bitcoin above $X on [date]?" markets based on live BTC
-price momentum from Binance WebSocket.
-
+Polymarket Paper Trading Bot
+=============================
 Commands:
-  python main.py paper-loop   — run the trading bot
-  python main.py dashboard    — run the web dashboard
+  python main.py btc-5m-loop  — 5-minute BTC Up/Down bot (primary)
+  python main.py paper-loop   — daily BTC strike market bot (legacy)
+  python main.py dashboard    — web dashboard
   python main.py status       — print current state and exit
 """
 from __future__ import annotations
@@ -184,6 +182,110 @@ def _check_entries(engine, snapshot, btc, signal_mod) -> None:
         engine.open(sig)
 
 
+# ── 5-minute Up/Down loop ─────────────────────────────────────────────────────
+
+def run_5m_loop(asset: str = "BTC") -> None:
+    from src.bot.market_5m import fetch_market, FORCE_EXIT
+    from src.bot.signal_5m import should_enter, should_exit, take_profit_price, stop_loss_price
+    from src.bot.engine_5m import Engine5m
+
+    POLL_INTERVAL = 5   # seconds between price checks
+
+    print(f"\n{'='*60}")
+    print(f"5-Minute Up/Down Bot — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Poll every {POLL_INTERVAL}s | Force-exit at {FORCE_EXIT}s remaining")
+    print(f"{'='*60}\n")
+
+    engine = Engine5m()
+    iteration = 0
+    last_slug = ""
+
+    while True:
+        iteration += 1
+        now_str = time.strftime("%H:%M:%S")
+
+        try:
+            market = fetch_market(asset)
+            if not market:
+                print(f"[{now_str}] No active market found — retrying...")
+                time.sleep(POLL_INTERVAL)
+                continue
+
+            secs = market.seconds_remaining
+            is_new_window = (market.slug != last_slug)
+            if is_new_window:
+                last_slug = market.slug
+                print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s remaining | liq=${market.liquidity:,.0f}")
+
+            print(
+                f"[{now_str}] {asset} UP={market.up_price:.3f} DOWN={market.down_price:.3f} "
+                f"| {secs:.0f}s left"
+            )
+
+            # ── Check exits ────────────────────────────────────────────────────
+            for pos_id, pos in list(engine.positions.items()):
+                # Use current price for this position's side
+                cur_up = market.up_price if market.condition_id == pos.condition_id else None
+                if cur_up is None:
+                    # Position is from a previous window — force close immediately
+                    engine.close(pos_id, 0.01, "window_expired")
+                    continue
+
+                do_exit, reason = should_exit(
+                    side=pos.side,
+                    entry_price=pos.entry_price,
+                    current_up_price=cur_up,
+                    take_profit=pos.take_profit,
+                    stop_loss=pos.stop_loss,
+                    seconds_remaining=secs,
+                )
+                if do_exit:
+                    exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
+                    engine.close(pos_id, exit_price, reason)
+                else:
+                    cur_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
+                    pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100
+                    print(
+                        f"  [HOLD] {pos_id} {pos.side} entry={pos.entry_price:.3f} "
+                        f"now={cur_price:.3f} pnl={pnl_pct:+.1f}% | {secs:.0f}s left"
+                    )
+
+            # ── Check entries ──────────────────────────────────────────────────
+            if not engine.already_in(market.condition_id):
+                do_enter, side, entry_price = should_enter(market)
+                if do_enter:
+                    engine.open(
+                        condition_id=market.condition_id,
+                        slug=market.slug,
+                        asset=asset,
+                        side=side,
+                        entry_price=entry_price,
+                        take_profit=take_profit_price(entry_price),
+                        stop_loss=stop_loss_price(entry_price),
+                        window_end_ts=market.window_end_ts,
+                    )
+
+            # ── Summary every 12 polls (≈ 1 min) ──────────────────────────────
+            if iteration % 12 == 0:
+                engine.save_summary()
+                s = engine.summary()
+                print(
+                    f"[SUMMARY] equity=${s['equity']:.2f} | open={s['open_positions']} | "
+                    f"closed={s['closed_trades']} ({s['wins']}W/{s['losses']}L) | "
+                    f"pnl=${s['total_pnl']:+.2f} | win_rate={s['win_rate']:.0f}%"
+                )
+
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            print(f"[{now_str}] ERROR: {exc}")
+
+        try:
+            time.sleep(POLL_INTERVAL)
+        except BaseException:
+            pass
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 def run_dashboard() -> None:
@@ -224,7 +326,10 @@ def run_status() -> None:
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
 
-    if cmd == "paper-loop":
+    if cmd == "btc-5m-loop":
+        _setup_logging()
+        run_5m_loop("BTC")
+    elif cmd == "paper-loop":
         _setup_logging()
         run_loop()
     elif cmd == "dashboard":

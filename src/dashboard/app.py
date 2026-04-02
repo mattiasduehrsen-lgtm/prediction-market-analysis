@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import json
 import csv
-import time
+import json
+import re
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template
+
+# Price-tick lines: [HH:MM:SS] BTC UP=0.505 DOWN=0.495 | 179s left
+_PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
 
 OUT_5M = Path(__file__).resolve().parents[2] / "output/5m_trading"
 
@@ -60,12 +63,18 @@ def api_trades():
 
 @app.route("/api/log")
 def api_log():
-    """Return last 80 lines of bot.log for live monitoring."""
+    """Return last 80 meaningful lines of bot.log, filtering price-tick noise."""
     log_path = Path(__file__).resolve().parents[2] / "bot.log"
     if not log_path.exists():
         return jsonify({"lines": []})
     try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return jsonify({"lines": lines[-80:]})
+        recent = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-2000:]
+        # Keep all non-price-tick lines (events, windows, summaries, errors)
+        events = [l for l in recent if not _PRICE_TICK.match(l)]
+        # Append the single most recent price tick so current state is visible
+        price_lines = [l for l in recent if _PRICE_TICK.match(l)]
+        if price_lines:
+            events.append("— " + price_lines[-1])
+        return jsonify({"lines": events[-80:]})
     except Exception:
         return jsonify({"lines": []})

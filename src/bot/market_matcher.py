@@ -260,13 +260,16 @@ def run(force: bool = False) -> None:
 
     # Batch LLM calls.
     verified: list[dict[str, Any]] = []
+    verified_keys: set[str] = set()   # keys whose batch completed successfully
     n_batches = math.ceil(total_pairs / BATCH_SIZE)
     for batch_i in range(n_batches):
         batch = to_verify[batch_i * BATCH_SIZE : (batch_i + 1) * BATCH_SIZE]
         print(f"[MATCHER] LLM batch {batch_i + 1}/{n_batches} ({len(batch)} pairs)…")
+        success = False
         try:
             results = _verify_batch(batch)
             verified.extend(results)
+            success = True
         except Exception as exc:
             # Likely a rate-limit — wait 20 s and retry once before skipping.
             print(f"[MATCHER] Batch {batch_i + 1} error ({exc}) — retrying in 20 s…")
@@ -274,9 +277,13 @@ def run(force: bool = False) -> None:
             try:
                 results = _verify_batch(batch)
                 verified.extend(results)
+                success = True
                 print(f"[MATCHER] Batch {batch_i + 1} retry succeeded")
             except Exception as exc2:
                 print(f"[MATCHER] Batch {batch_i + 1} retry failed (skipping): {exc2}")
+        if success:
+            for p in batch:
+                verified_keys.add(p["poly_key"])
         # Small pause between batches to stay well under rate limits.
         time.sleep(1)
 
@@ -287,11 +294,11 @@ def run(force: bool = False) -> None:
         if r["match"] and r["confidence"] > best_by_key.get(key, {}).get("confidence", -1):
             best_by_key[key] = r
 
-    # Update cache.
+    # Update cache — only touch entries whose batch completed successfully.
+    # Keys from failed batches are left out of the cache so the next run retries them.
     new_pairs = 0
-    processed_keys: set[str] = {p["poly_key"] for p in to_verify}
 
-    for key in processed_keys:
+    for key in verified_keys:
         if key in best_by_key:
             r = best_by_key[key]
             cache[key] = {
@@ -303,8 +310,12 @@ def run(force: bool = False) -> None:
             }
             new_pairs += 1
         else:
-            # LLM found no match for any candidate.
+            # LLM checked this market and found no matching Kalshi counterpart.
             cache[key] = {"no_match": True, "verified_at": now}
+
+    skipped_due_to_error = len({p["poly_key"] for p in to_verify} - verified_keys)
+    if skipped_due_to_error:
+        print(f"[MATCHER] {skipped_due_to_error} markets left uncached (batch errors) — will retry next run")
 
     CACHE_PATH.write_text(json.dumps(cache, indent=2), encoding="utf-8")
     print(

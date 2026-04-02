@@ -215,6 +215,35 @@ def _check_pairs_refresh() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _check_fundamental_scan() -> None:
+    """Run the fundamental scanner in a background thread every FUNDAMENTAL_SCAN_INTERVAL_MINUTES minutes."""
+    import threading
+    import time as _time
+    from pathlib import Path as _P
+
+    if not os.environ.get("TAVILY_API_KEY"):
+        return
+
+    interval_minutes = float(os.environ.get("FUNDAMENTAL_SCAN_INTERVAL_MINUTES", "30"))
+    cache_path = _P("output/paper_trading/polymarket/fundamental_signals.json")
+
+    if cache_path.exists():
+        age_minutes = (_time.time() - cache_path.stat().st_mtime) / 60
+        if age_minutes < interval_minutes:
+            return
+
+    print(f"[FUNDAMENTAL] Cache stale — running scan in background")
+
+    def _run() -> None:
+        try:
+            from src.bot.fundamental_scanner import run as _scan
+            _scan()
+        except Exception as exc:
+            print(f"[FUNDAMENTAL] Scan error: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _check_advisor_schedule() -> None:
     """Run the advisor in a background thread every PAPER_ADVISOR_INTERVAL_HOURS hours."""
     import json as _json
@@ -279,6 +308,7 @@ def paper_loop():
                 collect_current_data()
                 last_saved = bot.run_once()
                 _check_pairs_refresh()
+                _check_fundamental_scan()
                 _check_advisor_schedule()
                 # Subscribe any newly opened positions to the price monitor.
                 bot.subscribe_open_positions()

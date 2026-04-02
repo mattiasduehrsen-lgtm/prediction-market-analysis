@@ -1157,7 +1157,33 @@ class VolumeMomentumStrategy:
             & (signals["seconds_since_last_trade"] <= cfg.max_seconds_since_last_trade)
         )
 
-        eligible = kalshi_eligible | ob_eligible | vwap_confirmed
+        # Signal 4: Fundamental mispricing — Claude estimates a higher probability than
+        # the market price based on current news (from the fundamental scanner cache).
+        try:
+            from src.bot.fundamental_scanner import load_signals as _load_fundamental
+            _fundamental_cache = _load_fundamental()
+        except Exception:
+            _fundamental_cache = {}
+
+        if _fundamental_cache and "condition_id" in signals.columns:
+            signals["fundamental_edge"] = signals["condition_id"].map(
+                lambda cid: _fundamental_cache.get(str(cid), {}).get("fundamental_edge", 0.0)
+            ).fillna(0.0)
+            signals["fundamental_confidence"] = signals["condition_id"].map(
+                lambda cid: _fundamental_cache.get(str(cid), {}).get("confidence", "none")
+            ).fillna("none")
+        else:
+            signals["fundamental_edge"] = 0.0
+            signals["fundamental_confidence"] = "none"
+
+        min_fundamental_edge = float(os.environ.get("FUNDAMENTAL_MIN_EDGE", "0.06"))
+        fundamental_eligible = (
+            base_eligible
+            & (signals["fundamental_edge"] >= min_fundamental_edge)
+            & signals["fundamental_confidence"].isin(["medium", "high"])
+        )
+
+        eligible = kalshi_eligible | ob_eligible | vwap_confirmed | fundamental_eligible
 
         # Conviction: weight cross-market and order book signals heavily since they're higher quality.
         kalshi_component = (kalshi_price_gap / max(cfg.kalshi_price_gap_threshold * 3, 1e-9)).apply(_clamp)
@@ -1168,13 +1194,15 @@ class VolumeMomentumStrategy:
             signals["recent_notional"].apply(lambda x: math.log1p(max(x, 0)))
             / max(math.log1p(cfg.min_recent_notional * 8), 1e-9)
         ).apply(_clamp)
+        fundamental_component = (signals["fundamental_edge"] / max(min_fundamental_edge * 2, 1e-9)).apply(_clamp)
 
         signals["conviction"] = (
-            0.35 * edge_component      # VWAP edge — primary signal
-            + 0.25 * ob_component      # live order book imbalance
-            + 0.20 * flow_component    # buy/sell ratio
-            + 0.10 * notional_component  # market activity
-            + 0.10 * kalshi_component  # Kalshi bonus when a verified pair confirms
+            0.30 * edge_component          # VWAP edge
+            + 0.20 * ob_component          # live order book imbalance
+            + 0.15 * flow_component        # buy/sell ratio
+            + 0.10 * notional_component    # market activity
+            + 0.10 * kalshi_component      # Kalshi cross-market confirmation
+            + 0.15 * fundamental_component # Claude fundamental estimate
         )
         # Repeated signals without price movement mean the edge is not closing — penalize conviction.
         # Grace period: first 3 runs get no penalty. After that, -2% per additional run, capped at -12%.
@@ -1190,6 +1218,7 @@ class VolumeMomentumStrategy:
                 f"kalshi_gap={row.get('kalshi_price_gap', 0) or 0:.3f}, "
                 f"ob_imbalance={row.get('ob_imbalance', 0) or 0:.2f}, "
                 f"edge={row['edge']:.3f}, buy_share={row['buy_share']:.1%}, "
+                f"fundamental_edge={row.get('fundamental_edge', 0):.3f}({row.get('fundamental_confidence', 'none')}), "
                 f"expiry={row['hours_to_expiry']:.1f}h, signal_runs={int(row['signal_runs'])}, "
                 f"{row['cross_market_reason']}"
             ),

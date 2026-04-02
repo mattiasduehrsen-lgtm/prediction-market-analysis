@@ -26,6 +26,8 @@ dependencies = [
     "flask>=3.0.0",
     "pmxt>=2.22.1",
     "anthropic>=0.40.0",
+    "tavily-python>=0.7.0",
+    "tavily-python>=0.7.23",
 ]
 
 [dependency-groups]

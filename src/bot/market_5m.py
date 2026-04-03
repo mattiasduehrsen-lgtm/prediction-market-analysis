@@ -62,16 +62,19 @@ class Market5m:
         return self.seconds_remaining <= 0
 
 
-def fetch_live_prices(market: "Market5m") -> tuple[float, float]:
+def fetch_live_prices(market: "Market5m") -> tuple[float, float, bool]:
     """
     Fetch real-time UP/DOWN prices from the CLOB midpoint API.
 
+    Returns (up_price, down_price, clob_ok) where clob_ok=True means a fresh
+    CLOB price was returned. clob_ok=False means the call failed and last known
+    prices were returned as a fallback.
+
     The Gamma API's outcomePrices field is stale — it does not update mid-window.
     The CLOB midpoint reflects the current best-bid/best-ask and moves in real time.
-    Falls back to the last known price if the CLOB call fails.
     """
     if not market.token_id_up:
-        return market.up_price, market.down_price
+        return market.up_price, market.down_price, False
     try:
         r = httpx.get(
             f"{CLOB_API}/midpoint",
@@ -81,9 +84,9 @@ def fetch_live_prices(market: "Market5m") -> tuple[float, float]:
         r.raise_for_status()
         data = r.json()
         up = float(data.get("mid", market.up_price))
-        return up, round(1.0 - up, 6)
-    except Exception:
-        return market.up_price, market.down_price
+        return up, round(1.0 - up, 6), True
+    except Exception as exc:
+        return market.up_price, market.down_price, False
 
 
 def get_window_end() -> int:

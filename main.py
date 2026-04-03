@@ -234,14 +234,15 @@ def run_5m_loop(asset: str = "BTC") -> None:
 
             # Live prices from CLOB midpoint — updates every 2s, reflects real order book.
             # Gamma's outcomePrices does NOT update mid-window and will show stale 0.50/0.50.
-            market.up_price, market.down_price = fetch_live_prices(market)
+            market.up_price, market.down_price, clob_ok = fetch_live_prices(market)
             cl = chainlink_feed.get_state()
             secs = market.seconds_remaining
 
+            src = "clob" if clob_ok else "CACHED"
             cl_info = f"CL={cl.pct_change:+.3f}%" if cl.price > 0 else ""
             print(
                 f"[{now_str}] {asset} UP={market.up_price:.3f} DOWN={market.down_price:.3f} "
-                f"| {secs:.0f}s left {cl_info}"
+                f"[{src}] | {secs:.0f}s left {cl_info}"
             )
 
             # ── Check exits ────────────────────────────────────────────────────

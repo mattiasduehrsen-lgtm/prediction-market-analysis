@@ -18,6 +18,7 @@ from typing import Optional
 import httpx
 
 GAMMA_API = "https://gamma-api.polymarket.com"
+CLOB_API  = "https://clob.polymarket.com"
 
 # Slug prefixes per asset — extend as needed
 SLUG_PREFIXES: dict[str, str] = {
@@ -59,6 +60,30 @@ class Market5m:
 
     def is_expired(self) -> bool:
         return self.seconds_remaining <= 0
+
+
+def fetch_live_prices(market: "Market5m") -> tuple[float, float]:
+    """
+    Fetch real-time UP/DOWN prices from the CLOB midpoint API.
+
+    The Gamma API's outcomePrices field is stale — it does not update mid-window.
+    The CLOB midpoint reflects the current best-bid/best-ask and moves in real time.
+    Falls back to the last known price if the CLOB call fails.
+    """
+    if not market.token_id_up:
+        return market.up_price, market.down_price
+    try:
+        r = httpx.get(
+            f"{CLOB_API}/midpoint",
+            params={"token_id": market.token_id_up},
+            timeout=5,
+        )
+        r.raise_for_status()
+        data = r.json()
+        up = float(data.get("mid", market.up_price))
+        return up, round(1.0 - up, 6)
+    except Exception:
+        return market.up_price, market.down_price
 
 
 def get_window_end() -> int:

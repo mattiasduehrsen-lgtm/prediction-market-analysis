@@ -185,7 +185,7 @@ def _check_entries(engine, snapshot, btc, signal_mod) -> None:
 # ── 5-minute Up/Down loop ─────────────────────────────────────────────────────
 
 def run_5m_loop(asset: str = "BTC") -> None:
-    from src.bot.market_5m import fetch_market, FORCE_EXIT
+    from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT
     from src.bot.signal_5m import should_enter, should_exit, take_profit_price
     from src.bot.engine_5m import Engine5m
     from src.bot import chainlink_feed
@@ -208,27 +208,35 @@ def run_5m_loop(asset: str = "BTC") -> None:
 
     engine = Engine5m()
     iteration = 0
-    last_slug = ""
+    market = None   # cached — only refetched when window expires
 
     while True:
         iteration += 1
         now_str = time.strftime("%H:%M:%S")
 
         try:
-            market = fetch_market(asset)
-            cl = chainlink_feed.get_state()
-
-            if not market:
-                print(f"[{now_str}] No active market found — retrying...")
-                time.sleep(POLL_INTERVAL)
-                continue
-
-            secs = market.seconds_remaining
-            is_new_window = (market.slug != last_slug)
-            if is_new_window:
-                last_slug = market.slug
-                cl_str = f"CL=${cl.price:,.2f} start=${cl.window_start_price:,.2f} Δ{cl.pct_change:+.3f}%" if cl.price > 0 else "CL=unavailable"
+            # Refetch market structure from Gamma only on startup or window change.
+            # outcomePrices from Gamma is stale — only token IDs and slug are needed here.
+            if market is None or market.is_expired():
+                new_market = fetch_market(asset)
+                if new_market is None:
+                    print(f"[{now_str}] No active market found — retrying...")
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                market = new_market
+                cl = chainlink_feed.get_state()
+                secs = market.seconds_remaining
+                cl_str = (
+                    f"CL=${cl.price:,.2f} start=${cl.window_start_price:,.2f} Δ{cl.pct_change:+.3f}%"
+                    if cl.price > 0 else "CL=unavailable"
+                )
                 print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s | liq=${market.liquidity:,.0f} | {cl_str}")
+
+            # Live prices from CLOB midpoint — updates every 2s, reflects real order book.
+            # Gamma's outcomePrices does NOT update mid-window and will show stale 0.50/0.50.
+            market.up_price, market.down_price = fetch_live_prices(market)
+            cl = chainlink_feed.get_state()
+            secs = market.seconds_remaining
 
             cl_info = f"CL={cl.pct_change:+.3f}%" if cl.price > 0 else ""
             print(

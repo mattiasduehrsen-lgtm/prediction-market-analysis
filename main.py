@@ -262,6 +262,10 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     btc_at_window_start: float = 0.0   # Binance BTC/USD when window opened
     up_price_at_window_start: float = 0.5  # first CLOB midpoint reading for window
     window_stopped: set = set()  # condition_ids that hit a stop this window (currently unused)
+    # Resolution tracking — record prev window's condition_id and Chainlink start price
+    # so we can fill resolution_side/our_side_won when the window closes
+    prev_condition_id: str = ""
+    prev_cl_start_price: float = 0.0
 
     while True:
         iteration += 1
@@ -271,6 +275,13 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             # Refetch market structure from Gamma only on startup or window change.
             # outcomePrices from Gamma is stale — only token IDs and slug are needed here.
             if market is None or market.is_expired():
+                # ── Resolution: fill prev window's outcome before resetting ──────
+                if market is not None and not live and prev_condition_id and prev_cl_start_price > 0:
+                    cl_now = chainlink_feed.get_state()
+                    if cl_now.price > 0:
+                        resolution_side = "UP" if cl_now.price >= prev_cl_start_price else "DOWN"
+                        engine.update_resolution(prev_condition_id, resolution_side)
+
                 new_market = fetch_market(asset)
                 if new_market is None:
                     print(f"[{now_str}] No active market found — retrying...")
@@ -283,6 +294,12 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 window_stopped.clear()
                 btc_at_window_start = _fetch_btc_price()
                 up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
+
+                # Save this window's starting state for resolution at next transition
+                if not live:
+                    prev_condition_id = market.condition_id
+                    cl_start = chainlink_feed.get_state()
+                    prev_cl_start_price = cl_start.price  # 0.0 if feed unavailable — handled above
 
                 cl = chainlink_feed.get_state()
                 secs = market.seconds_remaining

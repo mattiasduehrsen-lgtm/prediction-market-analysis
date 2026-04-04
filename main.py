@@ -241,6 +241,10 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
         engine = Engine5m()
         cb = None
 
+    from src.bot.tick_logger import TickLogger
+    tick_logger = TickLogger()
+    print("[MAIN] Tick logger active — writing price_ticks.csv every 5s")
+
     # Start Chainlink feed — actual window start prices, not stale API data
     chainlink_feed.start()
     print("[MAIN] Waiting for Chainlink price feed...")
@@ -339,6 +343,14 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 up_price_at_window_start = market.up_price
 
             src = "clob" if clob_ok else "CACHED"
+            tick_logger.tick(
+                condition_id=market.condition_id,
+                slug=market.slug,
+                up_price=market.up_price,
+                down_price=market.down_price,
+                seconds_left=secs,
+                source=src,
+            )
             cl_info = f"CL={cl.pct_change:+.3f}%" if cl.price > 0 else ""
             print(
                 f"[{now_str}] {asset} UP={market.up_price:.3f} DOWN={market.down_price:.3f} "

@@ -10,9 +10,8 @@ Entry (first 45 seconds only — limit buy between 30-40¢):
   - Minimum liquidity required
 
 Exit rules (hard exits only — no trailing stops):
-  1. Price hits FORCE_EXIT_PRICE (90¢) → hard exit, capture the big win immediately
-  2. Price hits TAKE_PROFIT (50¢)      → hard take profit (mean reversion complete)
-  3. FORCE_EXIT seconds left           → close regardless (avoid settlement chaos)
+  1. Price hits TAKE_PROFIT (50¢)  → take profit, mean reversion complete
+  2. FORCE_EXIT seconds left       → close regardless (avoid settlement chaos)
 
 Key lessons (from 158-trade analysis):
   - All trailing stops (z1, z2, z3) had 0% win rate — they cut mid-reversion before reaching 50¢
@@ -24,7 +23,7 @@ from __future__ import annotations
 
 from src.bot.market_5m import (
     Market5m,
-    ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT, FORCE_EXIT_PRICE,
+    ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
     MIN_SECONDS, FORCE_EXIT, BTC_SKIP_RATE,
 )
 
@@ -87,11 +86,7 @@ def should_exit(
     """
     current = current_up_price if side == "UP" else (1.0 - current_up_price)
 
-    # Priority 1: hard exit at 90¢ — capture the big win, never let it evaporate
-    if current >= FORCE_EXIT_PRICE:
-        return True, "force_exit_price"
-
-    # Priority 2: hard take profit at 50¢ — this is the target, exit immediately
+    # Priority 1: take profit at 50¢ — mean reversion complete, exit immediately
     if current >= take_profit:
         return True, "take_profit"
 

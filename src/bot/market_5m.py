@@ -30,7 +30,7 @@ SLUG_PREFIXES: dict[str, str] = {
 
 # Entry/exit thresholds
 ENTRY_MIN        = 0.30   # raised from 0.15: <25¢ entries had 2.9% WR (-$185). 30-40¢ = 55-67% WR.
-ENTRY_MAX        = 0.40   # limit buy target — wait for 40¢, skip the window if it never hits
+ENTRY_MAX        = 0.39   # raised from 0.40: 0.39-0.40 entries had lowest EV; proj +$380 vs +$350 per 100 windows at 0.39
 TAKE_PROFIT      = 0.50   # hard exit at 50¢ — mean reversion to neutral after the opening swing
 MIN_SECONDS      = 255    # only enter in first 45 seconds of window (300 - 45 = 255s must remain) — 200-250s remaining = 60% WR; <150s = 0% WR
 FORCE_EXIT       = 10     # close at 10s remaining — avoid settlement chaos

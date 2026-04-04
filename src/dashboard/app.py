@@ -58,7 +58,10 @@ def api_positions():
 @app.route("/api/trades")
 def api_trades():
     rows = _read_csv(OUT_5M / "trades.csv")
-    return jsonify(rows[-100:])
+    # Filter None keys — appear when appended rows have more columns than the
+    # existing header (e.g. after adding new TRADE_FIELDS to an existing CSV).
+    clean = [{k: v for k, v in row.items() if k is not None} for row in rows]
+    return jsonify(clean[-100:])
 
 
 @app.route("/api/log")

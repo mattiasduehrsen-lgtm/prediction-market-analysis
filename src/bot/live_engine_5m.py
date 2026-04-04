@@ -437,11 +437,12 @@ class LiveEngine5m:
         if order_type == OrderType.FOK:
             self._settle_exit(position_id, exit_price, exit_reason, price_60s_after_entry)
 
-    def check_pending_exits(self, price_60s_after_entry: float = 0.0) -> None:
+    def check_pending_exits(self, price_60s_after_entry: float = 0.0) -> list[ClosedLiveTrade5m]:
         """
         Poll exit order status. Transition PENDING_EXIT → CLOSED on fill.
-        Called every poll cycle.
+        Called every poll cycle. Returns list of trades closed this call.
         """
+        closed = []
         for pos_id, pos in list(self.positions.items()):
             if pos.state != State.PENDING_EXIT or not pos.exit_order_id:
                 continue
@@ -453,9 +454,11 @@ class LiveEngine5m:
 
             status = order.get("status", "")
             if status in ("matched", "filled"):
-                # Use actual fill price if available
                 actual_exit = float(order.get("average_price", pos.take_profit))
-                self._settle_exit(pos_id, actual_exit, "take_profit", price_60s_after_entry)
+                trade = self._settle_exit(pos_id, actual_exit, "take_profit", price_60s_after_entry)
+                if trade:
+                    closed.append(trade)
+        return closed
 
     def _settle_exit(
         self,
@@ -463,7 +466,7 @@ class LiveEngine5m:
         actual_exit_price: float,
         exit_reason: str,
         price_60s_after_entry: float,
-    ) -> None:
+    ) -> ClosedLiveTrade5m | None:
         """Record the closed trade and remove from active positions."""
         pos = self.positions.pop(position_id, None)
         if pos is None:
@@ -493,6 +496,7 @@ class LiveEngine5m:
             f"[LIVE5M] CLOSE {position_id} | {emoji} ${pnl_usd:+.2f} ({return_pct:+.1f}%) "
             f"| {exit_reason} | hold={hold_sec:.0f}s"
         )
+        return trade
 
     # ── Summary ───────────────────────────────────────────────────────────────
 

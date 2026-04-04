@@ -232,10 +232,14 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
 
     if live:
         from src.bot.live_engine_5m import LiveEngine5m
+        from src.bot.circuit_breaker import CircuitBreaker
         engine = LiveEngine5m()
+        cb = CircuitBreaker(max_daily_loss_usd=50.0)
+        print(cb.status())
     else:
         from src.bot.engine_5m import Engine5m
         engine = Engine5m()
+        cb = None
 
     # Start Chainlink feed — actual window start prices, not stale API data
     chainlink_feed.start()
@@ -320,7 +324,9 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             # ── Advance live order state machine ───────────────────────────────
             if live:
                 engine.check_pending_entries()
-                engine.check_pending_exits()
+                for closed_trade in engine.check_pending_exits():
+                    if cb:
+                        cb.record_trade(closed_trade.pnl_usd)
                 # Cancel any pending entries whose window has expired
                 for pos_id, pos in list(engine.positions.items()):
                     from src.bot.live_engine_5m import State
@@ -366,7 +372,9 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                                           price_60s_after_entry=p60_after)
                     else:
                         exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
-                        engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)
+                        trade = engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)
+                        if cb and trade:
+                            cb.record_trade(trade.pnl_usd)
                 else:
                     cur_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
                     pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100
@@ -376,7 +384,10 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     )
 
             # ── Check entries ──────────────────────────────────────────────────
-            if not engine.already_in(market.condition_id) and market.condition_id not in window_done:
+            cb_open = (cb is None or cb.is_open())
+            if cb and not cb_open and iteration % 30 == 0:
+                print(cb.status())
+            if not engine.already_in(market.condition_id) and market.condition_id not in window_done and cb_open:
                 # Rolling BTC rate $/min — use btc_history deque (updated every 2s poll)
                 btc_rate_per_min = 0.0
                 if len(btc_history) >= 2:

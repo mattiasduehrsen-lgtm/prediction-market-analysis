@@ -70,7 +70,7 @@ def setup_credentials() -> None:
     except Exception as exc:
         raise RuntimeError(f"Failed to derive API key: {exc}") from exc
 
-    print("\n✓ Add these to your .env on BOTH machines:\n")
+    print("\nAdd these to your .env on BOTH machines:\n")
     print(f"POLYMARKET_API_KEY={creds.api_key}")
     print(f"POLYMARKET_API_SECRET={creds.api_secret}")
     print(f"POLYMARKET_API_PASSPHRASE={creds.api_passphrase}")

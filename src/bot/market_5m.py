@@ -29,7 +29,7 @@ SLUG_PREFIXES: dict[str, str] = {
 }
 
 # Entry/exit thresholds
-ENTRY_MIN        = 0.30   # raised from 0.15: <25¢ entries had 2.9% WR (-$185). 30-40¢ = 55-67% WR.
+ENTRY_MIN        = 0.35   # raised from 0.30: 0.30-0.35 bucket deteriorated to 20% WR in recent 30 trades
 ENTRY_MAX        = 0.39   # raised from 0.40: 0.39-0.40 entries had lowest EV; proj +$380 vs +$350 per 100 windows at 0.39
 TAKE_PROFIT      = 0.50   # hard exit at 50¢ — mean reversion to neutral after the opening swing
 MIN_SECONDS      = 255    # only enter in first 45 seconds of window (300 - 45 = 255s must remain) — 200-250s remaining = 60% WR; <150s = 0% WR

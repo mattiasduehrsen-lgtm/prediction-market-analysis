@@ -64,6 +64,88 @@ def api_trades():
     return jsonify(clean[-100:])
 
 
+@app.route("/api/ev")
+def api_ev():
+    rows = _read_csv(OUT_5M / "trades.csv")
+    trades = []
+    for row in rows:
+        try:
+            trades.append({
+                "pnl":          float(row.get("pnl_usd") or 0),
+                "entry_price":  float(row.get("entry_price") or 0),
+                "exit_reason":  row.get("exit_reason", ""),
+                "side":         row.get("side", ""),
+                "hold_seconds": float(row.get("hold_seconds") or 0),
+            })
+        except Exception:
+            pass
+
+    if not trades:
+        return jsonify({})
+
+    def ev_stats(group):
+        if not group: return None
+        wins   = [t for t in group if t["pnl"] > 0]
+        losses = [t for t in group if t["pnl"] <= 0]
+        wr     = len(wins) / len(group)
+        avg_w  = sum(t["pnl"] for t in wins)   / len(wins)   if wins   else 0
+        avg_l  = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
+        ev     = wr * avg_w + (1 - wr) * avg_l
+        return {"count": len(group), "win_rate": round(wr * 100, 1),
+                "avg_win": round(avg_w, 2), "avg_loss": round(avg_l, 2),
+                "ev_per_trade": round(ev, 3), "total_pnl": round(sum(t["pnl"] for t in group), 2)}
+
+    # Rolling EV — last 10 trades, 20 trades, all trades
+    def rolling(n):
+        return ev_stats(trades[-n:]) if len(trades) >= n else ev_stats(trades)
+
+    # By entry price bucket
+    def bucket(p):
+        if p < 0.30: return "<0.30"
+        if p < 0.33: return "0.30-0.33"
+        if p < 0.36: return "0.33-0.36"
+        if p < 0.38: return "0.36-0.38"
+        return "0.38-0.40"
+
+    by_entry = {}
+    for b in ["<0.30", "0.30-0.33", "0.33-0.36", "0.36-0.38", "0.38-0.40"]:
+        grp = [t for t in trades if bucket(t["entry_price"]) == b]
+        s = ev_stats(grp)
+        if s: by_entry[b] = s
+
+    # By exit reason
+    reasons = {}
+    for r in set(t["exit_reason"] for t in trades):
+        if not r: continue
+        s = ev_stats([t for t in trades if t["exit_reason"] == r])
+        if s: reasons[r] = s
+
+    # By side
+    by_side = {
+        "UP":   ev_stats([t for t in trades if t["side"] == "UP"]),
+        "DOWN": ev_stats([t for t in trades if t["side"] == "DOWN"]),
+    }
+
+    # Rolling EV series — EV per trade computed over a 20-trade sliding window
+    rolling_series = []
+    window = 20
+    for i in range(window, len(trades) + 1):
+        chunk = trades[i - window:i]
+        s = ev_stats(chunk)
+        if s:
+            rolling_series.append(round(s["ev_per_trade"], 3))
+
+    return jsonify({
+        "overall":        ev_stats(trades),
+        "last_20":        rolling(20),
+        "last_10":        rolling(10),
+        "by_entry_price": by_entry,
+        "by_exit_reason": reasons,
+        "by_side":        by_side,
+        "rolling_series": rolling_series,
+    })
+
+
 @app.route("/api/log")
 def api_log():
     """Return last 80 meaningful lines of bot.log, filtering price-tick noise."""

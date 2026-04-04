@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BTC 5m Up/Down — Paper Trading</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f1117; color: #e0e0e0; font-family: 'Segoe UI', monospace; font-size: 14px; }
@@ -33,6 +34,25 @@
   .win { color: #00c853; }
   .loss { color: #ff5252; }
 
+  /* Tabs */
+  .tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid #2a2d3a; margin-bottom: 4px; }
+  .tab-btn { background: none; border: none; color: #666; font-size: 13px; font-family: inherit;
+             padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab-btn.active { color: #fff; border-bottom-color: #4fc3f7; }
+  .tab-btn:hover { color: #aaa; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* EV tab */
+  .ev-cards { display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap; }
+  .ev-positive { color: #00c853 !important; }
+  .ev-negative { color: #ff5252 !important; }
+  .ev-neutral  { color: #ffd54f !important; }
+  .ev-table td.pos { color: #00c853; }
+  .ev-table td.neg { color: #ff5252; }
+  .chart-wrap { padding: 0 24px 20px; }
+  canvas { max-height: 200px; }
+
   #log-box {
     background: #0d0f18; border: 1px solid #2a2d3a; border-radius: 6px;
     padding: 12px; height: 320px; overflow-y: auto;
@@ -54,6 +74,14 @@
   <div id="btc-price">$—</div>
   <div id="last-updated">—</div>
 </header>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+  <button class="tab-btn" onclick="showTab('ev')">EV Analysis</button>
+</div>
+
+<!-- ══ OVERVIEW TAB ══ -->
+<div id="tab-overview" class="tab-pane active">
 
 <div class="cards">
   <div class="card">
@@ -115,8 +143,80 @@
   <div id="log-box">Loading...</div>
 </section>
 
+</div><!-- end tab-overview -->
+
+<!-- ══ EV TAB ══ -->
+<div id="tab-ev" class="tab-pane">
+
+  <div class="ev-cards">
+    <div class="card">
+      <div class="label">EV / Trade (All)</div>
+      <div class="value" id="ev-all">—</div>
+    </div>
+    <div class="card">
+      <div class="label">EV / Trade (Last 20)</div>
+      <div class="value" id="ev-20">—</div>
+    </div>
+    <div class="card">
+      <div class="label">EV / Trade (Last 10)</div>
+      <div class="value" id="ev-10">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Win Rate (All)</div>
+      <div class="value yellow" id="ev-wr">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Avg Win</div>
+      <div class="value green" id="ev-avgw">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Avg Loss</div>
+      <div class="value red" id="ev-avgl">—</div>
+    </div>
+  </div>
+
+  <div class="chart-wrap">
+    <h2>Rolling EV (20-trade window)</h2>
+    <canvas id="ev-chart"></canvas>
+  </div>
+
+  <section>
+    <h2>EV by Entry Price Range</h2>
+    <table class="ev-table">
+      <thead><tr><th>Range</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
+      <tbody id="ev-entry-body"></tbody>
+    </table>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>EV by Exit Reason</h2>
+    <table class="ev-table">
+      <thead><tr><th>Reason</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
+      <tbody id="ev-reason-body"></tbody>
+    </table>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>EV by Side</h2>
+    <table class="ev-table">
+      <thead><tr><th>Side</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
+      <tbody id="ev-side-body"></tbody>
+    </table>
+  </section>
+
+</div><!-- end tab-ev -->
+
 <script>
 const $ = id => document.getElementById(id);
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
+}
+
 
 function fmt(n, d=2) { return parseFloat(n||0).toFixed(d); }
 
@@ -228,6 +328,105 @@ async function refreshLog() {
   } catch(e) {}
 }
 
+// ── EV tab ───────────────────────────────────────────────────────────────────
+let evChart = null;
+
+function evColor(v) {
+  return v > 0 ? 'ev-positive' : v < 0 ? 'ev-negative' : 'ev-neutral';
+}
+function evFmt(v) {
+  if (v === null || v === undefined) return '—';
+  return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2);
+}
+function evRow(label, s) {
+  if (!s) return '';
+  const ec = evColor(s.ev_per_trade);
+  const pc = evColor(s.total_pnl);
+  return `<tr>
+    <td>${label}</td>
+    <td>${s.count}</td>
+    <td>${fmt(s.win_rate, 1)}%</td>
+    <td class="pos">${evFmt(s.avg_win)}</td>
+    <td class="neg">${evFmt(s.avg_loss)}</td>
+    <td class="${ec}" style="font-weight:700">${evFmt(s.ev_per_trade)}</td>
+    <td class="${pc}">${evFmt(s.total_pnl)}</td>
+  </tr>`;
+}
+
+async function refreshEV() {
+  try {
+    const d = await fetch('/api/ev').then(r => r.json());
+    if (!d.overall) return;
+
+    // Summary cards
+    const o = d.overall;
+    const setEV = (id, val) => {
+      const el = $(id);
+      el.textContent = evFmt(val);
+      el.className = 'value ' + evColor(val);
+    };
+    setEV('ev-all', d.overall.ev_per_trade);
+    setEV('ev-20',  d.last_20?.ev_per_trade ?? null);
+    setEV('ev-10',  d.last_10?.ev_per_trade ?? null);
+    $('ev-wr').textContent  = fmt(o.win_rate, 1) + '%';
+    $('ev-avgw').textContent = evFmt(o.avg_win);
+    $('ev-avgl').textContent = evFmt(o.avg_loss);
+
+    // Rolling chart
+    const series = d.rolling_series || [];
+    if (series.length) {
+      const labels = series.map((_, i) => i + 20);
+      const ctx = document.getElementById('ev-chart').getContext('2d');
+      const zeroLine = { id: 'zeroLine', afterDraw(chart) {
+        const { ctx: c, chartArea: { left, right }, scales: { y } } = chart;
+        const y0 = y.getPixelForValue(0);
+        c.save(); c.beginPath(); c.strokeStyle = '#444'; c.lineWidth = 1;
+        c.setLineDash([4, 4]); c.moveTo(left, y0); c.lineTo(right, y0);
+        c.stroke(); c.restore();
+      }};
+      if (evChart) evChart.destroy();
+      evChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: series,
+            borderColor: series[series.length - 1] >= 0 ? '#00c853' : '#ff5252',
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: { target: 'origin',
+              above: 'rgba(0,200,83,0.08)', below: 'rgba(255,82,82,0.08)' },
+            tension: 0.3,
+          }]
+        },
+        options: {
+          animation: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#555', maxTicksLimit: 8 }, grid: { color: '#1e2130' } },
+            y: { ticks: { color: '#555', callback: v => '$' + v.toFixed(2) }, grid: { color: '#1e2130' } }
+          }
+        },
+        plugins: [zeroLine],
+      });
+    }
+
+    // By entry price
+    $('ev-entry-body').innerHTML =
+      Object.entries(d.by_entry_price || {}).map(([k, v]) => evRow(k, v)).join('');
+
+    // By exit reason (sorted by total pnl desc)
+    const reasons = Object.entries(d.by_exit_reason || {})
+      .sort((a, b) => b[1].total_pnl - a[1].total_pnl);
+    $('ev-reason-body').innerHTML = reasons.map(([k, v]) => evRow(k, v)).join('');
+
+    // By side
+    $('ev-side-body').innerHTML =
+      ['UP', 'DOWN'].map(s => evRow(s, d.by_side?.[s])).join('');
+
+  } catch(e) { console.error('EV refresh error', e); }
+}
+
 async function refreshBTC() {
   try {
     const d = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT').then(r=>r.json());
@@ -241,6 +440,7 @@ function refreshAll() {
   refreshTrades();
   refreshLog();
   refreshBTC();
+  refreshEV();
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 

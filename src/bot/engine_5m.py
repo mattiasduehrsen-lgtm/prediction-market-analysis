@@ -1,8 +1,11 @@
 """
 Paper trading engine for 5-minute Up/Down markets.
 
-Simulates Polymarket's 10% taker fee on both entry and exit.
-Positions auto-close 60 seconds before each window expires.
+Simulates limit (maker) orders — no fee, small positive rebate.
+Limit orders: place a bid at target price and wait for fill.
+  - 0% maker fee (vs 10% taker fee for market orders)
+  - Small maker rebate (~1-2% of fill, not yet modelled)
+Positions auto-close before each window expires.
 
 Files:
   output/5m_trading/positions.csv   — open positions
@@ -27,16 +30,21 @@ SUMMARY_FILE   = OUT_DIR / "summary.json"
 
 STARTING_EQUITY = 1000.0
 POSITION_SIZE   = 20.0    # $ per trade (paper)
-TAKER_FEE       = 0.10    # 10% simulated taker fee each way
+MAKER_FEE       = 0.00    # 0% fee for limit (maker) orders — Polymarket charges only takers
 
 POSITION_FIELDS = [
     "position_id", "condition_id", "slug", "asset", "side",
     "entry_price", "take_profit",
     "size_usd", "shares", "entry_fee_usd",
     "window_end_ts", "opened_at",
+    # Entry context for ML analysis
+    "btc_price_at_window_start", "btc_price_at_entry", "btc_pct_change_at_entry",
+    "up_price_at_window_start", "secs_remaining_at_entry", "liquidity",
+    "price_60s_before_entry", "price_30s_before_entry", "price_velocity",
 ]
 
 TRADE_FIELDS = POSITION_FIELDS + [
+    "price_60s_after_entry",                          # UP token price 60s after entry (ML: hold vs exit)
     "exit_price", "exit_fee_usd", "exit_reason",
     "closed_at", "hold_seconds", "pnl_usd", "return_pct",
 ]
@@ -56,6 +64,16 @@ class Position5m:
     entry_fee_usd: float
     window_end_ts: float
     opened_at: float
+    # Entry context for ML analysis (default 0 so old CSV rows still load)
+    btc_price_at_window_start: float = 0.0  # Binance BTC/USD when window opened
+    btc_price_at_entry: float = 0.0         # Binance BTC/USD at entry moment
+    btc_pct_change_at_entry: float = 0.0    # % BTC move since window start
+    up_price_at_window_start: float = 0.5   # UP token CLOB midpoint at window open
+    secs_remaining_at_entry: float = 0.0    # seconds left in window when entered
+    liquidity: float = 0.0                  # market liquidity at entry
+    price_60s_before_entry: float = 0.0    # UP midpoint ~60s before entry
+    price_30s_before_entry: float = 0.0    # UP midpoint ~30s before entry
+    price_velocity: float = 0.0            # (entry_price - price_60s_ago) / 60  ¢/sec
 
 
 @dataclass
@@ -72,13 +90,26 @@ class ClosedTrade5m:
     entry_fee_usd: float
     window_end_ts: float
     opened_at: float
-    exit_price: float
-    exit_fee_usd: float
-    exit_reason: str
-    closed_at: float
-    hold_seconds: float
-    pnl_usd: float
-    return_pct: float
+    # ML context fields (match Position5m — defaults for backward compat)
+    btc_price_at_window_start: float = 0.0
+    btc_price_at_entry: float = 0.0
+    btc_pct_change_at_entry: float = 0.0
+    up_price_at_window_start: float = 0.5
+    secs_remaining_at_entry: float = 0.0
+    liquidity: float = 0.0
+    price_60s_before_entry: float = 0.0
+    price_30s_before_entry: float = 0.0
+    price_velocity: float = 0.0
+    # Exit context for ML analysis
+    price_60s_after_entry: float = 0.0   # UP token price 60s after entry — for hold-vs-exit analysis
+    # Exit fields
+    exit_price: float = 0.0
+    exit_fee_usd: float = 0.0
+    exit_reason: str = ""
+    closed_at: float = 0.0
+    hold_seconds: float = 0.0
+    pnl_usd: float = 0.0
+    return_pct: float = 0.0
 
 
 def _load_positions() -> dict[str, Position5m]:
@@ -101,6 +132,16 @@ def _load_positions() -> dict[str, Position5m]:
                     entry_fee_usd=float(row["entry_fee_usd"]),
                     window_end_ts=float(row["window_end_ts"]),
                     opened_at=float(row["opened_at"]),
+                    # New context fields — graceful default for old CSV rows
+                    btc_price_at_window_start=float(row.get("btc_price_at_window_start", 0)),
+                    btc_price_at_entry=float(row.get("btc_price_at_entry", 0)),
+                    btc_pct_change_at_entry=float(row.get("btc_pct_change_at_entry", 0)),
+                    up_price_at_window_start=float(row.get("up_price_at_window_start", 0.5)),
+                    secs_remaining_at_entry=float(row.get("secs_remaining_at_entry", 0)),
+                    liquidity=float(row.get("liquidity", 0)),
+                    price_60s_before_entry=float(row.get("price_60s_before_entry", 0)),
+                    price_30s_before_entry=float(row.get("price_30s_before_entry", 0)),
+                    price_velocity=float(row.get("price_velocity", 0)),
                 )
                 positions[p.position_id] = p
             except (KeyError, ValueError):
@@ -182,12 +223,32 @@ class Engine5m:
         entry_price: float,
         take_profit: float,
         window_end_ts: float,
+        # Entry context for ML learning
+        btc_price_at_window_start: float = 0.0,
+        btc_price_at_entry: float = 0.0,
+        up_price_at_window_start: float = 0.5,
+        liquidity: float = 0.0,
+        price_60s_before_entry: float = 0.0,
+        price_30s_before_entry: float = 0.0,
     ) -> Position5m | None:
         if self.already_in(condition_id):
             return None
 
-        # Simulate taker fee: deducted from gross position size at entry
-        entry_fee = POSITION_SIZE * TAKER_FEE
+        now = time.time()
+
+        # Derived context fields
+        btc_pct_change = 0.0
+        if btc_price_at_window_start > 0 and btc_price_at_entry > 0:
+            btc_pct_change = round(
+                (btc_price_at_entry - btc_price_at_window_start) / btc_price_at_window_start * 100, 4
+            )
+        secs_remaining = round(max(0.0, window_end_ts - now), 1)
+        price_velocity = 0.0
+        if price_60s_before_entry > 0:
+            price_velocity = round((entry_price - price_60s_before_entry) / 60.0, 6)
+
+        # Limit (maker) order — no entry fee, full size goes to work
+        entry_fee = POSITION_SIZE * MAKER_FEE   # = 0
         net_investment = POSITION_SIZE - entry_fee
         shares = net_investment / entry_price
 
@@ -203,7 +264,16 @@ class Engine5m:
             shares=shares,
             entry_fee_usd=round(entry_fee, 4),
             window_end_ts=window_end_ts,
-            opened_at=time.time(),
+            opened_at=now,
+            btc_price_at_window_start=btc_price_at_window_start,
+            btc_price_at_entry=btc_price_at_entry,
+            btc_pct_change_at_entry=btc_pct_change,
+            up_price_at_window_start=up_price_at_window_start,
+            secs_remaining_at_entry=secs_remaining,
+            liquidity=liquidity,
+            price_60s_before_entry=price_60s_before_entry,
+            price_30s_before_entry=price_30s_before_entry,
+            price_velocity=price_velocity,
         )
         self.positions[pos.position_id] = pos
         _save_positions(self.positions)
@@ -221,14 +291,15 @@ class Engine5m:
         position_id: str,
         exit_price: float,
         exit_reason: str,
+        price_60s_after_entry: float = 0.0,   # UP token price 60s post-entry from price_history
     ) -> ClosedTrade5m | None:
         pos = self.positions.pop(position_id, None)
         if pos is None:
             return None
 
-        # Simulate taker fee on exit: deducted from gross exit proceeds
+        # Limit (maker) order on exit — no exit fee either
         gross_proceeds = pos.shares * exit_price
-        exit_fee = gross_proceeds * TAKER_FEE
+        exit_fee = gross_proceeds * MAKER_FEE   # = 0
         net_proceeds = gross_proceeds - exit_fee
 
         pnl_usd    = net_proceeds - pos.size_usd  # net vs gross invested
@@ -237,6 +308,7 @@ class Engine5m:
 
         trade = ClosedTrade5m(
             **asdict(pos),
+            price_60s_after_entry=round(price_60s_after_entry, 4),
             exit_price=exit_price,
             exit_fee_usd=round(exit_fee, 4),
             exit_reason=exit_reason,

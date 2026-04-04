@@ -29,13 +29,14 @@ SLUG_PREFIXES: dict[str, str] = {
 }
 
 # Entry/exit thresholds
-ENTRY_MAX        = 0.05   # buy UP/DOWN when priced at or below this
-TAKE_PROFIT      = 0.30   # exit when our side hits 30¢ (6x from 5¢ entry)
-FORCE_EXIT_PRICE = 0.85   # unconditional exit if our side reaches 85¢ — never give back big wins
-# NO stop loss — binary markets need room; cutting on noise locks losses before reversals
-MIN_SECONDS = 90          # don't enter with less than this many seconds remaining
-FORCE_EXIT  = 60          # force-close by time when this many seconds remain
-TAKER_FEE   = 0.10        # 10% taker fee — simulated in paper trading
+ENTRY_MIN        = 0.15   # don't enter below this — below 15¢ in the first 90s means extreme move, unlikely to recover
+ENTRY_MAX        = 0.40   # limit buy target — wait for 40¢, skip the window if it never hits
+TAKE_PROFIT      = 0.50   # hard exit at 50¢ — mean reversion to neutral after the opening swing
+FORCE_EXIT_PRICE = 0.90   # hard exit at 90¢ — never give back a big win
+MIN_SECONDS      = 210    # only enter in first 90 seconds of window (300 - 90 = 210s must remain) — after that cancel and wait for next
+FORCE_EXIT       = 10     # close at 10s remaining — avoid settlement chaos
+BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry (momentum working against you)
+# No fee — limit (maker) orders on Polymarket: 0% fee + small positive rebate
 
 
 @dataclass
@@ -76,6 +77,8 @@ def fetch_live_prices(market: "Market5m") -> tuple[float, float, bool]:
     if not market.token_id_up:
         return market.up_price, market.down_price, False
     try:
+        # Use midpoint endpoint — returns (best_bid + best_ask) / 2 which is
+        # what Polymarket's UI displays for each outcome's price.
         r = httpx.get(
             f"{CLOB_API}/midpoint",
             params={"token_id": market.token_id_up},
@@ -89,10 +92,14 @@ def fetch_live_prices(market: "Market5m") -> tuple[float, float, bool]:
         return market.up_price, market.down_price, False
 
 
-def get_window_end() -> int:
-    """Return the Unix timestamp of the end of the current 5-minute window."""
+def get_window_start() -> int:
+    """Return the Unix timestamp of the START of the current 5-minute window.
+
+    Polymarket slugs use the window START timestamp, e.g. btc-updown-5m-1775219400
+    means the window that STARTS at 1775219400 and ENDS at 1775219700.
+    """
     now = int(time.time())
-    return (now // 300 + 1) * 300
+    return (now // 300) * 300
 
 
 def fetch_market(asset: str = "BTC") -> Optional[Market5m]:
@@ -102,10 +109,11 @@ def fetch_market(asset: str = "BTC") -> Optional[Market5m]:
     """
     prefix = SLUG_PREFIXES.get(asset.upper(), f"{asset.lower()}-updown-5m")
 
-    # Try current window first, then adjacent windows
-    for offset in (0, -1, 1):
-        window_end = get_window_end() + offset * 300
-        market = _fetch_slug(slug=f"{prefix}-{window_end}", asset=asset, window_end=window_end)
+    # Slug = window start; window ends 300s later
+    for offset in (0, 1, -1):
+        window_start = get_window_start() + offset * 300
+        window_end   = window_start + 300
+        market = _fetch_slug(slug=f"{prefix}-{window_start}", asset=asset, window_end=window_end)
         if market and not market.is_expired():
             return market
 
@@ -167,7 +175,7 @@ def _fetch_slug(slug: str, asset: str, window_end: int) -> Optional[Market5m]:
         elif label.lower() == "down":
             down_price = price
 
-    # Parse CLOB token IDs (needed for live order placement later)
+    # Parse CLOB token IDs — clobTokenIds[0]=UP token, clobTokenIds[1]=DOWN token.
     clob_raw = m.get("clobTokenIds", "[]")
     try:
         token_ids = json.loads(clob_raw) if isinstance(clob_raw, str) else clob_raw

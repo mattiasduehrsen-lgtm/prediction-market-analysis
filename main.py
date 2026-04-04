@@ -28,13 +28,31 @@ LOG_FILE      = str(pathlib.Path(__file__).resolve().parent / "bot.log")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
+class _Tee(io.RawIOBase):
+    """Write to both the log file and the original console simultaneously."""
+    def __init__(self, log_raw, console):
+        self._log = log_raw
+        self._con = console
+
+    def write(self, b):
+        self._log.write(b)
+        try:
+            self._con.buffer.write(b)
+            self._con.buffer.flush()
+        except Exception:
+            pass
+        return len(b)
+
+    def readable(self):  return False
+    def writable(self):  return True
+    def seekable(self):  return False
+
+
 def _setup_logging() -> None:
-    """Redirect stdout/stderr to bot.log (fully unbuffered write-through)."""
-    # io.FileIO is a raw binary stream with NO intermediate buffer, so every
-    # write() reaches the OS immediately without an explicit flush() call.
-    # write_through=True then ensures TextIOWrapper also skips its own buffer.
-    log = io.FileIO(LOG_FILE, mode="ab")  # noqa: WPS515
-    wrapped = io.TextIOWrapper(log, encoding="utf-8", write_through=True)
+    """Tee stdout/stderr to bot.log AND keep output visible in the console window."""
+    log = io.FileIO(LOG_FILE, mode="ab")
+    tee = _Tee(log, sys.stdout)
+    wrapped = io.TextIOWrapper(tee, encoding="utf-8", write_through=True)
     sys.stdout = wrapped
     sys.stderr = wrapped
 
@@ -184,8 +202,23 @@ def _check_entries(engine, snapshot, btc, signal_mod) -> None:
 
 # ── 5-minute Up/Down loop ─────────────────────────────────────────────────────
 
+def _fetch_btc_price() -> float:
+    """Quick Binance spot price — used for trade context capture."""
+    import httpx as _httpx
+    try:
+        r = _httpx.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            params={"symbol": "BTCUSDT"},
+            timeout=5,
+        )
+        return float(r.json()["price"])
+    except Exception:
+        return 0.0
+
+
 def run_5m_loop(asset: str = "BTC") -> None:
-    from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT
+    import collections
+    from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MAX, BTC_SKIP_RATE
     from src.bot.signal_5m import should_enter, should_exit, take_profit_price
     from src.bot.engine_5m import Engine5m
     from src.bot import chainlink_feed
@@ -194,7 +227,7 @@ def run_5m_loop(asset: str = "BTC") -> None:
 
     print(f"\n{'='*60}")
     print(f"5-Minute Up/Down Bot — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Poll every {POLL_INTERVAL}s | No stop loss | Force-exit price=0.85 time={FORCE_EXIT}s")
+    print(f"Poll every {POLL_INTERVAL}s | Limit buy @{ENTRY_MAX:.0%} in first 90s only | TP=50¢ Force=90¢ | BTC skip >${BTC_SKIP_RATE:.0f}/min")
     print(f"{'='*60}\n")
 
     # Start Chainlink feed — actual window start prices, not stale API data
@@ -210,6 +243,15 @@ def run_5m_loop(asset: str = "BTC") -> None:
     iteration = 0
     market = None   # cached — only refetched when window expires
 
+    # ── Context tracking for ML data capture ──────────────────────────────────
+    # Rolling price history for the current window: deque of (timestamp, up_price)
+    price_history: collections.deque = collections.deque(maxlen=300)
+    # Continuous BTC price history — NOT reset on window change (independent of windows)
+    # maxlen=150 @ 2s poll = 5 minutes of continuous BTC price data
+    btc_history: collections.deque = collections.deque(maxlen=150)
+    btc_at_window_start: float = 0.0   # Binance BTC/USD when window opened
+    up_price_at_window_start: float = 0.5  # first CLOB midpoint reading for window
+
     while True:
         iteration += 1
         now_str = time.strftime("%H:%M:%S")
@@ -224,19 +266,38 @@ def run_5m_loop(asset: str = "BTC") -> None:
                     time.sleep(POLL_INTERVAL)
                     continue
                 market = new_market
+
+                # Reset per-window context
+                price_history.clear()
+                btc_at_window_start = _fetch_btc_price()
+                up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
+
                 cl = chainlink_feed.get_state()
                 secs = market.seconds_remaining
                 cl_str = (
                     f"CL=${cl.price:,.2f} start=${cl.window_start_price:,.2f} Δ{cl.pct_change:+.3f}%"
                     if cl.price > 0 else "CL=unavailable"
                 )
-                print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s | liq=${market.liquidity:,.0f} | {cl_str}")
+                btc_str = f" | BTC=${btc_at_window_start:,.2f}" if btc_at_window_start else ""
+                print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s | liq=${market.liquidity:,.0f} | {cl_str}{btc_str}")
 
             # Live prices from CLOB midpoint — updates every 2s, reflects real order book.
             # Gamma's outcomePrices does NOT update mid-window and will show stale 0.50/0.50.
             market.up_price, market.down_price, clob_ok = fetch_live_prices(market)
             cl = chainlink_feed.get_state()
             secs = market.seconds_remaining
+
+            # Record price history for this window
+            price_history.append((time.time(), market.up_price))
+
+            # Continuous BTC price — every poll, independent of windows
+            btc_now = _fetch_btc_price()
+            if btc_now > 0:
+                btc_history.append((time.time(), btc_now))
+
+            # Update window-start price with first good CLOB reading
+            if clob_ok and up_price_at_window_start == 0.5 and market.up_price != 0.5:
+                up_price_at_window_start = market.up_price
 
             src = "clob" if clob_ok else "CACHED"
             cl_info = f"CL={cl.pct_change:+.3f}%" if cl.price > 0 else ""
@@ -249,7 +310,7 @@ def run_5m_loop(asset: str = "BTC") -> None:
             for pos_id, pos in list(engine.positions.items()):
                 cur_up = market.up_price if market.condition_id == pos.condition_id else None
                 if cur_up is None:
-                    engine.close(pos_id, 0.01, "window_expired")
+                    engine.close(pos_id, 0.01, "window_expired", price_60s_after_entry=0.0)
                     continue
 
                 do_exit, reason = should_exit(
@@ -261,7 +322,15 @@ def run_5m_loop(asset: str = "BTC") -> None:
                 )
                 if do_exit:
                     exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
-                    engine.close(pos_id, exit_price, reason)
+                    # Look up UP token price ~60s after entry from price_history
+                    # Used later for "hold vs take-profit" ML analysis
+                    p60_after = 0.0
+                    target_ts = pos.opened_at + 60.0
+                    for ph_ts, ph_px in price_history:
+                        if ph_ts >= target_ts:
+                            p60_after = ph_px
+                            break
+                    engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)
                 else:
                     cur_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
                     pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100
@@ -272,8 +341,32 @@ def run_5m_loop(asset: str = "BTC") -> None:
 
             # ── Check entries ──────────────────────────────────────────────────
             if not engine.already_in(market.condition_id):
-                do_enter, side, entry_price = should_enter(market)
+                # Rolling BTC rate $/min — use btc_history deque (updated every 2s poll)
+                # Find the oldest sample within the last 60s and compute rate over that span.
+                btc_rate_per_min = 0.0
+                if len(btc_history) >= 2:
+                    latest_btc_ts, latest_btc_px = btc_history[-1]
+                    for old_ts, old_px in btc_history:
+                        elapsed_secs = latest_btc_ts - old_ts
+                        if elapsed_secs >= 5:   # need at least 5s of BTC history
+                            btc_rate_per_min = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
+                            break
+
+                do_enter, side, entry_price = should_enter(market, btc_rate_per_min=btc_rate_per_min)
                 if do_enter:
+                    now_ts = time.time()
+
+                    # Look up historical prices from deque for velocity/trajectory
+                    p_60s = p_30s = 0.0
+                    for ts, px in price_history:
+                        age = now_ts - ts
+                        if 55 <= age <= 65:
+                            p_60s = px
+                        elif 25 <= age <= 35:
+                            p_30s = px
+
+                    # BTC price at entry — use latest from btc_history (already fetched this poll)
+                    btc_at_entry = btc_history[-1][1] if btc_history else 0.0
                     engine.open(
                         condition_id=market.condition_id,
                         slug=market.slug,
@@ -282,6 +375,12 @@ def run_5m_loop(asset: str = "BTC") -> None:
                         entry_price=entry_price,
                         take_profit=take_profit_price(entry_price),
                         window_end_ts=market.window_end_ts,
+                        btc_price_at_window_start=btc_at_window_start,
+                        btc_price_at_entry=btc_at_entry,
+                        up_price_at_window_start=up_price_at_window_start,
+                        liquidity=market.liquidity,
+                        price_60s_before_entry=p_60s,
+                        price_30s_before_entry=p_30s,
                     )
 
             # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────

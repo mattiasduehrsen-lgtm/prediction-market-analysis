@@ -47,6 +47,7 @@ TRADE_FIELDS = POSITION_FIELDS + [
     "price_60s_after_entry",                          # UP token price 60s after entry (ML: hold vs exit)
     "exit_price", "exit_fee_usd", "exit_reason",
     "closed_at", "hold_seconds", "pnl_usd", "return_pct",
+    "resolution_side", "our_side_won",               # filled after window ends — did our side pay $1.00?
 ]
 
 
@@ -110,6 +111,9 @@ class ClosedTrade5m:
     hold_seconds: float = 0.0
     pnl_usd: float = 0.0
     return_pct: float = 0.0
+    # Filled after window resolves — blank until then
+    resolution_side: str = ""   # "UP" or "DOWN" — which side paid $1.00
+    our_side_won: str = ""      # "True" / "False" — did we pick the winner?
 
 
 def _load_positions() -> dict[str, Position5m]:
@@ -209,10 +213,16 @@ class Engine5m:
     def __init__(self) -> None:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         self.positions: dict[str, Position5m] = _load_positions()
+        # Tracks every condition_id traded this session (open OR closed) so we
+        # never re-enter the same window. Analysis: single-trade windows +$85.90
+        # (52.4% WR) vs multi-trade windows -$192.27 (39.7% WR).
+        self.traded_windows: set[str] = {
+            p.condition_id for p in self.positions.values()
+        }
         print(f"[ENGINE5M] Loaded {len(self.positions)} open positions")
 
     def already_in(self, condition_id: str) -> bool:
-        return any(p.condition_id == condition_id for p in self.positions.values())
+        return condition_id in self.traded_windows
 
     def open(
         self,
@@ -278,6 +288,7 @@ class Engine5m:
         self.positions[pos.position_id] = pos
         _save_positions(self.positions)
 
+        self.traded_windows.add(condition_id)
         secs = max(0, window_end_ts - time.time())
         print(
             f"[ENGINE5M] OPEN  {pos.position_id} | {asset} {side} "
@@ -326,6 +337,33 @@ class Engine5m:
             f"| {exit_reason} | hold={hold_sec:.0f}s"
         )
         return trade
+
+    def update_resolution(self, condition_id: str, resolution_side: str) -> None:
+        """
+        Called when a window ends — fills resolution_side and our_side_won for
+        all trades from that window. Rewrites the trades CSV in place.
+        resolution_side: "UP" if BTC closed higher than window start, else "DOWN"
+        """
+        if not TRADES_FILE.exists():
+            return
+        rows = []
+        updated = 0
+        str_fields = {"position_id","condition_id","slug","asset","side","exit_reason",
+                      "resolution_side","our_side_won"}
+        with open(TRADES_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("condition_id") == condition_id and not row.get("resolution_side"):
+                    row["resolution_side"] = resolution_side
+                    row["our_side_won"]    = str(row["side"] == resolution_side)
+                    updated += 1
+                rows.append(row)
+        if updated:
+            with open(TRADES_FILE, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+            print(f"[ENGINE5M] Resolution: {resolution_side} won | {updated} trade(s) updated")
 
     def summary(self) -> dict[str, Any]:
         s = _compute_summary()

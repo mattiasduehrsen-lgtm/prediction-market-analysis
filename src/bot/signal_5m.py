@@ -101,6 +101,14 @@ def should_exit(
     if current >= take_profit:
         return True, "take_profit"
 
+    # Priority 2: hard floor stop — if our side drops below 8¢, the market has
+    # essentially fully resolved against us. Mean reversion from 0.08 → 0.50 requires
+    # a 6× probability shift in remaining seconds — observed rate: ~0%.
+    # This is NOT a trailing stop (which fires mid-reversion); it's an extreme floor that
+    # only triggers when the token is already near-worthless. Saves ~$4/trade vs riding to 0.005.
+    if current <= 0.08:
+        return True, "hard_stop_floor"
+
     # Trailing stops removed: z1 net -$383, z2 net -$26, z3 net $0 but same pattern.
     # All had 0% win rate — they cut positions mid-reversion before reaching 50¢ TP.
     # Let positions ride to TP (50¢) or force_exit_time. Data: 100% WR at TP vs 0% at stops.

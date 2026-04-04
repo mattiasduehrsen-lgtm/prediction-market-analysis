@@ -216,19 +216,26 @@ def _fetch_btc_price() -> float:
         return 0.0
 
 
-def run_5m_loop(asset: str = "BTC") -> None:
+def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     import collections
     from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MAX, BTC_SKIP_RATE
     from src.bot.signal_5m import should_enter, should_exit, take_profit_price
-    from src.bot.engine_5m import Engine5m
     from src.bot import chainlink_feed
 
     POLL_INTERVAL = 2   # seconds — match Chainlink poll rate
 
+    mode_str = "LIVE" if live else "PAPER"
     print(f"\n{'='*60}")
-    print(f"5-Minute Up/Down Bot — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"5-Minute Up/Down Bot [{mode_str}] — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Poll every {POLL_INTERVAL}s | Limit buy @{ENTRY_MAX:.0%} in first 90s only | TP=50¢ Force=90¢ | BTC skip >${BTC_SKIP_RATE:.0f}/min")
     print(f"{'='*60}\n")
+
+    if live:
+        from src.bot.live_engine_5m import LiveEngine5m
+        engine = LiveEngine5m()
+    else:
+        from src.bot.engine_5m import Engine5m
+        engine = Engine5m()
 
     # Start Chainlink feed — actual window start prices, not stale API data
     chainlink_feed.start()
@@ -239,7 +246,6 @@ def run_5m_loop(asset: str = "BTC") -> None:
     else:
         print("[MAIN] Chainlink unavailable — continuing without window-start tracking")
 
-    engine = Engine5m()
     iteration = 0
     market = None   # cached — only refetched when window expires
 
@@ -306,11 +312,29 @@ def run_5m_loop(asset: str = "BTC") -> None:
                 f"[{src}] | {secs:.0f}s left {cl_info}"
             )
 
+            # ── Advance live order state machine ───────────────────────────────
+            if live:
+                engine.check_pending_entries()
+                engine.check_pending_exits()
+                # Cancel any pending entries whose window has expired
+                for pos_id, pos in list(engine.positions.items()):
+                    from src.bot.live_engine_5m import State
+                    if pos.state == State.PENDING_ENTRY and secs <= 0:
+                        engine.cancel_entry(pos_id)
+
             # ── Check exits ────────────────────────────────────────────────────
+            active_states = ({"open"} if live else None)
             for pos_id, pos in list(engine.positions.items()):
+                # Live: only act on OPEN positions (PENDING_ENTRY handled above)
+                if live and pos.state != "open":
+                    continue
+
                 cur_up = market.up_price if market.condition_id == pos.condition_id else None
                 if cur_up is None:
-                    engine.close(pos_id, 0.01, "window_expired", price_60s_after_entry=0.0)
+                    if live:
+                        engine.place_exit(pos_id, market.token_id_up, "window_expired")
+                    else:
+                        engine.close(pos_id, 0.01, "window_expired", price_60s_after_entry=0.0)
                     continue
 
                 do_exit, reason = should_exit(
@@ -320,17 +344,23 @@ def run_5m_loop(asset: str = "BTC") -> None:
                     take_profit=pos.take_profit,
                     seconds_remaining=secs,
                 )
+
+                # Look up UP token price ~60s after entry from price_history
+                p60_after = 0.0
+                target_ts = pos.opened_at + 60.0
+                for ph_ts, ph_px in price_history:
+                    if ph_ts >= target_ts:
+                        p60_after = ph_px
+                        break
+
                 if do_exit:
-                    exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
-                    # Look up UP token price ~60s after entry from price_history
-                    # Used later for "hold vs take-profit" ML analysis
-                    p60_after = 0.0
-                    target_ts = pos.opened_at + 60.0
-                    for ph_ts, ph_px in price_history:
-                        if ph_ts >= target_ts:
-                            p60_after = ph_px
-                            break
-                    engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)
+                    if live:
+                        token_id = market.token_id_up if pos.side == "UP" else market.token_id_down
+                        engine.place_exit(pos_id, token_id, reason,
+                                          price_60s_after_entry=p60_after)
+                    else:
+                        exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
+                        engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)
                 else:
                     cur_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
                     pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100
@@ -342,13 +372,12 @@ def run_5m_loop(asset: str = "BTC") -> None:
             # ── Check entries ──────────────────────────────────────────────────
             if not engine.already_in(market.condition_id):
                 # Rolling BTC rate $/min — use btc_history deque (updated every 2s poll)
-                # Find the oldest sample within the last 60s and compute rate over that span.
                 btc_rate_per_min = 0.0
                 if len(btc_history) >= 2:
                     latest_btc_ts, latest_btc_px = btc_history[-1]
                     for old_ts, old_px in btc_history:
                         elapsed_secs = latest_btc_ts - old_ts
-                        if elapsed_secs >= 5:   # need at least 5s of BTC history
+                        if elapsed_secs >= 5:
                             btc_rate_per_min = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
                             break
 
@@ -365,23 +394,42 @@ def run_5m_loop(asset: str = "BTC") -> None:
                         elif 25 <= age <= 35:
                             p_30s = px
 
-                    # BTC price at entry — use latest from btc_history (already fetched this poll)
                     btc_at_entry = btc_history[-1][1] if btc_history else 0.0
-                    engine.open(
-                        condition_id=market.condition_id,
-                        slug=market.slug,
-                        asset=asset,
-                        side=side,
-                        entry_price=entry_price,
-                        take_profit=take_profit_price(entry_price),
-                        window_end_ts=market.window_end_ts,
-                        btc_price_at_window_start=btc_at_window_start,
-                        btc_price_at_entry=btc_at_entry,
-                        up_price_at_window_start=up_price_at_window_start,
-                        liquidity=market.liquidity,
-                        price_60s_before_entry=p_60s,
-                        price_30s_before_entry=p_30s,
-                    )
+
+                    if live:
+                        token_id = market.token_id_up if side == "UP" else market.token_id_down
+                        engine.place_entry(
+                            condition_id=market.condition_id,
+                            slug=market.slug,
+                            asset=asset,
+                            side=side,
+                            token_id=token_id,
+                            entry_price=entry_price,
+                            take_profit=take_profit_price(entry_price),
+                            window_end_ts=market.window_end_ts,
+                            btc_price_at_window_start=btc_at_window_start,
+                            btc_price_at_entry=btc_at_entry,
+                            up_price_at_window_start=up_price_at_window_start,
+                            liquidity=market.liquidity,
+                            price_60s_before_entry=p_60s,
+                            price_30s_before_entry=p_30s,
+                        )
+                    else:
+                        engine.open(
+                            condition_id=market.condition_id,
+                            slug=market.slug,
+                            asset=asset,
+                            side=side,
+                            entry_price=entry_price,
+                            take_profit=take_profit_price(entry_price),
+                            window_end_ts=market.window_end_ts,
+                            btc_price_at_window_start=btc_at_window_start,
+                            btc_price_at_entry=btc_at_entry,
+                            up_price_at_window_start=up_price_at_window_start,
+                            liquidity=market.liquidity,
+                            price_60s_before_entry=p_60s,
+                            price_30s_before_entry=p_30s,
+                        )
 
             # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────
             if iteration % 30 == 0:
@@ -447,6 +495,9 @@ if __name__ == "__main__":
     if cmd == "btc-5m-loop":
         _setup_logging()
         run_5m_loop("BTC")
+    elif cmd == "btc-5m-live":
+        _setup_logging()
+        run_5m_loop("BTC", live=True)
     elif cmd == "paper-loop":
         _setup_logging()
         run_loop()
@@ -454,6 +505,11 @@ if __name__ == "__main__":
         run_dashboard()
     elif cmd == "status":
         run_status()
+    elif cmd == "setup-clob-auth":
+        from dotenv import load_dotenv
+        load_dotenv()
+        from src.bot.clob_auth import setup_credentials
+        setup_credentials()
     else:
         print(__doc__)
         sys.exit(0)

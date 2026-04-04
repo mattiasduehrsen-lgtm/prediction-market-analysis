@@ -29,7 +29,7 @@ SLUG_PREFIXES: dict[str, str] = {
 }
 
 # Entry/exit thresholds
-ENTRY_MIN        = 0.25   # must be above hard_stop (0.20) — prevents re-entry cascade after stop fires
+ENTRY_MIN        = 0.15   # don't enter below this — too extreme, market has already decided
 ENTRY_MAX        = 0.40   # limit buy target — wait for 40¢, skip the window if it never hits
 TAKE_PROFIT      = 0.50   # hard exit at 50¢ — mean reversion to neutral after the opening swing
 FORCE_EXIT_PRICE = 0.90   # hard exit at 90¢ — never give back a big win

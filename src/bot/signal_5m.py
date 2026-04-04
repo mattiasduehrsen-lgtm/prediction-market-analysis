@@ -98,14 +98,7 @@ def should_exit(
     if current >= take_profit:
         return True, "take_profit"
 
-    # Priority 3: hard stop loss — fires at ANY time if position drops below 20¢
-    # Data showed z2 exits at 0.5-8¢ from entries of 35-40¢ after holding 4 minutes.
-    # A 20¢ floor catches trending windows early and caps loss at ~$10 vs ~$19.
-    # Verified against 45 winners: none dipped below 20¢ at 60s — zero false triggers.
-    if current < 0.20:
-        return True, "hard_stop"
-
-    # Priority 4: zone-based trailing stop — only applies near expiry
+    # Priority 3: zone-based trailing stop — only applies near expiry
     # z1 (< 120s) was removed: price already at 21¢ avg by trigger, locks in
     # losses on trades that still had 120s to recover. Net impact: -$383.
     if seconds_remaining < 30:

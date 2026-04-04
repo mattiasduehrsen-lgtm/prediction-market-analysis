@@ -471,7 +471,11 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                             btc_rate_per_min = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
                             break
 
-                do_enter, side, entry_price = should_enter(market, btc_rate_per_min=btc_rate_per_min)
+                do_enter, side, entry_price = should_enter(
+                    market,
+                    btc_rate_per_min=btc_rate_per_min,
+                    cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
+                )
                 if do_enter:
                     now_ts = time.time()
 

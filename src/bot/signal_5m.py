@@ -3,10 +3,11 @@ Signal engine for 5-minute Up/Down markets.
 
 Strategy: Early-window mean reversion — enter cheap side, hold to 50¢.
 
-Entry (first 45 seconds only — limit buy between 30-40¢):
-  - Place a limit buy on whichever side (UP or DOWN) is between 30¢ and 40¢
+Entry (first 45 seconds only — limit buy between 30-39¢):
+  - Place a limit buy on whichever side (UP or DOWN) is between 30¢ and 39¢
   - Only within first 45s of the window (≥255s must remain) — after that, skip and wait for next window
-  - BTC filter: skip if BTC is moving against your side faster than BTC_SKIP_RATE $/min
+  - BTC flatness filter: skip if Chainlink pct_change is outside ±0.02% (BTC already moving)
+  - BTC momentum filter: skip if BTC is moving against your side faster than BTC_SKIP_RATE $/min
   - Minimum liquidity required
 
 Exit rules (hard exits only — no trailing stops):
@@ -31,11 +32,13 @@ from src.bot.market_5m import (
 def should_enter(
     market: Market5m,
     btc_rate_per_min: float = 0.0,
+    cl_pct_change: float = 0.0,
 ) -> tuple[bool, str, float]:
     """
     Returns (should_enter, side, entry_price).
     side is "UP" or "DOWN" — always the cheaper side.
     btc_rate_per_min: BTC $/min change since window start (+ve = rising, -ve = falling).
+    cl_pct_change: Chainlink % change since window start — must be flat (±0.02%) to enter.
     """
     secs = market.seconds_remaining
 
@@ -57,6 +60,14 @@ def should_enter(
     # Below ENTRY_MIN → too extreme, market has already decided, unlikely to recover
     # Above ENTRY_MAX → risk/reward stops making sense (paying too much for the underdog)
     if price < ENTRY_MIN or price > ENTRY_MAX:
+        return False, "", 0.0
+
+    # BTC flatness filter: only enter when Chainlink shows BTC is flat at window open.
+    # A move of ±0.02% or more means BTC has already picked a direction — the cheap
+    # side price reflects real momentum, not a temporary dislocation worth fading.
+    BTC_FLAT_THRESHOLD = 0.02  # percent
+    if cl_pct_change != 0.0 and abs(cl_pct_change) > BTC_FLAT_THRESHOLD:
+        print(f"[SIGNAL] Skip — BTC not flat: {cl_pct_change:+.3f}% (threshold ±{BTC_FLAT_THRESHOLD}%)")
         return False, "", 0.0
 
     # BTC momentum filter: skip if BTC is moving hard against our side

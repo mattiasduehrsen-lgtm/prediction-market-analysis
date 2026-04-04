@@ -257,6 +257,10 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     btc_history: collections.deque = collections.deque(maxlen=150)
     btc_at_window_start: float = 0.0   # Binance BTC/USD when window opened
     up_price_at_window_start: float = 0.5  # first CLOB midpoint reading for window
+    # Per-window re-entry guard: once a position closes (any reason), block re-entry
+    # in the same window. Prevents the hard_stop cascade (stop fires → re-enter at same
+    # price → stop fires again → infinite loop in same window).
+    window_done: set = set()  # condition_ids closed this window
 
     while True:
         iteration += 1
@@ -275,6 +279,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
 
                 # Reset per-window context
                 price_history.clear()
+                window_done.clear()
                 btc_at_window_start = _fetch_btc_price()
                 up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
 
@@ -354,6 +359,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                         break
 
                 if do_exit:
+                    window_done.add(pos.condition_id)
                     if live:
                         token_id = market.token_id_up if pos.side == "UP" else market.token_id_down
                         engine.place_exit(pos_id, token_id, reason,
@@ -370,7 +376,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     )
 
             # ── Check entries ──────────────────────────────────────────────────
-            if not engine.already_in(market.condition_id):
+            if not engine.already_in(market.condition_id) and market.condition_id not in window_done:
                 # Rolling BTC rate $/min — use btc_history deque (updated every 2s poll)
                 btc_rate_per_min = 0.0
                 if len(btc_history) >= 2:

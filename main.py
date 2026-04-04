@@ -218,7 +218,7 @@ def _fetch_btc_price() -> float:
 
 def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     import collections
-    from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MAX, BTC_SKIP_RATE
+    from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE
     from src.bot.signal_5m import should_enter, should_exit, take_profit_price
     from src.bot import chainlink_feed
 
@@ -266,6 +266,11 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     # so we can fill resolution_side/our_side_won when the window closes
     prev_condition_id: str = ""
     prev_cl_start_price: float = 0.0
+    # Skip tracking — best opportunity seen during each window's entry window (first 45s)
+    # Logged to skipped_windows.csv when entry window closes without a trade
+    best_opp_price: float = 1.0   # lowest cheaper-side price seen in entry window
+    best_opp_side: str = ""
+    entry_window_logged: bool = False  # prevent duplicate log entries per window
 
     while True:
         iteration += 1
@@ -300,6 +305,11 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     prev_condition_id = market.condition_id
                     cl_start = chainlink_feed.get_state()
                     prev_cl_start_price = cl_start.price  # 0.0 if feed unavailable — handled above
+
+                # Reset skip tracking for new window
+                best_opp_price = 1.0
+                best_opp_side = ""
+                entry_window_logged = False
 
                 cl = chainlink_feed.get_state()
                 secs = market.seconds_remaining
@@ -399,6 +409,40 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                         f"  [HOLD] {pos_id} {pos.side} entry={pos.entry_price:.3f} "
                         f"now={cur_price:.3f} pnl={pnl_pct:+.1f}% | {secs:.0f}s left"
                     )
+
+            # ── Skip tracking — record best opportunity during entry window ───
+            if not live:
+                cheaper_price = min(market.up_price, market.down_price)
+                cheaper_side  = "UP" if market.up_price <= market.down_price else "DOWN"
+                if secs >= MIN_SECONDS and cheaper_price < best_opp_price:
+                    best_opp_price = cheaper_price
+                    best_opp_side  = cheaper_side
+
+                # Entry window just closed — log skip if we never entered
+                if secs < MIN_SECONDS and not entry_window_logged:
+                    entry_window_logged = True
+                    if not engine.already_in(market.condition_id):
+                        if best_opp_price > ENTRY_MAX:
+                            skip_reason = "price_too_high"
+                        elif best_opp_price < ENTRY_MIN:
+                            skip_reason = "price_too_low"
+                        elif best_opp_price <= ENTRY_MAX:
+                            skip_reason = "btc_filter"
+                        else:
+                            skip_reason = "no_opportunity"
+                        engine.log_skip(
+                            condition_id=market.condition_id,
+                            slug=market.slug,
+                            asset=asset,
+                            window_end_ts=market.window_end_ts,
+                            skip_reason=skip_reason,
+                            best_price_seen=best_opp_price,
+                            best_side=best_opp_side,
+                            entry_min=ENTRY_MIN,
+                            entry_max=ENTRY_MAX,
+                            btc_at_window_start=btc_at_window_start,
+                            liquidity=market.liquidity,
+                        )
 
             # ── Check entries ──────────────────────────────────────────────────
             cb_open = (cb is None or cb.is_open())

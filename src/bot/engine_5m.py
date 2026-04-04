@@ -27,6 +27,7 @@ OUT_DIR        = Path("output/5m_trading")
 POSITIONS_FILE = OUT_DIR / "positions.csv"
 TRADES_FILE    = OUT_DIR / "trades.csv"
 SUMMARY_FILE   = OUT_DIR / "summary.json"
+SKIPS_FILE     = OUT_DIR / "skipped_windows.csv"
 
 STARTING_EQUITY = 1000.0
 POSITION_SIZE   = 20.0    # $ per trade (paper)
@@ -48,6 +49,20 @@ TRADE_FIELDS = POSITION_FIELDS + [
     "exit_price", "exit_fee_usd", "exit_reason",
     "closed_at", "hold_seconds", "pnl_usd", "return_pct",
     "resolution_side", "our_side_won",               # filled after window ends — did our side pay $1.00?
+]
+
+# Skipped windows — logged when entry window closes without a trade.
+# Enables backtesting any ENTRY_MIN/ENTRY_MAX value against historical data.
+SKIP_FIELDS = [
+    "condition_id", "slug", "asset", "window_end_ts",
+    "skip_reason",          # price_too_high | price_too_low | btc_filter | no_opportunity
+    "best_price_seen",      # lowest cheaper-side price seen during the 45s entry window
+    "best_side",            # which side was cheapest at best_price_seen
+    "entry_min",            # ENTRY_MIN at time of skip (for backtest context)
+    "entry_max",            # ENTRY_MAX at time of skip (for backtest context)
+    "btc_at_window_start",
+    "liquidity",
+    "logged_at",
 ]
 
 
@@ -373,3 +388,38 @@ class Engine5m:
     def save_summary(self) -> None:
         s = self.summary()
         SUMMARY_FILE.write_text(json.dumps(s, indent=2), encoding="utf-8")
+
+    def log_skip(
+        self,
+        condition_id: str,
+        slug: str,
+        asset: str,
+        window_end_ts: float,
+        skip_reason: str,
+        best_price_seen: float,
+        best_side: str,
+        entry_min: float,
+        entry_max: float,
+        btc_at_window_start: float = 0.0,
+        liquidity: float = 0.0,
+    ) -> None:
+        """Log a window where the entry window closed without a trade."""
+        write_header = not SKIPS_FILE.exists()
+        with open(SKIPS_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=SKIP_FIELDS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({
+                "condition_id":      condition_id,
+                "slug":              slug,
+                "asset":             asset,
+                "window_end_ts":     window_end_ts,
+                "skip_reason":       skip_reason,
+                "best_price_seen":   round(best_price_seen, 4),
+                "best_side":         best_side,
+                "entry_min":         entry_min,
+                "entry_max":         entry_max,
+                "btc_at_window_start": btc_at_window_start,
+                "liquidity":         liquidity,
+                "logged_at":         time.time(),
+            })

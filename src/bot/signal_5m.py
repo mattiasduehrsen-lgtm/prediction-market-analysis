@@ -1,27 +1,24 @@
 """
 Signal engine for 5-minute Up/Down markets.
 
-Strategy: Early-window mean reversion with zone-based trailing stop.
+Strategy: Early-window mean reversion — enter cheap side, hold to 50¢.
 
-Entry (first 90 seconds only — limit buy at 40¢):
-  - Place a limit buy at 40¢ on whichever side (UP or DOWN) swings there first
-  - Only within first 90s of the window (≥210s must remain) — after that, skip and wait for next window
+Entry (first 45 seconds only — limit buy between 30-40¢):
+  - Place a limit buy on whichever side (UP or DOWN) is between 30¢ and 40¢
+  - Only within first 45s of the window (≥255s must remain) — after that, skip and wait for next window
   - BTC filter: skip if BTC is moving against your side faster than BTC_SKIP_RATE $/min
   - Minimum liquidity required
 
-Exit rules (hard exits — no conditions, no waiting):
+Exit rules (hard exits only — no trailing stops):
   1. Price hits FORCE_EXIT_PRICE (90¢) → hard exit, capture the big win immediately
-  2. Price hits TAKE_PROFIT (50¢)     → hard take profit
-  3. Zone-based trailing stop         → tighter leash the closer to expiry:
-       < 120s left: exit if 5¢ below entry (let it breathe early, not late)
-       <  60s left: exit if back at entry or below (no time to recover)
-       <  30s left: exit if below 85% of take_profit target
-  4. FORCE_EXIT seconds left          → close regardless (avoid settlement chaos)
+  2. Price hits TAKE_PROFIT (50¢)      → hard take profit (mean reversion complete)
+  3. FORCE_EXIT seconds left           → close regardless (avoid settlement chaos)
 
-Key lessons:
-  - Entering in the first 2 minutes captures momentum before the market tips irrecoverably
-  - Hard exits at targets prevent "90¢ → 0" disasters
-  - Zone stops protect capital near expiry without cutting early positions prematurely
+Key lessons (from 158-trade analysis):
+  - All trailing stops (z1, z2, z3) had 0% win rate — they cut mid-reversion before reaching 50¢
+  - ENTRY_MIN raised 0.15→0.30: entries <25¢ had 2.9% WR (-$185 total); 30-40¢ = 55-67% WR
+  - Entry window tightened 90s→45s: <150s remaining = 0% WR; 200-250s remaining = 60% WR
+  - When held to TP: 100% win rate. Let positions breathe.
 """
 from __future__ import annotations
 
@@ -98,19 +95,11 @@ def should_exit(
     if current >= take_profit:
         return True, "take_profit"
 
-    # Priority 3: zone-based trailing stop — only applies near expiry
-    # z1 (< 120s) was removed: price already at 21¢ avg by trigger, locks in
-    # losses on trades that still had 120s to recover. Net impact: -$383.
-    if seconds_remaining < 30:
-        # Very near end: exit if not at least 85% of the way to target
-        if current < take_profit * 0.85:   # e.g. < 42.5¢ with <30s left
-            return True, "trailing_stop_z3"
-    elif seconds_remaining < 60:
-        # Near end: exit if we haven't recovered at least back to entry
-        if current < entry_price:
-            return True, "trailing_stop_z2"
+    # Trailing stops removed: z1 net -$383, z2 net -$26, z3 net $0 but same pattern.
+    # All had 0% win rate — they cut positions mid-reversion before reaching 50¢ TP.
+    # Let positions ride to TP (50¢) or force_exit_time. Data: 100% WR at TP vs 0% at stops.
 
-    # Priority 4: time-based force exit
+    # Priority 3: time-based force exit
     if seconds_remaining <= FORCE_EXIT:
         return True, "force_exit_time"
 

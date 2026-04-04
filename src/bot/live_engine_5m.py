@@ -47,6 +47,7 @@ SUMMARY_FILE   = OUT_DIR / "summary.json"
 
 STARTING_EQUITY = 1000.0
 POSITION_SIZE   = 20.0    # USD per trade (real money)
+MIN_SHARES      = 5       # Polymarket CLOB minimum order size in shares
 
 # Aggressive exit price for hard stops / force exits.
 # Posting a SELL at 0.01 on Polymarket will immediately match the best available
@@ -271,6 +272,9 @@ class LiveEngine5m:
             return None
 
         shares = round(POSITION_SIZE / entry_price, 4)
+        if shares < MIN_SHARES:
+            print(f"[LIVE5M] Skip — {shares:.2f} shares below minimum {MIN_SHARES}")
+            return None
 
         # Place the order
         try:

@@ -90,7 +90,7 @@
   <h2>Open Positions</h2>
   <table>
     <thead>
-      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>TP</th><th>Time Left</th></tr>
+      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>TP</th><th>Opened</th><th>Time Left</th></tr>
     </thead>
     <tbody id="positions-body">
       <tr><td colspan="6" style="color:#555;text-align:center;padding:12px">No open positions</td></tr>
@@ -102,7 +102,7 @@
   <h2>Recent Trades</h2>
   <table>
     <thead>
-      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Return</th><th>Hold</th><th>Reason</th></tr>
+      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Return</th><th>Opened</th><th>Closed</th><th>Hold</th><th>Reason</th></tr>
     </thead>
     <tbody id="trades-body">
       <tr><td colspan="9" style="color:#555;text-align:center;padding:12px">No trades yet — waiting for signal</td></tr>
@@ -119,6 +119,22 @@
 const $ = id => document.getElementById(id);
 
 function fmt(n, d=2) { return parseFloat(n||0).toFixed(d); }
+
+function fmtTime(unixTs) {
+  const ts = parseFloat(unixTs||0);
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+}
+
+function fmtDate(unixTs) {
+  const ts = parseFloat(unixTs||0);
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const today = new Date();
+  // If same day, just show time; otherwise show date+time
+  if (d.toDateString() === today.toDateString()) return fmtTime(unixTs);
+  return d.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' ' + fmtTime(unixTs);
+}
 
 function timeUntil(ts) {
   const s = Math.max(0, parseFloat(ts) - Date.now()/1000);
@@ -156,6 +172,7 @@ async function refreshPositions() {
         <td class="${p.side==='UP'?'up':'down'}">${p.side}</td>
         <td>${fmt(p.entry_price,3)}</td>
         <td>${fmt(p.take_profit,3)}</td>
+        <td style="color:#888">${fmtTime(p.opened_at)}</td>
         <td>${timeUntil(p.window_end_ts)}</td>
       </tr>`).join('');
   } catch(e) {}
@@ -182,6 +199,8 @@ async function refreshTrades() {
         <td>${fmt(t.exit_price,3)}</td>
         <td class="${cls}">${pnl>=0?'+':''}$${fmt(Math.abs(pnl))}</td>
         <td class="${cls}">${fmt(t.return_pct,1)}%</td>
+        <td style="color:#888">${fmtDate(t.opened_at)}</td>
+        <td style="color:#888">${fmtDate(t.closed_at)}</td>
         <td>${holdStr}</td>
         <td style="color:#666">${t.exit_reason}</td>
       </tr>`;

@@ -261,10 +261,12 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     btc_history: collections.deque = collections.deque(maxlen=150)
     btc_at_window_start: float = 0.0   # Binance BTC/USD when window opened
     up_price_at_window_start: float = 0.5  # first CLOB midpoint reading for window
-    # Per-window re-entry guard: once a position closes (any reason), block re-entry
-    # in the same window. Prevents the hard_stop cascade (stop fires → re-enter at same
-    # price → stop fires again → infinite loop in same window).
-    window_done: set = set()  # condition_ids closed this window
+    # Per-window stop guard: block re-entry after a stop loss in the same window.
+    # ENTRY_MIN=0.25 prevents the cascade at sub-25¢ prices, but after a hard_stop
+    # at ~20¢ the price could recover to 30¢ and trigger another bad entry.
+    # Does NOT block re-entry after take_profit — the double-entry pattern
+    # (first trade wins quickly → re-enter the other side) is a real source of profit.
+    window_stopped: set = set()  # condition_ids that hit a stop this window
 
     while True:
         iteration += 1
@@ -283,7 +285,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
 
                 # Reset per-window context
                 price_history.clear()
-                window_done.clear()
+                window_stopped.clear()
                 btc_at_window_start = _fetch_btc_price()
                 up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
 
@@ -364,8 +366,11 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                         p60_after = ph_px
                         break
 
+                STOP_REASONS = {"hard_stop", "trailing_stop_z2", "trailing_stop_z3",
+                               "force_exit_time", "window_expired"}
                 if do_exit:
-                    window_done.add(pos.condition_id)
+                    if reason in STOP_REASONS:
+                        window_stopped.add(pos.condition_id)
                     if live:
                         token_id = market.token_id_up if pos.side == "UP" else market.token_id_down
                         engine.place_exit(pos_id, token_id, reason,
@@ -387,7 +392,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             cb_open = (cb is None or cb.is_open())
             if cb and not cb_open and iteration % 30 == 0:
                 print(cb.status())
-            if not engine.already_in(market.condition_id) and market.condition_id not in window_done and cb_open:
+            if not engine.already_in(market.condition_id) and market.condition_id not in window_stopped and cb_open:
                 # Rolling BTC rate $/min — use btc_history deque (updated every 2s poll)
                 btc_rate_per_min = 0.0
                 if len(btc_history) >= 2:

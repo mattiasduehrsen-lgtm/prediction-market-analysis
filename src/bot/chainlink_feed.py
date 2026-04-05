@@ -31,9 +31,9 @@ import httpx
 # Chainlink BTC/USD aggregator on Polygon
 CHAINLINK_CONTRACT = "0xc907E116054Ad103354f2D350FD2514433D57F6F"
 POLYGON_RPCS = [
-    "https://polygon-rpc.com",
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://polygon.drpc.org",
     "https://rpc.ankr.com/polygon",
-    "https://polygon.llamarpc.com",
 ]
 
 POLL_INTERVAL = 2.0   # seconds between Chainlink polls

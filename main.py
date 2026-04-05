@@ -381,6 +381,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 _adv_cross = round(
                     (cl.window_start_price - cl.prev_window_start_price) / cl.prev_window_start_price * 100, 4
                 ) if cl.prev_window_start_price > 0 and cl.window_start_price > 0 else 0.0
+                window_advisor_consulted = True  # set before call — prevents double-call on any exception
                 window_advisor_enter, _ = advise_entry(
                     side=cheap_side,
                     entry_price=cheap_price,
@@ -391,7 +392,6 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     cheap_side_velocity=0.0,   # no history yet at window start
                     secs_remaining=secs,
                 )
-                window_advisor_consulted = True
 
             # ── Advance live order state machine ───────────────────────────────
             if live:

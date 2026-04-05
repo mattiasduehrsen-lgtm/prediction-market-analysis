@@ -58,7 +58,7 @@ TRADE_FIELDS = POSITION_FIELDS + [
 # Enables backtesting any ENTRY_MIN/ENTRY_MAX value against historical data.
 SKIP_FIELDS = [
     "condition_id", "slug", "asset", "window_end_ts",
-    "skip_reason",          # price_too_high | price_too_low | btc_filter | no_opportunity
+    "skip_reason",          # price_too_high | price_too_low | btc_filter | advisor_skip | no_opportunity
     "best_price_seen",      # lowest cheaper-side price seen during the 45s entry window
     "best_side",            # which side was cheapest at best_price_seen
     "entry_min",            # ENTRY_MIN at time of skip (for backtest context)
@@ -66,6 +66,7 @@ SKIP_FIELDS = [
     "btc_at_window_start",
     "liquidity",
     "logged_at",
+    "advisor_reason",       # Claude advisor's one-line explanation when skip_reason=advisor_skip
 ]
 
 
@@ -231,22 +232,27 @@ def _compute_summary() -> dict[str, Any]:
     }
 
 
-def _migrate_trades_csv() -> None:
-    """Add any missing columns to trades.csv header without losing existing data."""
-    if not TRADES_FILE.exists():
+def _migrate_csv(filepath: Path, fields: list) -> None:
+    """Add any missing columns to a CSV header without losing existing data."""
+    if not filepath.exists():
         return
-    with open(TRADES_FILE, newline="", encoding="utf-8") as f:
+    with open(filepath, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         existing = set(reader.fieldnames or [])
-        if set(TRADE_FIELDS) <= existing:
+        if set(fields) <= existing:
             return  # already up to date
         rows = list(reader)
-    with open(TRADES_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: row.get(k, "") for k in TRADE_FIELDS})
-    print(f"[ENGINE5M] Migrated trades.csv — added {set(TRADE_FIELDS) - existing}")
+            writer.writerow({k: row.get(k, "") for k in fields})
+    print(f"[ENGINE5M] Migrated {filepath.name} — added {set(fields) - existing}")
+
+
+def _migrate_trades_csv() -> None:
+    _migrate_csv(TRADES_FILE, TRADE_FIELDS)
+    _migrate_csv(SKIPS_FILE, SKIP_FIELDS)
 
 
 class Engine5m:
@@ -436,6 +442,7 @@ class Engine5m:
         entry_max: float,
         btc_at_window_start: float = 0.0,
         liquidity: float = 0.0,
+        advisor_reason: str = "",
     ) -> None:
         """Log a window where the entry window closed without a trade."""
         write_header = not SKIPS_FILE.exists()
@@ -456,4 +463,5 @@ class Engine5m:
                 "btc_at_window_start": btc_at_window_start,
                 "liquidity":         liquidity,
                 "logged_at":         time.time(),
+                "advisor_reason":    advisor_reason,
             })

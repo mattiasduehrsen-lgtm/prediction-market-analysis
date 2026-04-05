@@ -279,6 +279,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     # Claude advisor — called once per window early in entry window, result cached
     window_advisor_enter: bool = True   # default ENTER until advisor responds
     window_advisor_consulted: bool = False  # True once advisor has been called this window
+    window_advisor_reason: str = ""     # advisor's explanation text (for skip log)
 
     while True:
         iteration += 1
@@ -320,6 +321,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 entry_window_logged = False
                 window_advisor_enter = True
                 window_advisor_consulted = False
+                window_advisor_reason = ""
 
                 cl = chainlink_feed.get_state()
                 secs = market.seconds_remaining
@@ -382,7 +384,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     (cl.window_start_price - cl.prev_window_start_price) / cl.prev_window_start_price * 100, 4
                 ) if cl.prev_window_start_price > 0 and cl.window_start_price > 0 else 0.0
                 window_advisor_consulted = True  # set before call — prevents double-call on any exception
-                window_advisor_enter, _ = advise_entry(
+                window_advisor_enter, window_advisor_reason = advise_entry(
                     side=cheap_side,
                     entry_price=cheap_price,
                     cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
@@ -474,6 +476,8 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                             skip_reason = "price_too_high"
                         elif best_opp_price < ENTRY_MIN:
                             skip_reason = "price_too_low"
+                        elif not window_advisor_enter:
+                            skip_reason = "advisor_skip"
                         elif best_opp_price <= ENTRY_MAX:
                             skip_reason = "btc_filter"
                         else:
@@ -490,6 +494,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                             entry_max=ENTRY_MAX,
                             btc_at_window_start=btc_at_window_start,
                             liquidity=market.liquidity,
+                            advisor_reason=window_advisor_reason,
                         )
 
             # ── Check entries ──────────────────────────────────────────────────

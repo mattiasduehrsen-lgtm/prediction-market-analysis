@@ -220,6 +220,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     import collections
     from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE
     from src.bot.signal_5m import should_enter, should_exit, take_profit_price
+    from src.bot.claude_advisor import advise_entry
     from src.bot import chainlink_feed
 
     POLL_INTERVAL = 2   # seconds — match Chainlink poll rate
@@ -522,6 +523,21 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
                     xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
                     print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str}")
+
+                    # Claude API advisor — evaluates BTC momentum context and decides
+                    # whether to fade (enter) or skip (BTC is trending, don't fight it)
+                    advisor_enter, advisor_reason = advise_entry(
+                        side=side,
+                        entry_price=entry_price,
+                        cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
+                        btc_rate_per_min=btc_rate_per_min,
+                        btc_momentum_decel=btc_momentum_decel,
+                        cross_window_pct=cross_window_pct,
+                        cheap_side_velocity=cheap_side_velocity,
+                        secs_remaining=secs,
+                    )
+                    if not advisor_enter:
+                        continue  # Claude said skip — log and move on
 
                     btc_at_entry = btc_history[-1][1] if btc_history else 0.0
 

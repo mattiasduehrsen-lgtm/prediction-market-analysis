@@ -84,7 +84,7 @@ def _decode_latest_round(hex_result: str) -> float | None:
     # Returns 5 x uint256 packed: roundId, answer, startedAt, updatedAt, answeredInRound
     # Each uint256 is 32 bytes (64 hex chars). We want [1] = answer.
     try:
-        raw = hex_result.lstrip("0x")
+        raw = hex_result[2:]  # strip "0x" prefix only — lstrip("0x") would strip leading zeros too
         if len(raw) < 128:  # need at least 2 x 32-byte words
             return None
         answer_hex = raw[64:128]   # second 32-byte word

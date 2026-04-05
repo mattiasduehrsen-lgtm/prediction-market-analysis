@@ -30,7 +30,7 @@ SUMMARY_FILE   = OUT_DIR / "summary.json"
 SKIPS_FILE     = OUT_DIR / "skipped_windows.csv"
 
 STARTING_EQUITY = 1000.0
-POSITION_SIZE   = 20.0    # $ per trade (paper)
+POSITION_SIZE   = 15.0    # $ per trade (paper) — cut from $20; unsustainable EV at current WR
 MAKER_FEE       = 0.00    # 0% fee for limit (maker) orders — Polymarket charges only takers
 
 POSITION_FIELDS = [

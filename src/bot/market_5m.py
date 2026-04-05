@@ -29,13 +29,15 @@ SLUG_PREFIXES: dict[str, str] = {
 }
 
 # Entry/exit thresholds
-ENTRY_MIN        = 0.30   # 0.30-0.35 wins confirmed in trades 130-150 (90% WR era); recent dip was market noise
+ENTRY_MIN        = 0.33   # raised 0.30→0.33: 0.30-0.33 bucket underperforms by 9.6 WR pts per analysis
 ENTRY_MAX        = 0.39   # raised from 0.40: 0.39-0.40 entries had lowest EV; proj +$380 vs +$350 per 100 windows at 0.39
 TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00, break-even WR drops from 64% to 33%
-MIN_SECONDS      = 255    # only enter in first 45 seconds of window (300 - 45 = 255s must remain) — 200-250s remaining = 60% WR; <150s = 0% WR
+MIN_SECONDS      = 240    # enter in first 60 seconds of window (300 - 60 = 240s must remain) — extended from 45s for more volume
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos (lowered from 10)
+SOFT_EXIT_SECS   = 115    # soft exit threshold: bail on stalled reversions with ~2min left
+SOFT_EXIT_PRICE  = 0.25   # exit at 115s if price ≤ 0.25 — recovery to 0.92 from here is <3% probability
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry (momentum working against you)
-BTC_MAGNITUDE_MAX = 0.15  # max Chainlink % move from window start to allow entry — beyond this it's a real trend
+BTC_MAGNITUDE_MAX = 0.01  # tightened 0.15→0.01%: mild-up moves (0.01-0.02%) had 37.5% WR — skip them
 # No fee — limit (maker) orders on Polymarket: 0% fee + small positive rebate
 
 

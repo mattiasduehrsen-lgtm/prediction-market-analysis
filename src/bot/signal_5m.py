@@ -26,7 +26,7 @@ from __future__ import annotations
 from src.bot.market_5m import (
     Market5m,
     ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
-    MIN_SECONDS, FORCE_EXIT, BTC_SKIP_RATE, BTC_MAGNITUDE_MAX,
+    MIN_SECONDS, FORCE_EXIT, SOFT_EXIT_SECS, SOFT_EXIT_PRICE, BTC_SKIP_RATE, BTC_MAGNITUDE_MAX,
 )
 
 
@@ -114,7 +114,13 @@ def should_exit(
     # All had 0% win rate — they cut positions mid-reversion before reaching 50¢ TP.
     # Let positions ride to TP (50¢) or force_exit_time. Data: 100% WR at TP vs 0% at stops.
 
-    # Priority 3: time-based force exit
+    # Priority 3: soft exit — stalled reversion with ~2min left
+    # If still deeply below 25¢ at 115s remaining, recovery to 0.92 is near-impossible.
+    # Exit gracefully rather than ride to the hard floor (saves ~$8-12 vs waiting).
+    if seconds_remaining <= SOFT_EXIT_SECS and current <= SOFT_EXIT_PRICE:
+        return True, "soft_exit_stalled"
+
+    # Priority 4: time-based force exit
     if seconds_remaining <= FORCE_EXIT:
         return True, "force_exit_time"
 

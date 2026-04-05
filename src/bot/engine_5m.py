@@ -209,7 +209,7 @@ def _compute_summary() -> dict[str, Any]:
         for row in csv.DictReader(f):
             try:
                 trades.append(ClosedTrade5m(**{
-                    k: (row[k] if k in str_fields else float(row[k]))
+                    k: (row[k] if k in str_fields else float(row[k] or 0))
                     for k in TRADE_FIELDS if k in row
                 }))
             except Exception:

@@ -276,6 +276,9 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     best_opp_price: float = 1.0   # lowest cheaper-side price seen in entry window
     best_opp_side: str = ""
     entry_window_logged: bool = False  # prevent duplicate log entries per window
+    # Claude advisor — called once per window early in entry window, result cached
+    window_advisor_enter: bool = True   # default ENTER until advisor responds
+    window_advisor_consulted: bool = False  # True once advisor has been called this window
 
     while True:
         iteration += 1
@@ -311,10 +314,12 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     cl_start = chainlink_feed.get_state()
                     prev_cl_start_price = cl_start.price  # 0.0 if feed unavailable — handled above
 
-                # Reset skip tracking for new window
+                # Reset skip tracking and advisor for new window
                 best_opp_price = 1.0
                 best_opp_side = ""
                 entry_window_logged = False
+                window_advisor_enter = True
+                window_advisor_consulted = False
 
                 cl = chainlink_feed.get_state()
                 secs = market.seconds_remaining
@@ -357,6 +362,36 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 f"[{now_str}] {asset} UP={market.up_price:.3f} DOWN={market.down_price:.3f} "
                 f"[{src}] | {secs:.0f}s left {cl_info}"
             )
+
+            # ── Claude advisor — once per window, first live poll in entry window ─
+            if not live and not window_advisor_consulted and clob_ok and secs >= MIN_SECONDS:
+                cheap_side   = "UP" if market.up_price <= market.down_price else "DOWN"
+                cheap_price  = min(market.up_price, market.down_price)
+                # Compute BTC rates from btc_history for advisor context
+                _adv_rate_pm = 0.0; _adv_rate_10s = 0.0; _adv_rate_30s = 0.0
+                if len(btc_history) >= 2:
+                    _lt, _lp = btc_history[-1]
+                    for _ot, _op in btc_history:
+                        _el = _lt - _ot
+                        if _el >= 5  and _adv_rate_pm  == 0.0: _adv_rate_pm  = (_lp - _op) / (_el / 60.0)
+                        if _el >= 10 and _adv_rate_10s == 0.0: _adv_rate_10s = (_lp - _op) / (_el / 60.0)
+                        if _el >= 30 and _adv_rate_30s == 0.0: _adv_rate_30s = (_lp - _op) / (_el / 60.0)
+                        if _adv_rate_pm and _adv_rate_10s and _adv_rate_30s: break
+                _adv_decel = round(_adv_rate_10s / _adv_rate_30s, 4) if abs(_adv_rate_30s) > 1.0 else 0.0
+                _adv_cross = round(
+                    (cl.window_start_price - cl.prev_window_start_price) / cl.prev_window_start_price * 100, 4
+                ) if cl.prev_window_start_price > 0 and cl.window_start_price > 0 else 0.0
+                window_advisor_enter, _ = advise_entry(
+                    side=cheap_side,
+                    entry_price=cheap_price,
+                    cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
+                    btc_rate_per_min=_adv_rate_pm,
+                    btc_momentum_decel=_adv_decel,
+                    cross_window_pct=_adv_cross,
+                    cheap_side_velocity=0.0,   # no history yet at window start
+                    secs_remaining=secs,
+                )
+                window_advisor_consulted = True
 
             # ── Advance live order state machine ───────────────────────────────
             if live:
@@ -524,20 +559,9 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
                     print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str}")
 
-                    # Claude API advisor — evaluates BTC momentum context and decides
-                    # whether to fade (enter) or skip (BTC is trending, don't fight it)
-                    advisor_enter, advisor_reason = advise_entry(
-                        side=side,
-                        entry_price=entry_price,
-                        cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
-                        btc_rate_per_min=btc_rate_per_min,
-                        btc_momentum_decel=btc_momentum_decel,
-                        cross_window_pct=cross_window_pct,
-                        cheap_side_velocity=cheap_side_velocity,
-                        secs_remaining=secs,
-                    )
-                    if not advisor_enter:
-                        continue  # Claude said skip — log and move on
+                    # Advisor decision was made at window open — skip if it said no
+                    if not window_advisor_enter:
+                        continue
 
                     btc_at_entry = btc_history[-1][1] if btc_history else 0.0
 

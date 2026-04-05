@@ -461,15 +461,36 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             if cb and not cb_open and iteration % 30 == 0:
                 print(cb.status())
             if not engine.already_in(market.condition_id) and cb_open:
-                # Rolling BTC rate $/min — use btc_history deque (updated every 2s poll)
+                # Rolling BTC rates at multiple timeframes from btc_history deque
                 btc_rate_per_min = 0.0
+                btc_rate_10s = 0.0
+                btc_rate_30s = 0.0
                 if len(btc_history) >= 2:
                     latest_btc_ts, latest_btc_px = btc_history[-1]
                     for old_ts, old_px in btc_history:
                         elapsed_secs = latest_btc_ts - old_ts
-                        if elapsed_secs >= 5:
+                        if elapsed_secs >= 5 and btc_rate_per_min == 0.0:
                             btc_rate_per_min = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
+                        if elapsed_secs >= 10 and btc_rate_10s == 0.0:
+                            btc_rate_10s = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
+                        if elapsed_secs >= 30 and btc_rate_30s == 0.0:
+                            btc_rate_30s = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
+                        if btc_rate_per_min and btc_rate_10s and btc_rate_30s:
                             break
+
+                # Deceleration ratio: recent rate / earlier rate
+                # < 1 = move slowing (reversal likely), < 0 = already reversing, > 1 = accelerating
+                btc_momentum_decel = 0.0
+                if abs(btc_rate_30s) > 1.0:
+                    btc_momentum_decel = round(btc_rate_10s / btc_rate_30s, 4)
+
+                # Cross-window BTC direction from Chainlink
+                cross_window_pct = 0.0
+                if cl.prev_window_start_price > 0 and cl.window_start_price > 0:
+                    cross_window_pct = round(
+                        (cl.window_start_price - cl.prev_window_start_price)
+                        / cl.prev_window_start_price * 100, 4
+                    )
 
                 do_enter, side, entry_price = should_enter(
                     market,
@@ -481,12 +502,26 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
 
                     # Look up historical prices from deque for velocity/trajectory
                     p_60s = p_30s = 0.0
+                    cheap_20s_ago = 0.0
                     for ts, px in price_history:
                         age = now_ts - ts
                         if 55 <= age <= 65:
                             p_60s = px
                         elif 25 <= age <= 35:
                             p_30s = px
+                        elif 18 <= age <= 24 and cheap_20s_ago == 0.0:
+                            cheap_20s_ago = px if side == "UP" else (1.0 - px)
+
+                    # Cheap side velocity: how fast our side's price moved in last 20s
+                    # Negative = still falling (momentum continuing), positive = recovering
+                    cheap_side_velocity = 0.0
+                    if cheap_20s_ago > 0:
+                        cheap_side_velocity = round((entry_price - cheap_20s_ago) / 20.0, 6)
+
+                    decel_str = f"{btc_momentum_decel:+.2f}" if btc_momentum_decel else "n/a"
+                    vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
+                    xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
+                    print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str}")
 
                     btc_at_entry = btc_history[-1][1] if btc_history else 0.0
 
@@ -523,6 +558,9 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                             liquidity=market.liquidity,
                             price_60s_before_entry=p_60s,
                             price_30s_before_entry=p_30s,
+                            btc_momentum_decel=btc_momentum_decel,
+                            cheap_side_velocity=cheap_side_velocity,
+                            cross_window_pct=cross_window_pct,
                         )
 
             # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────

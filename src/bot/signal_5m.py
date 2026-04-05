@@ -26,7 +26,7 @@ from __future__ import annotations
 from src.bot.market_5m import (
     Market5m,
     ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
-    MIN_SECONDS, FORCE_EXIT, BTC_SKIP_RATE,
+    MIN_SECONDS, FORCE_EXIT, BTC_SKIP_RATE, BTC_MAGNITUDE_MAX,
 )
 
 
@@ -63,12 +63,12 @@ def should_enter(
     if price < ENTRY_MIN or price > ENTRY_MAX:
         return False, "", 0.0
 
-    # BTC flatness filter: only enter when Chainlink shows BTC is flat at window open.
-    # A move of ±0.02% or more means BTC has already picked a direction — the cheap
-    # side price reflects real momentum, not a temporary dislocation worth fading.
-    BTC_FLAT_THRESHOLD = 0.02  # percent
-    if cl_pct_change != 0.0 and abs(cl_pct_change) > BTC_FLAT_THRESHOLD:
-        print(f"[SIGNAL] Skip — BTC not flat: {cl_pct_change:+.3f}% (threshold ±{BTC_FLAT_THRESHOLD}%)")
+    # BTC magnitude filter: skip if Chainlink shows BTC has already moved more than
+    # BTC_MAGNITUDE_MAX from window start. A move that large is a real trend, not
+    # a temporary dislocation — the cheap side is priced correctly and won't revert.
+    # 0.15% replaces the old ±0.02% flatness filter which was too aggressive.
+    if cl_pct_change != 0.0 and abs(cl_pct_change) > BTC_MAGNITUDE_MAX:
+        print(f"[SIGNAL] Skip — BTC move too large: {cl_pct_change:+.3f}% (max ±{BTC_MAGNITUDE_MAX}%)")
         return False, "", 0.0
 
     # BTC momentum filter: skip if BTC is moving hard against our side

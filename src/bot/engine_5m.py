@@ -42,6 +42,9 @@ POSITION_FIELDS = [
     "btc_price_at_window_start", "btc_price_at_entry", "btc_pct_change_at_entry",
     "up_price_at_window_start", "secs_remaining_at_entry", "liquidity",
     "price_60s_before_entry", "price_30s_before_entry", "price_velocity",
+    "btc_momentum_decel",    # ratio of BTC rate last 10s / last 30s: <1=decelerating, <0=reversing
+    "cheap_side_velocity",   # ¢/s of our side's price change in last 20s at entry: <0=still falling
+    "cross_window_pct",      # Chainlink % move from prev window start to this window start
 ]
 
 TRADE_FIELDS = POSITION_FIELDS + [
@@ -90,6 +93,9 @@ class Position5m:
     price_60s_before_entry: float = 0.0    # UP midpoint ~60s before entry
     price_30s_before_entry: float = 0.0    # UP midpoint ~30s before entry
     price_velocity: float = 0.0            # (entry_price - price_60s_ago) / 60  ¢/sec
+    btc_momentum_decel: float = 0.0        # BTC rate_10s / rate_30s: <1=decelerating, <0=reversing
+    cheap_side_velocity: float = 0.0       # our side ¢/s over last 20s: <0=still falling
+    cross_window_pct: float = 0.0          # Chainlink % move across prev→current window start
 
 
 @dataclass
@@ -116,6 +122,9 @@ class ClosedTrade5m:
     price_60s_before_entry: float = 0.0
     price_30s_before_entry: float = 0.0
     price_velocity: float = 0.0
+    btc_momentum_decel: float = 0.0
+    cheap_side_velocity: float = 0.0
+    cross_window_pct: float = 0.0
     # Exit context for ML analysis
     price_60s_after_entry: float = 0.0   # UP token price 60s after entry — for hold-vs-exit analysis
     # Exit fields
@@ -222,11 +231,30 @@ def _compute_summary() -> dict[str, Any]:
     }
 
 
+def _migrate_trades_csv() -> None:
+    """Add any missing columns to trades.csv header without losing existing data."""
+    if not TRADES_FILE.exists():
+        return
+    with open(TRADES_FILE, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        existing = set(reader.fieldnames or [])
+        if set(TRADE_FIELDS) <= existing:
+            return  # already up to date
+        rows = list(reader)
+    with open(TRADES_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in TRADE_FIELDS})
+    print(f"[ENGINE5M] Migrated trades.csv — added {set(TRADE_FIELDS) - existing}")
+
+
 class Engine5m:
     """Paper trading engine for 5-minute up/down markets."""
 
     def __init__(self) -> None:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
+        _migrate_trades_csv()
         self.positions: dict[str, Position5m] = _load_positions()
         # Tracks every condition_id traded this session (open OR closed) so we
         # never re-enter the same window. Analysis: single-trade windows +$85.90
@@ -255,6 +283,9 @@ class Engine5m:
         liquidity: float = 0.0,
         price_60s_before_entry: float = 0.0,
         price_30s_before_entry: float = 0.0,
+        btc_momentum_decel: float = 0.0,
+        cheap_side_velocity: float = 0.0,
+        cross_window_pct: float = 0.0,
     ) -> Position5m | None:
         if self.already_in(condition_id):
             return None
@@ -299,6 +330,9 @@ class Engine5m:
             price_60s_before_entry=price_60s_before_entry,
             price_30s_before_entry=price_30s_before_entry,
             price_velocity=price_velocity,
+            btc_momentum_decel=round(btc_momentum_decel, 4),
+            cheap_side_velocity=round(cheap_side_velocity, 6),
+            cross_window_pct=round(cross_window_pct, 4),
         )
         self.positions[pos.position_id] = pos
         _save_positions(self.positions)

@@ -46,10 +46,11 @@ LATEST_ROUND_DATA_SELECTOR = "0xfeaf968c"
 @dataclass
 class ChainlinkState:
     price: float = 0.0
-    updated_at: float = 0.0       # unix ts of last successful poll
+    updated_at: float = 0.0           # unix ts of last successful poll
     window_start_price: float = 0.0   # price at start of current 5m window
     window_start_ts: float = 0.0
-    pct_change: float = 0.0       # % change since window opened
+    pct_change: float = 0.0           # % change since window opened
+    prev_window_start_price: float = 0.0  # start price of the prior window (cross-window trend)
 
     def is_stale(self, max_age: float = 15.0) -> bool:
         return time.time() - self.updated_at > max_age
@@ -121,9 +122,12 @@ def _run() -> None:
                 new_window = (_state.window_start_ts < window_start)
 
                 if new_window:
+                    prev_start = _state.window_start_price  # save before overwrite
                     _state.window_start_price = price
                     _state.window_start_ts = window_start
-                    print(f"[CHAINLINK] New window — start price ${price:,.2f}")
+                    _state.prev_window_start_price = prev_start
+                    cross_pct = ((price - prev_start) / prev_start * 100) if prev_start > 0 else 0.0
+                    print(f"[CHAINLINK] New window — start=${price:,.2f} prev=${prev_start:,.2f} cross={cross_pct:+.3f}%")
 
                 pct = 0.0
                 if _state.window_start_price > 0:
@@ -135,6 +139,7 @@ def _run() -> None:
                     window_start_price=_state.window_start_price,
                     window_start_ts=_state.window_start_ts,
                     pct_change=round(pct, 4),
+                    prev_window_start_price=_state.prev_window_start_price,
                 )
         time.sleep(POLL_INTERVAL)
 

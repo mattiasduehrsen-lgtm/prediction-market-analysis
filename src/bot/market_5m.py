@@ -35,6 +35,7 @@ TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00, br
 MIN_SECONDS      = 255    # only enter in first 45 seconds of window (300 - 45 = 255s must remain) — 200-250s remaining = 60% WR; <150s = 0% WR
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos (lowered from 10)
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry (momentum working against you)
+BTC_MAGNITUDE_MAX = 0.15  # max Chainlink % move from window start to allow entry — beyond this it's a real trend
 # No fee — limit (maker) orders on Polymarket: 0% fee + small positive rebate
 
 

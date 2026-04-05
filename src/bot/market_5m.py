@@ -31,7 +31,7 @@ SLUG_PREFIXES: dict[str, str] = {
 # Entry/exit thresholds
 ENTRY_MIN        = 0.30   # 0.30-0.35 wins confirmed in trades 130-150 (90% WR era); recent dip was market noise
 ENTRY_MAX        = 0.39   # raised from 0.40: 0.39-0.40 entries had lowest EV; proj +$380 vs +$350 per 100 windows at 0.39
-TAKE_PROFIT      = 0.50   # hard exit at 50¢ — mean reversion to neutral after the opening swing
+TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00, break-even WR drops from 64% to 33%
 MIN_SECONDS      = 255    # only enter in first 45 seconds of window (300 - 45 = 255s must remain) — 200-250s remaining = 60% WR; <150s = 0% WR
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos (lowered from 10)
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry (momentum working against you)

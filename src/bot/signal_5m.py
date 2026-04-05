@@ -11,8 +11,9 @@ Entry (first 45 seconds only — limit buy between 30-39¢):
   - Minimum liquidity required
 
 Exit rules (hard exits only — no trailing stops):
-  1. Price hits TAKE_PROFIT (50¢)  → take profit, mean reversion complete
-  2. FORCE_EXIT seconds left       → close regardless (avoid settlement chaos)
+  1. Price hits TAKE_PROFIT (92¢)  → exit, full reversal captured
+  2. Hard floor: price drops below 8¢ → exit, mean reversion failed
+  3. FORCE_EXIT seconds left       → close at near-settlement price (5s out ≈ $0 or $1)
 
 Key lessons (from 158-trade analysis):
   - All trailing stops (z1, z2, z3) had 0% win rate — they cut mid-reversion before reaching 50¢

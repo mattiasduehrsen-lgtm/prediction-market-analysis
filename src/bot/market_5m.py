@@ -37,7 +37,7 @@ FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos (lo
 SOFT_EXIT_SECS   = 115    # soft exit threshold: bail on stalled reversions with ~2min left
 SOFT_EXIT_PRICE  = 0.25   # exit at 115s if price ≤ 0.25 — recovery to 0.92 from here is <3% probability
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry (momentum working against you)
-BTC_MAGNITUDE_MAX = 0.01  # tightened 0.15→0.01%: mild-up moves (0.01-0.02%) had 37.5% WR — skip them
+BTC_MAGNITUDE_MAX = 0.05  # 0.01% was too tight (blocked ~$30 moves = noise); 0.05% catches real trends (~$33+ in entry window)
 # No fee — limit (maker) orders on Polymarket: 0% fee + small positive rebate
 
 

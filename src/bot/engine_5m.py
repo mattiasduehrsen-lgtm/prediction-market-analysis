@@ -151,11 +151,11 @@ class ClosedTrade5m:
     our_side_won: str = ""      # "True" / "False" — did we pick the winner?
 
 
-def _load_positions() -> dict[str, Position5m]:
-    if not POSITIONS_FILE.exists():
+def _load_positions(filepath: Path = POSITIONS_FILE) -> dict[str, Position5m]:
+    if not filepath.exists():
         return {}
     positions: dict[str, Position5m] = {}
-    with open(POSITIONS_FILE, newline="", encoding="utf-8") as f:
+    with open(filepath, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             try:
                 p = Position5m(
@@ -171,16 +171,17 @@ def _load_positions() -> dict[str, Position5m]:
                     entry_fee_usd=float(row["entry_fee_usd"]),
                     window_end_ts=float(row["window_end_ts"]),
                     opened_at=float(row["opened_at"]),
-                    # New context fields — graceful default for old CSV rows
-                    btc_price_at_window_start=float(row.get("btc_price_at_window_start", 0)),
-                    btc_price_at_entry=float(row.get("btc_price_at_entry", 0)),
-                    btc_pct_change_at_entry=float(row.get("btc_pct_change_at_entry", 0)),
-                    up_price_at_window_start=float(row.get("up_price_at_window_start", 0.5)),
-                    secs_remaining_at_entry=float(row.get("secs_remaining_at_entry", 0)),
-                    liquidity=float(row.get("liquidity", 0)),
-                    price_60s_before_entry=float(row.get("price_60s_before_entry", 0)),
-                    price_30s_before_entry=float(row.get("price_30s_before_entry", 0)),
-                    price_velocity=float(row.get("price_velocity", 0)),
+                    window=row.get("window", "5m"),
+                    strategy=row.get("strategy", "mean_reversion"),
+                    btc_price_at_window_start=float(row.get("btc_price_at_window_start") or 0),
+                    btc_price_at_entry=float(row.get("btc_price_at_entry") or 0),
+                    btc_pct_change_at_entry=float(row.get("btc_pct_change_at_entry") or 0),
+                    up_price_at_window_start=float(row.get("up_price_at_window_start") or 0.5),
+                    secs_remaining_at_entry=float(row.get("secs_remaining_at_entry") or 0),
+                    liquidity=float(row.get("liquidity") or 0),
+                    price_60s_before_entry=float(row.get("price_60s_before_entry") or 0),
+                    price_30s_before_entry=float(row.get("price_30s_before_entry") or 0),
+                    price_velocity=float(row.get("price_velocity") or 0),
                 )
                 positions[p.position_id] = p
             except (KeyError, ValueError):
@@ -188,10 +189,10 @@ def _load_positions() -> dict[str, Position5m]:
     return positions
 
 
-def _save_positions(positions: dict[str, Position5m]) -> None:
+def _save_positions(positions: dict[str, Position5m], filepath: Path = POSITIONS_FILE) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     with _FILE_LOCK:
-        with open(POSITIONS_FILE, "w", newline="", encoding="utf-8") as f:
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=POSITION_FIELDS)
             writer.writeheader()
             for p in positions.values():
@@ -271,17 +272,21 @@ def _migrate_trades_csv() -> None:
 class Engine5m:
     """Paper trading engine for 5-minute up/down markets."""
 
-    def __init__(self) -> None:
+    def __init__(self, tag: str = "") -> None:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         _migrate_trades_csv()
-        self.positions: dict[str, Position5m] = _load_positions()
+        # Each thread gets its own positions file so concurrent saves don't
+        # overwrite each other. Trades/summary/skips remain shared.
+        suffix = f"_{tag}" if tag else ""
+        self._positions_file = OUT_DIR / f"positions{suffix}.csv"
+        _migrate_csv(self._positions_file, POSITION_FIELDS)
+        self.positions: dict[str, Position5m] = _load_positions(self._positions_file)
         # Tracks every condition_id traded this session (open OR closed) so we
-        # never re-enter the same window. Analysis: single-trade windows +$85.90
-        # (52.4% WR) vs multi-trade windows -$192.27 (39.7% WR).
+        # never re-enter the same window.
         self.traded_windows: set[str] = {
             p.condition_id for p in self.positions.values()
         }
-        print(f"[ENGINE5M] Loaded {len(self.positions)} open positions")
+        print(f"[ENGINE5M] Loaded {len(self.positions)} open positions ({tag or 'default'})")
 
     def already_in(self, condition_id: str) -> bool:
         return condition_id in self.traded_windows
@@ -358,7 +363,7 @@ class Engine5m:
             cross_window_pct=round(cross_window_pct, 4),
         )
         self.positions[pos.position_id] = pos
-        _save_positions(self.positions)
+        _save_positions(self.positions, self._positions_file)
 
         self.traded_windows.add(condition_id)
         secs = max(0, window_end_ts - time.time())
@@ -401,7 +406,7 @@ class Engine5m:
             return_pct=round(return_pct, 2),
         )
         _append_trade(trade)
-        _save_positions(self.positions)
+        _save_positions(self.positions, self._positions_file)
 
         emoji = "WIN " if pnl_usd > 0 else "LOSS"
         print(

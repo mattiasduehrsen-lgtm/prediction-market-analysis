@@ -269,7 +269,7 @@ def run_5m_loop(
         print(cb.status())
     else:
         from src.bot.engine_5m import Engine5m
-        engine = Engine5m()
+        engine = Engine5m(tag=f"{asset}-{window}-{strategy}")
         cb = None
 
     from src.bot.tick_logger import TickLogger

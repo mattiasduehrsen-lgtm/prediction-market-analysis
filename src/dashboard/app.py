@@ -51,7 +51,10 @@ def api_summary():
 
 @app.route("/api/positions")
 def api_positions():
-    rows = _read_csv(OUT_5M / "positions.csv")
+    # Aggregate per-thread positions files (positions_BTC-5m-mean_reversion.csv etc.)
+    rows = []
+    for f in sorted(OUT_5M.glob("positions*.csv")):
+        rows.extend(_read_csv(f))
     return jsonify(rows)
 
 

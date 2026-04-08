@@ -774,7 +774,7 @@ if __name__ == "__main__":
         else:
             # Default: BTC 5m mean-reversion + BTC 5m momentum + 15m markets
             _configs = [
-                ("BTC", "5m",  "mean_reversion"),
+                # BTC 5m mean_reversion removed: 25 trades, 16% WR, -$104 — clear negative EV
                 ("BTC", "5m",  "momentum"),
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),

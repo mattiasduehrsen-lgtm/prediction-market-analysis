@@ -38,7 +38,7 @@ POSITION_SIZE   = 15.0    # $ per trade (paper) — cut from $20; unsustainable 
 MAKER_FEE       = 0.00    # 0% fee for limit (maker) orders — Polymarket charges only takers
 
 POSITION_FIELDS = [
-    "position_id", "condition_id", "slug", "asset", "side",
+    "position_id", "condition_id", "slug", "asset", "window", "strategy", "side",
     "entry_price", "take_profit",
     "size_usd", "shares", "entry_fee_usd",
     "window_end_ts", "opened_at",
@@ -88,6 +88,9 @@ class Position5m:
     entry_fee_usd: float
     window_end_ts: float
     opened_at: float
+    # Window/strategy metadata (default for backward compat with old CSV rows)
+    window: str = "5m"               # "5m" or "15m"
+    strategy: str = "mean_reversion" # "mean_reversion" or "momentum"
     # Entry context for ML analysis (default 0 so old CSV rows still load)
     btc_price_at_window_start: float = 0.0  # Binance BTC/USD when window opened
     btc_price_at_entry: float = 0.0         # Binance BTC/USD at entry moment
@@ -117,6 +120,9 @@ class ClosedTrade5m:
     entry_fee_usd: float
     window_end_ts: float
     opened_at: float
+    # Window/strategy metadata (default for backward compat)
+    window: str = "5m"
+    strategy: str = "mean_reversion"
     # ML context fields (match Position5m — defaults for backward compat)
     btc_price_at_window_start: float = 0.0
     btc_price_at_entry: float = 0.0
@@ -289,6 +295,8 @@ class Engine5m:
         entry_price: float,
         take_profit: float,
         window_end_ts: float,
+        window: str = "5m",
+        strategy: str = "mean_reversion",
         # Entry context for ML learning
         btc_price_at_window_start: float = 0.0,
         btc_price_at_entry: float = 0.0,
@@ -327,6 +335,8 @@ class Engine5m:
             slug=slug,
             asset=asset,
             side=side,
+            window=window,
+            strategy=strategy,
             entry_price=entry_price,
             take_profit=take_profit,
             size_usd=POSITION_SIZE,

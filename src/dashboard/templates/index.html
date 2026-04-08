@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BTC 5m Up/Down — Paper Trading</title>
+<title>Multi-Asset Up/Down — Paper Trading</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -69,7 +69,7 @@
 <body>
 
 <header>
-  <h1>⚡ BTC 5-Min Up/Down Bot</h1>
+  <h1>⚡ Multi-Asset Up/Down Bot</h1>
   <span class="badge">PAPER</span>
   <div id="btc-price">$—</div>
   <div id="last-updated">—</div>
@@ -201,6 +201,30 @@
     <table class="ev-table">
       <thead><tr><th>Side</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
       <tbody id="ev-side-body"></tbody>
+    </table>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>EV by Asset</h2>
+    <table class="ev-table">
+      <thead><tr><th>Asset</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
+      <tbody id="ev-asset-body"></tbody>
+    </table>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>EV by Strategy</h2>
+    <table class="ev-table">
+      <thead><tr><th>Strategy</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
+      <tbody id="ev-strategy-body"></tbody>
+    </table>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>EV by Window</h2>
+    <table class="ev-table">
+      <thead><tr><th>Window</th><th>Trades</th><th>Win Rate</th><th>Avg Win</th><th>Avg Loss</th><th>EV / Trade</th><th>Total P&L</th></tr></thead>
+      <tbody id="ev-window-body"></tbody>
     </table>
   </section>
 
@@ -423,6 +447,18 @@ async function refreshEV() {
     // By side
     $('ev-side-body').innerHTML =
       ['UP', 'DOWN'].map(s => evRow(s, d.by_side?.[s])).join('');
+
+    // By asset
+    $('ev-asset-body').innerHTML =
+      Object.entries(d.by_asset || {}).map(([k, v]) => evRow(k, v)).join('');
+
+    // By strategy
+    $('ev-strategy-body').innerHTML =
+      Object.entries(d.by_strategy || {}).map(([k, v]) => evRow(k, v)).join('');
+
+    // By window
+    $('ev-window-body').innerHTML =
+      Object.entries(d.by_window || {}).map(([k, v]) => evRow(k, v)).join('');
 
   } catch(e) { console.error('EV refresh error', e); }
 }

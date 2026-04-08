@@ -80,6 +80,17 @@ def api_ev():
         except Exception:
             pass
 
+    # Also pull asset/strategy from raw rows for grouping
+    raw_rows = _read_csv(OUT_5M / "trades.csv")
+    asset_map    = {r.get("position_id"): r.get("asset", "BTC")           for r in raw_rows}
+    strategy_map = {r.get("position_id"): r.get("strategy", "mean_reversion") for r in raw_rows}
+    window_map   = {r.get("position_id"): r.get("window", "5m")           for r in raw_rows}
+
+    for t, r in zip(trades, raw_rows):
+        t["asset"]    = r.get("asset", "BTC")
+        t["strategy"] = r.get("strategy", "mean_reversion")
+        t["window"]   = r.get("window", "5m")
+
     if not trades:
         return jsonify({})
 
@@ -99,16 +110,17 @@ def api_ev():
     def rolling(n):
         return ev_stats(trades[-n:]) if len(trades) >= n else ev_stats(trades)
 
-    # By entry price bucket
+    # By entry price bucket — covers both mean-reversion (0.28-0.39) and momentum (~0.50)
     def bucket(p):
         if p < 0.30: return "<0.30"
         if p < 0.33: return "0.30-0.33"
         if p < 0.36: return "0.33-0.36"
-        if p < 0.38: return "0.36-0.38"
-        return "0.38-0.40"
+        if p < 0.40: return "0.36-0.40"
+        if p < 0.52: return "0.40-0.52 (momentum)"
+        return ">0.52"
 
     by_entry = {}
-    for b in ["<0.30", "0.30-0.33", "0.33-0.36", "0.36-0.38", "0.38-0.40"]:
+    for b in ["<0.30", "0.30-0.33", "0.33-0.36", "0.36-0.40", "0.40-0.52 (momentum)", ">0.52"]:
         grp = [t for t in trades if bucket(t["entry_price"]) == b]
         s = ev_stats(grp)
         if s: by_entry[b] = s
@@ -126,11 +138,29 @@ def api_ev():
         "DOWN": ev_stats([t for t in trades if t["side"] == "DOWN"]),
     }
 
-    # Rolling EV series — EV per trade computed over a 20-trade sliding window
+    # By asset
+    by_asset = {}
+    for a in sorted(set(t["asset"] for t in trades)):
+        s = ev_stats([t for t in trades if t["asset"] == a])
+        if s: by_asset[a] = s
+
+    # By strategy
+    by_strategy = {}
+    for strat in sorted(set(t["strategy"] for t in trades)):
+        s = ev_stats([t for t in trades if t["strategy"] == strat])
+        if s: by_strategy[strat] = s
+
+    # By window size
+    by_window = {}
+    for w in sorted(set(t["window"] for t in trades)):
+        s = ev_stats([t for t in trades if t["window"] == w])
+        if s: by_window[w] = s
+
+    # Rolling EV series — 20-trade sliding window
     rolling_series = []
-    window = 20
-    for i in range(window, len(trades) + 1):
-        chunk = trades[i - window:i]
+    win_size = 20
+    for i in range(win_size, len(trades) + 1):
+        chunk = trades[i - win_size:i]
         s = ev_stats(chunk)
         if s:
             rolling_series.append(round(s["ev_per_trade"], 3))
@@ -142,6 +172,9 @@ def api_ev():
         "by_entry_price": by_entry,
         "by_exit_reason": reasons,
         "by_side":        by_side,
+        "by_asset":       by_asset,
+        "by_strategy":    by_strategy,
+        "by_window":      by_window,
         "rolling_series": rolling_series,
     })
 

@@ -2,10 +2,16 @@
 Polymarket Paper Trading Bot
 =============================
 Commands:
-  python main.py btc-5m-loop  — 5-minute BTC Up/Down bot (primary)
-  python main.py paper-loop   — daily BTC strike market bot (legacy)
-  python main.py dashboard    — web dashboard
-  python main.py status       — print current state and exit
+  python main.py btc-5m-loop               — 5-minute BTC mean-reversion bot (primary)
+  python main.py multi-loop [CONFIGS...]   — run multiple markets in parallel threads
+  python main.py paper-loop                — daily BTC strike market bot (legacy)
+  python main.py dashboard                 — web dashboard
+  python main.py status                    — print current state and exit
+
+CONFIGS format: ASSET:WINDOW:STRATEGY  (e.g. BTC:5m:mean_reversion SOL:15m:mean_reversion)
+  ASSET:    BTC ETH SOL XRP
+  WINDOW:   5m 15m
+  STRATEGY: mean_reversion momentum
 """
 from __future__ import annotations
 
@@ -14,6 +20,7 @@ import json
 import os
 import pathlib
 import sys
+import threading
 import time
 
 from dotenv import load_dotenv
@@ -202,13 +209,21 @@ def _check_entries(engine, snapshot, btc, signal_mod) -> None:
 
 # ── 5-minute Up/Down loop ─────────────────────────────────────────────────────
 
-def _fetch_btc_price() -> float:
+BINANCE_SYMBOLS: dict[str, str] = {
+    "BTC": "BTCUSDT",
+    "ETH": "ETHUSDT",
+    "SOL": "SOLUSDT",
+    "XRP": "XRPUSDT",
+}
+
+
+def _fetch_price(symbol: str = "BTCUSDT") -> float:
     """Quick Binance spot price — used for trade context capture."""
     import httpx as _httpx
     try:
         r = _httpx.get(
             "https://api.binance.com/api/v3/ticker/price",
-            params={"symbol": "BTCUSDT"},
+            params={"symbol": symbol},
             timeout=5,
         )
         return float(r.json()["price"])
@@ -216,19 +231,34 @@ def _fetch_btc_price() -> float:
         return 0.0
 
 
-def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
+def run_5m_loop(
+    asset: str = "BTC",
+    live: bool = False,
+    window: str = "5m",
+    strategy: str = "mean_reversion",
+) -> None:
     import collections
-    from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE
-    from src.bot.signal_5m import should_enter, should_exit, take_profit_price
+    from src.bot.market_5m import (
+        fetch_market, fetch_live_prices, WINDOW_SECONDS,
+        FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE,
+        MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE,
+    )
+    from src.bot.signal_5m import should_enter, should_enter_momentum, should_exit, take_profit_price
     from src.bot.claude_advisor import advise_entry
     from src.bot.chainlink_feed import ChainlinkFeed
 
-    POLL_INTERVAL = 2   # seconds — match Chainlink poll rate
+    POLL_INTERVAL  = 2
+    window_seconds = WINDOW_SECONDS.get(window, 300)
+    # Mean-reversion: enter in first 60s of window regardless of window size
+    mr_min_seconds = window_seconds - 60
+    # Soft exit scales with window: 5m→115s, 15m→300s
+    soft_exit_secs = 115 if window == "5m" else 300
+
+    binance_symbol = BINANCE_SYMBOLS.get(asset.upper(), "BTCUSDT")
 
     mode_str = "LIVE" if live else "PAPER"
     print(f"\n{'='*60}")
-    print(f"5-Minute Up/Down Bot [{mode_str}] — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Poll every {POLL_INTERVAL}s | Limit buy @{ENTRY_MAX:.0%} in first 90s only | TP=50¢ Force=90¢ | BTC skip >${BTC_SKIP_RATE:.0f}/min")
+    print(f"{window} Up/Down Bot [{mode_str}|{strategy}] — {asset} — {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
 
     if live:
@@ -297,7 +327,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                         resolution_side = "UP" if cl_now.price >= prev_cl_start_price else "DOWN"
                         engine.update_resolution(prev_condition_id, resolution_side)
 
-                new_market = fetch_market(asset)
+                new_market = fetch_market(asset, window)
                 if new_market is None:
                     print(f"[{now_str}] No active market found — retrying...")
                     time.sleep(POLL_INTERVAL)
@@ -307,7 +337,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 # Reset per-window context
                 price_history.clear()
                 window_stopped.clear()
-                btc_at_window_start = _fetch_btc_price()
+                btc_at_window_start = _fetch_price(binance_symbol)
                 up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
 
                 # Save this window's starting state for resolution at next transition
@@ -343,7 +373,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             price_history.append((time.time(), market.up_price))
 
             # Continuous BTC price — every poll, independent of windows
-            btc_now = _fetch_btc_price()
+            btc_now = _fetch_price(binance_symbol)
             if btc_now > 0:
                 btc_history.append((time.time(), btc_now))
 
@@ -429,6 +459,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     current_up_price=cur_up,
                     take_profit=pos.take_profit,
                     seconds_remaining=secs,
+                    soft_exit_secs=soft_exit_secs,
                 )
 
                 # Look up UP token price ~60s after entry from price_history
@@ -462,15 +493,15 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                     )
 
             # ── Skip tracking — record best opportunity during entry window ───
-            if not live:
+            if not live and strategy == "mean_reversion":
                 cheaper_price = min(market.up_price, market.down_price)
                 cheaper_side  = "UP" if market.up_price <= market.down_price else "DOWN"
-                if secs >= MIN_SECONDS and cheaper_price < best_opp_price:
+                if secs >= mr_min_seconds and cheaper_price < best_opp_price:
                     best_opp_price = cheaper_price
                     best_opp_side  = cheaper_side
 
                 # Entry window just closed — log skip if we never entered
-                if secs < MIN_SECONDS and not entry_window_logged:
+                if secs < mr_min_seconds and not entry_window_logged:
                     entry_window_logged = True
                     if not engine.already_in(market.condition_id):
                         if best_opp_price > ENTRY_MAX:
@@ -502,16 +533,15 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             cb_open = (cb is None or cb.is_open())
             if cb and not cb_open and iteration % 30 == 0:
                 print(cb.status())
+
             if not engine.already_in(market.condition_id) and cb_open:
-                # Rolling BTC rates at multiple timeframes from btc_history deque
-                btc_rate_per_min = 0.0
-                btc_rate_10s = 0.0
-                btc_rate_30s = 0.0
+                # Rolling asset rates from btc_history deque (works for any asset)
+                btc_rate_per_min = btc_rate_10s = btc_rate_30s = 0.0
                 if len(btc_history) >= 2:
                     latest_btc_ts, latest_btc_px = btc_history[-1]
                     for old_ts, old_px in btc_history:
                         elapsed_secs = latest_btc_ts - old_ts
-                        if elapsed_secs >= 5 and btc_rate_per_min == 0.0:
+                        if elapsed_secs >= 5  and btc_rate_per_min == 0.0:
                             btc_rate_per_min = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
                         if elapsed_secs >= 10 and btc_rate_10s == 0.0:
                             btc_rate_10s = (latest_btc_px - old_px) / (elapsed_secs / 60.0)
@@ -520,13 +550,11 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                         if btc_rate_per_min and btc_rate_10s and btc_rate_30s:
                             break
 
-                # Deceleration ratio: recent rate / earlier rate
-                # < 1 = move slowing (reversal likely), < 0 = already reversing, > 1 = accelerating
                 btc_momentum_decel = 0.0
                 if abs(btc_rate_30s) > 1.0:
                     btc_momentum_decel = round(btc_rate_10s / btc_rate_30s, 4)
 
-                # Cross-window BTC direction from Chainlink
+                # Cross-window direction from Chainlink
                 cross_window_pct = 0.0
                 if cl.prev_window_start_price > 0 and cl.window_start_price > 0:
                     cross_window_pct = round(
@@ -534,62 +562,16 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                         / cl.prev_window_start_price * 100, 4
                     )
 
-                do_enter, side, entry_price = should_enter(
-                    market,
-                    btc_rate_per_min=btc_rate_per_min,
-                    cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
-                )
-                if do_enter:
-                    now_ts = time.time()
-
-                    # Look up historical prices from deque for velocity/trajectory
-                    p_60s = p_30s = 0.0
-                    cheap_20s_ago = 0.0
-                    for ts, px in price_history:
-                        age = now_ts - ts
-                        if 55 <= age <= 65:
-                            p_60s = px
-                        elif 25 <= age <= 35:
-                            p_30s = px
-                        elif 18 <= age <= 24 and cheap_20s_ago == 0.0:
-                            cheap_20s_ago = px if side == "UP" else (1.0 - px)
-
-                    # Cheap side velocity: how fast our side's price moved in last 20s
-                    # Negative = still falling (momentum continuing), positive = recovering
-                    cheap_side_velocity = 0.0
-                    if cheap_20s_ago > 0:
-                        cheap_side_velocity = round((entry_price - cheap_20s_ago) / 20.0, 6)
-
-                    decel_str = f"{btc_momentum_decel:+.2f}" if btc_momentum_decel else "n/a"
-                    vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
-                    xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
-                    print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str}")
-
-                    # Advisor decision was made at window open — skip if it said no
-                    if not window_advisor_enter:
-                        continue
-
-                    btc_at_entry = btc_history[-1][1] if btc_history else 0.0
-
-                    if live:
-                        token_id = market.token_id_up if side == "UP" else market.token_id_down
-                        engine.place_entry(
-                            condition_id=market.condition_id,
-                            slug=market.slug,
-                            asset=asset,
-                            side=side,
-                            token_id=token_id,
-                            entry_price=entry_price,
-                            take_profit=take_profit_price(entry_price),
-                            window_end_ts=market.window_end_ts,
-                            btc_price_at_window_start=btc_at_window_start,
-                            btc_price_at_entry=btc_at_entry,
-                            up_price_at_window_start=up_price_at_window_start,
-                            liquidity=market.liquidity,
-                            price_60s_before_entry=p_60s,
-                            price_30s_before_entry=p_30s,
-                        )
-                    else:
+                if strategy == "momentum":
+                    # ── Momentum: enter at window open, bet continuation of prev window ──
+                    do_enter, side, entry_price = should_enter_momentum(
+                        market,
+                        cross_window_pct=cross_window_pct,
+                    )
+                    if do_enter:
+                        btc_at_entry = btc_history[-1][1] if btc_history else 0.0
+                        xw_str = f"{cross_window_pct:+.3f}%"
+                        print(f"  [MOMENTUM] {side} @ {entry_price:.3f} | prev_move={xw_str}")
                         engine.open(
                             condition_id=market.condition_id,
                             slug=market.slug,
@@ -602,12 +584,77 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                             btc_price_at_entry=btc_at_entry,
                             up_price_at_window_start=up_price_at_window_start,
                             liquidity=market.liquidity,
-                            price_60s_before_entry=p_60s,
-                            price_30s_before_entry=p_30s,
-                            btc_momentum_decel=btc_momentum_decel,
-                            cheap_side_velocity=cheap_side_velocity,
                             cross_window_pct=cross_window_pct,
                         )
+
+                else:
+                    # ── Mean reversion: buy cheap side in entry window ─────────────────
+                    do_enter, side, entry_price = should_enter(
+                        market,
+                        btc_rate_per_min=btc_rate_per_min,
+                        cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
+                        min_seconds=mr_min_seconds,
+                    )
+                    if do_enter:
+                        now_ts = time.time()
+                        p_60s = p_30s = cheap_20s_ago = 0.0
+                        for ts, px in price_history:
+                            age = now_ts - ts
+                            if 55 <= age <= 65:
+                                p_60s = px
+                            elif 25 <= age <= 35:
+                                p_30s = px
+                            elif 18 <= age <= 24 and cheap_20s_ago == 0.0:
+                                cheap_20s_ago = px if side == "UP" else (1.0 - px)
+
+                        cheap_side_velocity = 0.0
+                        if cheap_20s_ago > 0:
+                            cheap_side_velocity = round((entry_price - cheap_20s_ago) / 20.0, 6)
+
+                        decel_str = f"{btc_momentum_decel:+.2f}" if btc_momentum_decel else "n/a"
+                        vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
+                        xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
+                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str}")
+
+                        btc_at_entry = btc_history[-1][1] if btc_history else 0.0
+
+                        if live:
+                            token_id = market.token_id_up if side == "UP" else market.token_id_down
+                            engine.place_entry(
+                                condition_id=market.condition_id,
+                                slug=market.slug,
+                                asset=asset,
+                                side=side,
+                                token_id=token_id,
+                                entry_price=entry_price,
+                                take_profit=take_profit_price(entry_price),
+                                window_end_ts=market.window_end_ts,
+                                btc_price_at_window_start=btc_at_window_start,
+                                btc_price_at_entry=btc_at_entry,
+                                up_price_at_window_start=up_price_at_window_start,
+                                liquidity=market.liquidity,
+                                price_60s_before_entry=p_60s,
+                                price_30s_before_entry=p_30s,
+                            )
+                        else:
+                            engine.open(
+                                condition_id=market.condition_id,
+                                slug=market.slug,
+                                asset=asset,
+                                side=side,
+                                entry_price=entry_price,
+                                take_profit=take_profit_price(entry_price),
+                                window_end_ts=market.window_end_ts,
+                                btc_price_at_window_start=btc_at_window_start,
+                                btc_price_at_entry=btc_at_entry,
+                                up_price_at_window_start=up_price_at_window_start,
+                                liquidity=market.liquidity,
+                                price_60s_before_entry=p_60s,
+                                price_30s_before_entry=p_30s,
+                                btc_momentum_decel=btc_momentum_decel,
+                                cheap_side_velocity=cheap_side_velocity,
+                                cross_window_pct=cross_window_pct,
+                            )
 
             # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────
             if iteration % 30 == 0:
@@ -628,6 +675,36 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             time.sleep(POLL_INTERVAL)
         except BaseException:
             pass
+
+
+# ── Multi-market parallel loop ────────────────────────────────────────────────
+
+def run_multi_loop(configs: list[tuple[str, str, str]], live: bool = False) -> None:
+    """
+    Run multiple market loops in parallel daemon threads.
+    configs: list of (asset, window, strategy) e.g.
+      [("BTC","5m","mean_reversion"), ("SOL","15m","mean_reversion"), ("BTC","5m","momentum")]
+    """
+    threads = []
+    for asset, window, strategy in configs:
+        name = f"{asset}-{window}-{strategy}"
+        t = threading.Thread(
+            target=run_5m_loop,
+            kwargs={"asset": asset, "live": live, "window": window, "strategy": strategy},
+            name=name,
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+        print(f"[MULTI] Started thread: {name}")
+        time.sleep(0.5)  # stagger starts to avoid simultaneous API bursts
+
+    print(f"[MULTI] {len(threads)} threads running")
+    try:
+        while any(t.is_alive() for t in threads):
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print("[MULTI] Shutting down...")
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -676,6 +753,29 @@ if __name__ == "__main__":
     elif cmd == "btc-5m-live":
         _setup_logging()
         run_5m_loop("BTC", live=True)
+    elif cmd == "multi-loop":
+        # Parse ASSET:WINDOW:STRATEGY args, default if none given
+        _raw = sys.argv[2:]
+        if _raw:
+            _configs = []
+            for _arg in _raw:
+                _parts = _arg.split(":")
+                if len(_parts) == 3:
+                    _configs.append((_parts[0].upper(), _parts[1], _parts[2]))
+                else:
+                    print(f"Bad config '{_arg}' — expected ASSET:WINDOW:STRATEGY")
+                    sys.exit(1)
+        else:
+            # Default: BTC 5m mean-reversion + BTC 5m momentum + 15m markets
+            _configs = [
+                ("BTC", "5m",  "mean_reversion"),
+                ("BTC", "5m",  "momentum"),
+                ("BTC", "15m", "mean_reversion"),
+                ("ETH", "15m", "mean_reversion"),
+                ("SOL", "15m", "mean_reversion"),
+            ]
+        _setup_logging()
+        run_multi_loop(_configs)
     elif cmd == "paper-loop":
         _setup_logging()
         run_loop()

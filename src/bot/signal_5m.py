@@ -110,18 +110,23 @@ def should_exit(
     take_profit: float,
     seconds_remaining: float,
     soft_exit_secs: float = SOFT_EXIT_SECS,
+    hard_stop_max_remaining: float = float("inf"),
 ) -> tuple[bool, str]:
     """
     Returns (should_exit, reason).
     soft_exit_secs: scaled to window size by caller (SOFT_EXIT_SECS for 5m, ~300 for 15m).
+    hard_stop_max_remaining: hard floor only fires when seconds_remaining < this value.
+      Default inf = fires any time (5m behaviour).
+      Pass 240 for 15m = only fires in last 4 minutes when recovery is unlikely.
     """
     current = current_up_price if side == "UP" else (1.0 - current_up_price)
 
     if current >= take_profit:
         return True, "take_profit"
 
-    # Hard floor: token near-worthless, mean reversion failed
-    if current <= 0.08:
+    # Hard floor: token near-worthless, mean reversion failed.
+    # Time-gated so 15m positions aren't killed early when recovery is still possible.
+    if current <= 0.08 and seconds_remaining < hard_stop_max_remaining:
         return True, "hard_stop_floor"
 
     # Soft exit: stalled reversion with time running out

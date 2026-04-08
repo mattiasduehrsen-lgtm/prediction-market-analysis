@@ -252,7 +252,8 @@ def run_5m_loop(
     # Mean-reversion: enter in first 60s of window regardless of window size
     mr_min_seconds = window_seconds - 60
     # Soft exit scales with window: 5m→115s, 15m→300s
-    soft_exit_secs = 115 if window == "5m" else 300
+    soft_exit_secs        = 115 if window == "5m" else 300
+    hard_stop_max_remaining = float("inf") if window == "5m" else 240
 
     binance_symbol = BINANCE_SYMBOLS.get(asset.upper(), "BTCUSDT")
 
@@ -460,6 +461,7 @@ def run_5m_loop(
                     take_profit=pos.take_profit,
                     seconds_remaining=secs,
                     soft_exit_secs=soft_exit_secs,
+                    hard_stop_max_remaining=hard_stop_max_remaining,
                 )
 
                 # Look up UP token price ~60s after entry from price_history

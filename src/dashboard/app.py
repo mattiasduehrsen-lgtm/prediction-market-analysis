@@ -38,6 +38,22 @@ def _read_csv(path: Path) -> list[dict]:
     return rows
 
 
+def _reset_epoch() -> float:
+    p = OUT_5M / "equity_reset.json"
+    try:
+        return float(json.loads(p.read_text(encoding="utf-8")).get("reset_at", 0))
+    except Exception:
+        return 0.0
+
+
+def _trades_since_reset() -> list[dict]:
+    epoch = _reset_epoch()
+    rows = _read_csv(OUT_5M / "trades.csv")
+    if not epoch:
+        return rows
+    return [r for r in rows if float(r.get("closed_at") or 0) >= epoch]
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -67,8 +83,8 @@ def api_summary():
     totals["equity"]   = round(totals["total_pnl"], 2)
     totals["total_pnl"]= round(totals["total_pnl"], 2)
     totals["win_rate"] = round(wins / ct * 100, 1) if ct else 0.0
-    # Recompute avg_win / avg_loss from trades.csv for accuracy
-    rows = _read_csv(OUT_5M / "trades.csv")
+    # Recompute avg_win / avg_loss from trades since reset for accuracy
+    rows = _trades_since_reset()
     win_pnls  = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) > 0]
     loss_pnls = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) <= 0]
     totals["avg_win"]  = round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0
@@ -87,16 +103,16 @@ def api_positions():
 
 @app.route("/api/trades")
 def api_trades():
-    rows = _read_csv(OUT_5M / "trades.csv")
-    # Filter None keys — appear when appended rows have more columns than the
-    # existing header (e.g. after adding new TRADE_FIELDS to an existing CSV).
+    rows = _trades_since_reset()
     clean = [{k: v for k, v in row.items() if k is not None} for row in rows]
     return jsonify(clean[-100:])
 
 
 @app.route("/api/ev")
 def api_ev():
-    rows = _read_csv(OUT_5M / "trades.csv")
+    rows = _trades_since_reset()
+    # Also pull asset/strategy from raw rows for grouping
+    raw_rows = rows
     trades = []
     for row in rows:
         try:
@@ -109,12 +125,6 @@ def api_ev():
             })
         except Exception:
             pass
-
-    # Also pull asset/strategy from raw rows for grouping
-    raw_rows = _read_csv(OUT_5M / "trades.csv")
-    asset_map    = {r.get("position_id"): r.get("asset", "BTC")           for r in raw_rows}
-    strategy_map = {r.get("position_id"): r.get("strategy", "mean_reversion") for r in raw_rows}
-    window_map   = {r.get("position_id"): r.get("window", "5m")           for r in raw_rows}
 
     for t, r in zip(trades, raw_rows):
         t["asset"]    = r.get("asset", "BTC")

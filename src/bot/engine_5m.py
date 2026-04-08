@@ -210,7 +210,19 @@ def _append_trade(trade: ClosedTrade5m) -> None:
             writer.writerow(asdict(trade))
 
 
+RESET_FILE = OUT_DIR / "equity_reset.json"
+
+
+def _get_reset_epoch() -> float:
+    """Return the timestamp after which trades count toward equity. 0 = count all."""
+    try:
+        return float(json.loads(RESET_FILE.read_text(encoding="utf-8")).get("reset_at", 0))
+    except Exception:
+        return 0.0
+
+
 def _compute_summary() -> dict[str, Any]:
+    reset_epoch = _get_reset_epoch()
     if not TRADES_FILE.exists():
         return {
             "equity": STARTING_EQUITY, "closed_trades": 0,
@@ -218,14 +230,17 @@ def _compute_summary() -> dict[str, Any]:
             "total_pnl": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
         }
     trades: list[ClosedTrade5m] = []
-    str_fields = {"position_id","condition_id","slug","asset","side","exit_reason"}
+    str_fields = {"position_id","condition_id","slug","asset","side","exit_reason",
+                  "window","strategy","resolution_side","our_side_won"}
     with open(TRADES_FILE, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             try:
-                trades.append(ClosedTrade5m(**{
+                t = ClosedTrade5m(**{
                     k: (row[k] if k in str_fields else float(row[k] or 0))
                     for k in TRADE_FIELDS if k in row
-                }))
+                })
+                if t.closed_at >= reset_epoch:
+                    trades.append(t)
             except Exception:
                 pass
 

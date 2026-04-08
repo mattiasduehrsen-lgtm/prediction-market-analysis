@@ -221,7 +221,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     from src.bot.market_5m import fetch_market, fetch_live_prices, FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE
     from src.bot.signal_5m import should_enter, should_exit, take_profit_price
     from src.bot.claude_advisor import advise_entry
-    from src.bot import chainlink_feed
+    from src.bot.chainlink_feed import ChainlinkFeed
 
     POLL_INTERVAL = 2   # seconds — match Chainlink poll rate
 
@@ -247,11 +247,12 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
     print("[MAIN] Tick logger active — writing price_ticks.csv every 5s")
 
     # Start Chainlink feed — actual window start prices, not stale API data
-    chainlink_feed.start()
+    feed = ChainlinkFeed(asset)
+    feed.start()
     print("[MAIN] Waiting for Chainlink price feed...")
-    cl = chainlink_feed.wait_for_price(timeout=15)
+    cl = feed.wait_for_price(timeout=15)
     if cl:
-        print(f"[MAIN] Chainlink BTC: ${cl.price:,.2f}")
+        print(f"[MAIN] Chainlink {asset}: ${cl.price:,.2f}")
     else:
         print("[MAIN] Chainlink unavailable — continuing without window-start tracking")
 
@@ -291,7 +292,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             if market is None or market.is_expired():
                 # ── Resolution: fill prev window's outcome before resetting ──────
                 if market is not None and not live and prev_condition_id and prev_cl_start_price > 0:
-                    cl_now = chainlink_feed.get_state()
+                    cl_now = feed.get_state()
                     if cl_now.price > 0:
                         resolution_side = "UP" if cl_now.price >= prev_cl_start_price else "DOWN"
                         engine.update_resolution(prev_condition_id, resolution_side)
@@ -312,7 +313,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 # Save this window's starting state for resolution at next transition
                 if not live:
                     prev_condition_id = market.condition_id
-                    cl_start = chainlink_feed.get_state()
+                    cl_start = feed.get_state()
                     prev_cl_start_price = cl_start.price  # 0.0 if feed unavailable — handled above
 
                 # Reset skip tracking and advisor for new window
@@ -323,7 +324,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 window_advisor_consulted = True   # disabled: advisor blocks 96% of in-range windows (wrong mental model for mean-reversion)
                 window_advisor_reason = ""
 
-                cl = chainlink_feed.get_state()
+                cl = feed.get_state()
                 secs = market.seconds_remaining
                 cl_str = (
                     f"CL=${cl.price:,.2f} start=${cl.window_start_price:,.2f} Δ{cl.pct_change:+.3f}%"
@@ -335,7 +336,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
             # Live prices from CLOB midpoint — updates every 2s, reflects real order book.
             # Gamma's outcomePrices does NOT update mid-window and will show stale 0.50/0.50.
             market.up_price, market.down_price, clob_ok = fetch_live_prices(market)
-            cl = chainlink_feed.get_state()
+            cl = feed.get_state()
             secs = market.seconds_remaining
 
             # Record price history for this window

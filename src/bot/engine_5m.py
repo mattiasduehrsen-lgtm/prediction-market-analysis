@@ -33,7 +33,7 @@ TRADES_FILE    = OUT_DIR / "trades.csv"
 SUMMARY_FILE   = OUT_DIR / "summary.json"
 SKIPS_FILE     = OUT_DIR / "skipped_windows.csv"
 
-STARTING_EQUITY = 1000.0
+STARTING_EQUITY = 0.0   # reset: track net P&L from here, not from original $1000
 POSITION_SIZE   = 15.0    # $ per trade (paper) — cut from $20; unsustainable EV at current WR
 MAKER_FEE       = 0.00    # 0% fee for limit (maker) orders — Polymarket charges only takers
 
@@ -279,6 +279,7 @@ class Engine5m:
         # overwrite each other. Trades/summary/skips remain shared.
         suffix = f"_{tag}" if tag else ""
         self._positions_file = OUT_DIR / f"positions{suffix}.csv"
+        self._summary_file   = OUT_DIR / f"summary{suffix}.json"
         _migrate_csv(self._positions_file, POSITION_FIELDS)
         self.positions: dict[str, Position5m] = _load_positions(self._positions_file)
         # Tracks every condition_id traded this session (open OR closed) so we
@@ -452,7 +453,7 @@ class Engine5m:
     def save_summary(self) -> None:
         s = self.summary()
         with _FILE_LOCK:
-            SUMMARY_FILE.write_text(json.dumps(s, indent=2), encoding="utf-8")
+            self._summary_file.write_text(json.dumps(s, indent=2), encoding="utf-8")
 
     def log_skip(
         self,

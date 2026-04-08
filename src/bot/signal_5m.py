@@ -44,10 +44,12 @@ def should_enter(
     if price < ENTRY_MIN or price > ENTRY_MAX:
         return False, "", 0.0
 
-    # BTC magnitude filter: skip if Chainlink shows a real trend already established
-    if cl_pct_change != 0.0 and abs(cl_pct_change) > BTC_MAGNITUDE_MAX:
-        print(f"[SIGNAL] Skip — {market.asset} move too large: {cl_pct_change:+.3f}% (max ±{BTC_MAGNITUDE_MAX}%)")
-        return False, "", 0.0
+    # Magnitude filter: only applies to BTC 5m — threshold was calibrated for BTC.
+    # ETH/SOL/XRP and 15m markets move differently; skip the filter for them.
+    if market.asset == "BTC" and market.window == "5m":
+        if cl_pct_change != 0.0 and abs(cl_pct_change) > BTC_MAGNITUDE_MAX:
+            print(f"[SIGNAL] Skip — BTC move too large: {cl_pct_change:+.3f}% (max ±{BTC_MAGNITUDE_MAX}%)")
+            return False, "", 0.0
 
     # BTC momentum filter: skip if asset is moving hard against our side
     if side == "UP" and btc_rate_per_min < -BTC_SKIP_RATE:

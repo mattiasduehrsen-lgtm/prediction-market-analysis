@@ -45,8 +45,35 @@ def index():
 
 @app.route("/api/summary")
 def api_summary():
-    data = _read_json(OUT_5M / "summary.json")
-    return jsonify(data)
+    # Aggregate per-thread summary files
+    totals = {"equity": 0.0, "closed_trades": 0, "wins": 0, "losses": 0,
+              "total_pnl": 0.0, "open_positions": 0, "win_pnl": 0.0, "loss_pnl": 0.0}
+    found = False
+    for f in OUT_5M.glob("summary*.json"):
+        d = _read_json(f)
+        if not d:
+            continue
+        found = True
+        totals["closed_trades"] += int(d.get("closed_trades", 0))
+        totals["wins"]          += int(d.get("wins", 0))
+        totals["losses"]        += int(d.get("losses", 0))
+        totals["total_pnl"]     += float(d.get("total_pnl", 0))
+        totals["open_positions"]+= int(d.get("open_positions", 0))
+        # avg_win/avg_loss require raw sums — recompute from trades below
+    if not found:
+        return jsonify({})
+    ct = totals["closed_trades"]
+    wins, losses = totals["wins"], totals["losses"]
+    totals["equity"]   = round(totals["total_pnl"], 2)
+    totals["total_pnl"]= round(totals["total_pnl"], 2)
+    totals["win_rate"] = round(wins / ct * 100, 1) if ct else 0.0
+    # Recompute avg_win / avg_loss from trades.csv for accuracy
+    rows = _read_csv(OUT_5M / "trades.csv")
+    win_pnls  = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) > 0]
+    loss_pnls = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) <= 0]
+    totals["avg_win"]  = round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0
+    totals["avg_loss"] = round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0
+    return jsonify(totals)
 
 
 @app.route("/api/positions")

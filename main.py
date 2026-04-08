@@ -320,7 +320,7 @@ def run_5m_loop(asset: str = "BTC", live: bool = False) -> None:
                 best_opp_side = ""
                 entry_window_logged = False
                 window_advisor_enter = True
-                window_advisor_consulted = False
+                window_advisor_consulted = True   # disabled: advisor blocks 96% of in-range windows (wrong mental model for mean-reversion)
                 window_advisor_reason = ""
 
                 cl = chainlink_feed.get_state()

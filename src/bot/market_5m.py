@@ -29,7 +29,7 @@ SLUG_PREFIXES: dict[str, str] = {
 }
 
 # Entry/exit thresholds
-ENTRY_MIN        = 0.33   # raised 0.30→0.33: 0.30-0.33 bucket underperforms by 9.6 WR pts per analysis
+ENTRY_MIN        = 0.28   # lowered 0.33→0.28: 59% of windows had price below 0.33 (all missed); extreme moves revert strongly
 ENTRY_MAX        = 0.39   # raised from 0.40: 0.39-0.40 entries had lowest EV; proj +$380 vs +$350 per 100 windows at 0.39
 TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00, break-even WR drops from 64% to 33%
 MIN_SECONDS      = 240    # enter in first 60 seconds of window (300 - 60 = 240s must remain) — extended from 45s for more volume

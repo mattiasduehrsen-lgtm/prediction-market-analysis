@@ -33,12 +33,13 @@ def _get_client():
 def advise_entry(
     side: str,                  # "UP" or "DOWN" — the cheap side we want to buy
     entry_price: float,         # price of the cheap side (0.30–0.39)
-    cl_pct_change: float,       # Chainlink % move this window from start (+= BTC up)
-    btc_rate_per_min: float,    # BTC $/min rate right now
+    cl_pct_change: float,       # Chainlink % move this window from start (+= asset up)
+    btc_rate_per_min: float,    # asset $/min rate right now
     btc_momentum_decel: float,  # rate_10s / rate_30s: <1=slowing, <0=reversing, >1=accelerating
     cross_window_pct: float,    # Chainlink % move from prev window start to this window start
     cheap_side_velocity: float, # ¢/s of cheap side price in last 20s (<0 = still falling)
     secs_remaining: float,
+    asset: str = "BTC",         # asset being traded (BTC, ETH, SOL, XRP)
 ) -> tuple[bool, str]:
     """
     Returns (should_enter, reason_string).
@@ -50,6 +51,7 @@ def advise_entry(
 
     # Describe momentum state in human terms for the prompt
     btc_dir      = "UP" if cl_pct_change >= 0 else "DOWN"
+    asset        = asset.upper()
     decel_desc   = (
         "already reversing direction"  if btc_momentum_decel < 0 else
         "clearly decelerating"         if btc_momentum_decel < 0.5 else
@@ -62,21 +64,21 @@ def advise_entry(
     still_fall   = cheap_side_velocity < -0.0003
 
     prompt = f"""\
-You are advising a Polymarket 5-minute BTC Up/Down market bot on whether to enter a trade.
+You are advising a Polymarket 5-minute {asset} Up/Down market bot on whether to enter a trade.
 
 PROPOSED TRADE: Buy {side} side at {entry_price:.3f}
-This bets that BTC will REVERSE from its current move by window end.
+This bets that {asset} will REVERSE from its current move by window end.
 Settlement: winning side pays $1.00, losing side pays $0.00.
 Time remaining in window: {secs_remaining:.0f}s
 
-BTC CONTEXT RIGHT NOW:
-- This window: BTC moved {btc_dir} by {abs(cl_pct_change):.3f}% from window start
-- Current BTC rate: {btc_rate_per_min:+.1f} $/min
+{asset} CONTEXT RIGHT NOW:
+- This window: {asset} moved {btc_dir} by {abs(cl_pct_change):.3f}% from window start
+- Current {asset} rate: {btc_rate_per_min:+.1f} $/min
 - Momentum trend: {decel_desc} (10s/30s rate ratio: {btc_momentum_decel:.2f})
-- Previous window: BTC moved in {cross_desc}
+- Previous window: {asset} moved in {cross_desc}
 - Cheap side price still falling: {"YES — momentum not finished" if still_fall else "NO — stabilizing"}
 
-DECISION: Should the bot enter this trade (bet BTC reverses) or skip?
+DECISION: Should the bot enter this trade (bet {asset} reverses) or skip?
 
 Reply with exactly one word on the first line: ENTER or SKIP
 Second line: one short sentence explaining why (max 15 words)."""

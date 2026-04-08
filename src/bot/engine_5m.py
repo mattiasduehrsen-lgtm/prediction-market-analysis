@@ -16,12 +16,16 @@ from __future__ import annotations
 
 import csv
 import json
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Protects all CSV/JSON file writes — multiple asset threads share the same output files
+_FILE_LOCK = threading.Lock()
 
 OUT_DIR        = Path("output/5m_trading")
 POSITIONS_FILE = OUT_DIR / "positions.csv"
@@ -180,21 +184,23 @@ def _load_positions() -> dict[str, Position5m]:
 
 def _save_positions(positions: dict[str, Position5m]) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(POSITIONS_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=POSITION_FIELDS)
-        writer.writeheader()
-        for p in positions.values():
-            writer.writerow(asdict(p))
+    with _FILE_LOCK:
+        with open(POSITIONS_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=POSITION_FIELDS)
+            writer.writeheader()
+            for p in positions.values():
+                writer.writerow(asdict(p))
 
 
 def _append_trade(trade: ClosedTrade5m) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    write_header = not TRADES_FILE.exists()
-    with open(TRADES_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(asdict(trade))
+    with _FILE_LOCK:
+        write_header = not TRADES_FILE.exists()
+        with open(TRADES_FILE, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(asdict(trade))
 
 
 def _compute_summary() -> dict[str, Any]:
@@ -236,17 +242,18 @@ def _migrate_csv(filepath: Path, fields: list) -> None:
     """Add any missing columns to a CSV header without losing existing data."""
     if not filepath.exists():
         return
-    with open(filepath, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        existing = set(reader.fieldnames or [])
-        if set(fields) <= existing:
-            return  # already up to date
-        rows = list(reader)
-    with open(filepath, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({k: row.get(k, "") for k in fields})
+    with _FILE_LOCK:
+        with open(filepath, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            existing = set(reader.fieldnames or [])
+            if set(fields) <= existing:
+                return  # already up to date
+            rows = list(reader)
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: row.get(k, "") for k in fields})
     print(f"[ENGINE5M] Migrated {filepath.name} — added {set(fields) - existing}")
 
 
@@ -405,19 +412,21 @@ class Engine5m:
         updated = 0
         str_fields = {"position_id","condition_id","slug","asset","side","exit_reason",
                       "resolution_side","our_side_won"}
-        with open(TRADES_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("condition_id") == condition_id and not row.get("resolution_side"):
-                    row["resolution_side"] = resolution_side
-                    row["our_side_won"]    = str(row["side"] == resolution_side)
-                    updated += 1
-                rows.append(row)
+        with _FILE_LOCK:
+            with open(TRADES_FILE, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("condition_id") == condition_id and not row.get("resolution_side"):
+                        row["resolution_side"] = resolution_side
+                        row["our_side_won"]    = str(row["side"] == resolution_side)
+                        updated += 1
+                    rows.append(row)
+            if updated:
+                with open(TRADES_FILE, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+                    writer.writeheader()
+                    writer.writerows(rows)
         if updated:
-            with open(TRADES_FILE, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
-                writer.writeheader()
-                writer.writerows(rows)
             print(f"[ENGINE5M] Resolution: {resolution_side} won | {updated} trade(s) updated")
 
     def summary(self) -> dict[str, Any]:
@@ -427,7 +436,8 @@ class Engine5m:
 
     def save_summary(self) -> None:
         s = self.summary()
-        SUMMARY_FILE.write_text(json.dumps(s, indent=2), encoding="utf-8")
+        with _FILE_LOCK:
+            SUMMARY_FILE.write_text(json.dumps(s, indent=2), encoding="utf-8")
 
     def log_skip(
         self,
@@ -445,23 +455,24 @@ class Engine5m:
         advisor_reason: str = "",
     ) -> None:
         """Log a window where the entry window closed without a trade."""
-        write_header = not SKIPS_FILE.exists()
-        with open(SKIPS_FILE, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=SKIP_FIELDS)
-            if write_header:
-                writer.writeheader()
-            writer.writerow({
-                "condition_id":      condition_id,
-                "slug":              slug,
-                "asset":             asset,
-                "window_end_ts":     window_end_ts,
-                "skip_reason":       skip_reason,
-                "best_price_seen":   round(best_price_seen, 4),
-                "best_side":         best_side,
-                "entry_min":         entry_min,
-                "entry_max":         entry_max,
-                "btc_at_window_start": btc_at_window_start,
-                "liquidity":         liquidity,
-                "logged_at":         time.time(),
-                "advisor_reason":    advisor_reason,
-            })
+        with _FILE_LOCK:
+            write_header = not SKIPS_FILE.exists()
+            with open(SKIPS_FILE, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=SKIP_FIELDS)
+                if write_header:
+                    writer.writeheader()
+                writer.writerow({
+                    "condition_id":      condition_id,
+                    "slug":              slug,
+                    "asset":             asset,
+                    "window_end_ts":     window_end_ts,
+                    "skip_reason":       skip_reason,
+                    "best_price_seen":   round(best_price_seen, 4),
+                    "best_side":         best_side,
+                    "entry_min":         entry_min,
+                    "entry_max":         entry_max,
+                    "btc_at_window_start": btc_at_window_start,
+                    "liquidity":         liquidity,
+                    "logged_at":         time.time(),
+                    "advisor_reason":    advisor_reason,
+                })

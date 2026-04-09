@@ -177,6 +177,34 @@ class ClobFeed:
             except Exception:
                 pass
 
+    def get_book_state(self) -> tuple[float, float, float, float, float]:
+        """
+        Return (best_bid, best_ask, spread, bid_depth_total, ask_depth_total)
+        for the UP token's order book.
+
+        best_bid / best_ask: top-of-book prices for the UP token.
+        spread: best_ask - best_bid (0 = not ready).
+        bid/ask_depth: total shares outstanding on each side.
+
+        Used by the signal to filter wide-spread entries and to compute the
+        realistic taker fill price (entry at best_ask, not midpoint).
+        """
+        with self._lock:
+            up_id = self._token_id_up
+            st    = self._states.get(up_id)
+
+        if not (up_id and st and st.last_updated > 0 and st.best_bid > 0):
+            return 0.0, 1.0, 0.0, 0.0, 0.0
+
+        with self._lock:
+            bb         = st.best_bid
+            ba         = st.best_ask
+            bid_depth  = round(sum(st.bids.values()), 2)
+            ask_depth  = round(sum(st.asks.values()), 2)
+
+        spread = round(ba - bb, 6)
+        return bb, ba, spread, bid_depth, ask_depth
+
     def get_prices(self) -> tuple[float, float, bool]:
         """
         Return (up_price, down_price, is_live).

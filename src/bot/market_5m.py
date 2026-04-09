@@ -52,6 +52,7 @@ SOFT_EXIT_SECS   = 115    # soft exit: bail on stalled reversions with ~2min lef
 SOFT_EXIT_PRICE  = 0.25   # exit at 115s if price ≤ 0.25
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry
 BTC_MAGNITUDE_MAX = 0.05  # max Chainlink % move from window start to allow entry
+MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiquid/stale book)
 
 # ── Momentum strategy constants ───────────────────────────────────────────────
 MOMENTUM_ENTRY_WINDOW = 30   # seconds — enter within first 30s of window only

@@ -406,6 +406,9 @@ def run_5m_loop(
             if clob_ok and up_price_at_window_start == 0.5 and market.up_price != 0.5:
                 up_price_at_window_start = market.up_price
 
+            # Order book state — best bid/ask, spread, depth (zeros if WS not ready)
+            book_bid, book_ask, book_spread, book_bid_depth, book_ask_depth = clob_feed.get_book_state()
+
             src = "ws" if ws_ok else ("rest" if clob_ok else "cached")
             tick_logger.tick(
                 condition_id=market.condition_id,
@@ -622,6 +625,7 @@ def run_5m_loop(
                         btc_rate_per_min=btc_rate_per_min,
                         cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
                         min_seconds=mr_min_seconds,
+                        spread=book_spread,
                     )
                     if do_enter:
                         now_ts = time.time()
@@ -639,10 +643,20 @@ def run_5m_loop(
                         if cheap_20s_ago > 0:
                             cheap_side_velocity = round((entry_price - cheap_20s_ago) / 20.0, 6)
 
+                        # Realistic fill price: taker pays best_ask, not midpoint.
+                        # Buying DOWN = paying that token's ask ≈ 1 - best_bid_UP.
+                        # Only applies when the WS book is live; falls back to midpoint.
+                        if ws_ok and book_ask > 0 and book_bid > 0:
+                            if side == "UP":
+                                entry_price = book_ask
+                            else:
+                                entry_price = round(1.0 - book_bid, 6)
+
                         decel_str = f"{btc_momentum_decel:+.2f}" if btc_momentum_decel else "n/a"
                         vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
                         xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
-                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str}")
+                        spd_str   = f"{book_spread:.4f}" if book_spread > 0 else "n/a"
+                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str}")
 
                         btc_at_entry = btc_history[-1][1] if btc_history else 0.0
 
@@ -684,6 +698,9 @@ def run_5m_loop(
                                 btc_momentum_decel=btc_momentum_decel,
                                 cheap_side_velocity=cheap_side_velocity,
                                 cross_window_pct=cross_window_pct,
+                                spread_at_entry=book_spread,
+                                bid_depth_at_entry=book_bid_depth,
+                                ask_depth_at_entry=book_ask_depth,
                             )
 
             # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────

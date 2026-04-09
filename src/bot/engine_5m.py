@@ -49,6 +49,10 @@ POSITION_FIELDS = [
     "btc_momentum_decel",    # ratio of BTC rate last 10s / last 30s: <1=decelerating, <0=reversing
     "cheap_side_velocity",   # ¢/s of our side's price change in last 20s at entry: <0=still falling
     "cross_window_pct",      # Chainlink % move from prev window start to this window start
+    # Order book microstructure at entry (from CLOB WebSocket)
+    "spread_at_entry",       # best_ask - best_bid for UP token at entry (0 = WS not ready)
+    "bid_depth_at_entry",    # total shares on bid side of UP token order book
+    "ask_depth_at_entry",    # total shares on ask side of UP token order book
 ]
 
 TRADE_FIELDS = POSITION_FIELDS + [
@@ -104,6 +108,10 @@ class Position5m:
     btc_momentum_decel: float = 0.0        # BTC rate_10s / rate_30s: <1=decelerating, <0=reversing
     cheap_side_velocity: float = 0.0       # our side ¢/s over last 20s: <0=still falling
     cross_window_pct: float = 0.0          # Chainlink % move across prev→current window start
+    # Order book microstructure at entry (from CLOB WebSocket)
+    spread_at_entry: float = 0.0           # best_ask - best_bid for UP token (0 = WS not ready)
+    bid_depth_at_entry: float = 0.0        # total shares on bid side of UP token order book
+    ask_depth_at_entry: float = 0.0        # total shares on ask side of UP token order book
 
 
 @dataclass
@@ -136,6 +144,10 @@ class ClosedTrade5m:
     btc_momentum_decel: float = 0.0
     cheap_side_velocity: float = 0.0
     cross_window_pct: float = 0.0
+    # Order book microstructure at entry
+    spread_at_entry: float = 0.0
+    bid_depth_at_entry: float = 0.0
+    ask_depth_at_entry: float = 0.0
     # Exit context for ML analysis
     price_60s_after_entry: float = 0.0   # UP token price 60s after entry — for hold-vs-exit analysis
     # Exit fields
@@ -328,6 +340,9 @@ class Engine5m:
         btc_momentum_decel: float = 0.0,
         cheap_side_velocity: float = 0.0,
         cross_window_pct: float = 0.0,
+        spread_at_entry: float = 0.0,
+        bid_depth_at_entry: float = 0.0,
+        ask_depth_at_entry: float = 0.0,
     ) -> Position5m | None:
         if self.already_in(condition_id):
             return None
@@ -377,6 +392,9 @@ class Engine5m:
             btc_momentum_decel=round(btc_momentum_decel, 4),
             cheap_side_velocity=round(cheap_side_velocity, 6),
             cross_window_pct=round(cross_window_pct, 4),
+            spread_at_entry=round(spread_at_entry, 6),
+            bid_depth_at_entry=round(bid_depth_at_entry, 2),
+            ask_depth_at_entry=round(ask_depth_at_entry, 2),
         )
         self.positions[pos.position_id] = pos
         _save_positions(self.positions, self._positions_file)

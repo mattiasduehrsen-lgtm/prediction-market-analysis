@@ -11,7 +11,7 @@ from src.bot.market_5m import (
     Market5m,
     ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
     MIN_SECONDS, FORCE_EXIT, SOFT_EXIT_SECS, SOFT_EXIT_PRICE,
-    BTC_SKIP_RATE, BTC_MAGNITUDE_MAX,
+    BTC_SKIP_RATE, BTC_MAGNITUDE_MAX, MAX_SPREAD,
     MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE,
 )
 
@@ -21,11 +21,13 @@ def should_enter(
     btc_rate_per_min: float = 0.0,
     cl_pct_change: float = 0.0,
     min_seconds: float = MIN_SECONDS,
+    spread: float = 0.0,
 ) -> tuple[bool, str, float]:
     """
     Mean-reversion entry: buy the cheap side (ENTRY_MIN–ENTRY_MAX) in the entry window.
     Returns (should_enter, side, entry_price).
     min_seconds: seconds that must remain to allow entry (computed from window size in caller).
+    spread: best_ask - best_bid for the UP token (0 = unknown). Wide spread = stale/illiquid book.
     """
     secs = market.seconds_remaining
 
@@ -33,6 +35,12 @@ def should_enter(
         return False, "", 0.0
 
     if market.liquidity < 1000:
+        return False, "", 0.0
+
+    # Spread filter: skip when the order book is too wide (illiquid or stale prices).
+    # spread=0 means the WebSocket feed isn't ready yet — don't block on that.
+    if spread > 0 and spread > MAX_SPREAD:
+        print(f"[SIGNAL] Skip — spread {spread:.4f} > {MAX_SPREAD} (illiquid)")
         return False, "", 0.0
 
     # Cheaper side is our mean-reversion candidate

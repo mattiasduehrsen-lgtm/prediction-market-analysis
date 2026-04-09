@@ -95,12 +95,12 @@ def should_enter_momentum(
     if cross_window_pct == 0.0:
         return False, "", 0.0
 
-    if cross_window_pct > 0:
-        side  = "UP"
-        price = market.up_price
-    else:
-        side  = "DOWN"
-        price = market.down_price
+    # UP-only: UP momentum 45% WR vs DOWN 29% WR (28 trades) — DOWN is marginal at best
+    if cross_window_pct <= 0:
+        return False, "", 0.0
+
+    side  = "UP"
+    price = market.up_price
 
     return True, side, price
 

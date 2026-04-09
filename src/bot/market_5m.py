@@ -44,7 +44,7 @@ SLUG_PREFIXES: dict[str, dict[str, str]] = {
 
 # ── Mean-reversion strategy constants (5m) ────────────────────────────────────
 ENTRY_MIN        = 0.28   # lowered 0.33→0.28: 59% of windows had price below 0.33 (all missed)
-ENTRY_MAX        = 0.35   # lowered 0.39→0.35: 0.36-0.39 entries had near-zero EV; wins cluster at ≤0.35
+ENTRY_MAX        = 0.335  # lowered 0.35→0.335: 0.34-0.35 entries had 17% WR; real edge is ≤0.335
 TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00
 MIN_SECONDS      = 240    # enter in first 60s of 5m window (300 - 60 = 240s remaining)
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos

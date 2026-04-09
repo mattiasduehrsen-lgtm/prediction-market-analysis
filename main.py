@@ -274,8 +274,12 @@ def run_5m_loop(
         cb = None
 
     from src.bot.tick_logger import TickLogger
+    from src.bot.clob_feed import ClobFeed
     tick_logger = TickLogger()
     print("[MAIN] Tick logger active — writing price_ticks.csv every 5s")
+    clob_feed = ClobFeed()
+    clob_feed.start()
+    print("[MAIN] CLOB WebSocket feed active — event-driven prices → clob_events.csv")
 
     # Start Chainlink feed — actual window start prices, not stale API data
     feed = ChainlinkFeed(asset)
@@ -335,6 +339,15 @@ def run_5m_loop(
                     continue
                 market = new_market
 
+                # Subscribe CLOB WebSocket to the new window's token IDs
+                clob_feed.subscribe(
+                    token_id_up=market.token_id_up,
+                    token_id_down=market.token_id_down,
+                    condition_id=market.condition_id,
+                    slug=market.slug,
+                    window_end_ts=market.window_end_ts,
+                )
+
                 # Reset per-window context
                 price_history.clear()
                 window_stopped.clear()
@@ -364,9 +377,14 @@ def run_5m_loop(
                 btc_str = f" | BTC=${btc_at_window_start:,.2f}" if btc_at_window_start else ""
                 print(f"\n[NEW WINDOW] {market.slug} | {secs:.0f}s | liq=${market.liquidity:,.0f} | {cl_str}{btc_str}")
 
-            # Live prices from CLOB midpoint — updates every 2s, reflects real order book.
-            # Gamma's outcomePrices does NOT update mid-window and will show stale 0.50/0.50.
-            market.up_price, market.down_price, clob_ok = fetch_live_prices(market)
+            # Live prices — WebSocket feed first (event-driven, sub-second);
+            # fall back to REST midpoint poll every 2s if feed is not yet ready.
+            up_ws, down_ws, ws_ok = clob_feed.get_prices()
+            if ws_ok:
+                market.up_price, market.down_price = up_ws, down_ws
+                clob_ok = True
+            else:
+                market.up_price, market.down_price, clob_ok = fetch_live_prices(market)
             cl = feed.get_state()
             secs = market.seconds_remaining
 
@@ -382,7 +400,7 @@ def run_5m_loop(
             if clob_ok and up_price_at_window_start == 0.5 and market.up_price != 0.5:
                 up_price_at_window_start = market.up_price
 
-            src = "clob" if clob_ok else "CACHED"
+            src = "ws" if ws_ok else ("rest" if clob_ok else "cached")
             tick_logger.tick(
                 condition_id=market.condition_id,
                 slug=market.slug,

@@ -9,8 +9,8 @@ Three event types are processed:
   price_change     — individual level changed   → updates best bid/ask/midpoint
   last_trade_price — a trade was executed       → logged as a fill event
 
-Every event (price movement or trade fill) is appended to:
-  output/5m_trading/clob_events.csv
+Every event is appended to:
+  output/market_data/clob_events/YYYY-MM-DD.parquet  (Snappy-compressed)
 
 Usage:
     feed = ClobFeed()
@@ -25,22 +25,17 @@ Usage:
 """
 from __future__ import annotations
 
-import csv
 import json
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import websocket  # websocket-client
 
+from src.bot.market_store import CLOB_EVENTS
+
 CLOB_WS         = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 RECONNECT_DELAY = 5       # seconds between reconnect attempts
-EVENTS_FILE     = Path("output/5m_trading/clob_events.csv")
-EVENT_FIELDS    = [
-    "ts", "event_type", "token_id", "condition_id", "slug",
-    "price", "side", "size", "best_bid", "best_ask", "midpoint", "seconds_left",
-]
 
 
 # ── Per-token order book ───────────────────────────────────────────────────────
@@ -129,10 +124,6 @@ class ClobFeed:
         self._running:   bool = False
         self._connected: bool = False
 
-        # CSV event logger
-        EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        self._write_header = not EVENTS_FILE.exists()
-        self._csv_lock = threading.Lock()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -322,7 +313,7 @@ class ClobFeed:
         midpoint:    float,
         seconds_left: float,
     ) -> None:
-        row = {
+        CLOB_EVENTS.append({
             "ts":           round(time.time(), 4),
             "event_type":   event_type,
             "token_id":     token_id,
@@ -335,14 +326,7 @@ class ClobFeed:
             "best_ask":     round(best_ask, 6),
             "midpoint":     round(midpoint, 6),
             "seconds_left": round(seconds_left, 1),
-        }
-        with self._csv_lock:
-            with open(EVENTS_FILE, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=EVENT_FIELDS)
-                if self._write_header:
-                    writer.writeheader()
-                    self._write_header = False
-                writer.writerow(row)
+        })
 
     def _run_forever(self) -> None:
         while self._running:

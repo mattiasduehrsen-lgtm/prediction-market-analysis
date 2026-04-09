@@ -275,6 +275,7 @@ def run_5m_loop(
 
     from src.bot.tick_logger import TickLogger
     from src.bot.clob_feed import ClobFeed
+    from src.bot.market_store import BINANCE_SPOT, flush_all
     tick_logger = TickLogger()
     print("[MAIN] Tick logger active — writing price_ticks.csv every 5s")
     clob_feed = ClobFeed()
@@ -395,6 +396,11 @@ def run_5m_loop(
             btc_now = _fetch_price(binance_symbol)
             if btc_now > 0:
                 btc_history.append((time.time(), btc_now))
+                BINANCE_SPOT.append({
+                    "ts":    round(time.time(), 3),
+                    "asset": asset,
+                    "price": btc_now,
+                })
 
             # Update window-start price with first good CLOB reading
             if clob_ok and up_price_at_window_start == 0.5 and market.up_price != 0.5:
@@ -691,6 +697,7 @@ def run_5m_loop(
                 )
 
         except KeyboardInterrupt:
+            flush_all()
             raise
         except Exception as exc:
             print(f"[{now_str}] ERROR: {exc}")

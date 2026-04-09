@@ -19,6 +19,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from src.bot.market_store import CHAINLINK
+
 CHAINLINK_CONTRACTS: dict[str, str] = {
     "BTC": "0xc907E116054Ad103354f2D350FD2514433D57F6F",
     "ETH": "0xF9680D99D6C9589e2a93a78A04A279e509205945",
@@ -139,6 +141,17 @@ class ChainlinkFeed:
                     self._state.price = price
                     self._state.updated_at = now
                     self._state.pct_change = round(pct, 4)
+
+                CHAINLINK.append({
+                    "ts":                    round(now, 3),
+                    "asset":                 self.asset,
+                    "price":                 price,
+                    "pct_change":            round(pct, 4),
+                    "window_start_price":    self._state.window_start_price,
+                    "prev_window_start_price": self._state.prev_window_start_price,
+                    "window_start_ts":       self._state.window_start_ts,
+                    "is_new_window":         new_window,
+                })
 
             time.sleep(POLL_INTERVAL)
 

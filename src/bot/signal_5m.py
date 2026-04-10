@@ -12,7 +12,7 @@ from src.bot.market_5m import (
     ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
     MIN_SECONDS, FORCE_EXIT, SOFT_EXIT_SECS, SOFT_EXIT_PRICE,
     BTC_SKIP_RATE, BTC_MAGNITUDE_MAX, MAX_SPREAD,
-    MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE,
+    MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE, MOMENTUM_ENABLED,
 )
 
 
@@ -75,6 +75,8 @@ def should_enter_momentum(
     cross_window_pct: float,
     min_prev_move: float = MOMENTUM_MIN_PREV_MOVE,
 ) -> tuple[bool, str, float]:
+    if not MOMENTUM_ENABLED:
+        return False, "", 0.0
     """
     Momentum entry: enter at window open, bet same direction as previous window.
     Returns (should_enter, side, entry_price).

@@ -253,7 +253,7 @@ def run_5m_loop(
     mr_min_seconds = window_seconds - 60
     # Soft exit scales with window: 5m→115s, 15m→300s
     soft_exit_secs        = 115 if window == "5m" else 300
-    hard_stop_max_remaining = float("inf") if window == "5m" else 240
+    hard_stop_max_remaining = float("inf")  # fire hard_stop any time price ≤ 0.08, regardless of window size
 
     binance_symbol = BINANCE_SYMBOLS.get(asset.upper(), "BTCUSDT")
 

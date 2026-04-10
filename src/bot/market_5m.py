@@ -57,6 +57,7 @@ MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiqu
 # ── Momentum strategy constants ───────────────────────────────────────────────
 MOMENTUM_ENTRY_WINDOW = 30   # seconds — enter within first 30s of window only
 MOMENTUM_MIN_PREV_MOVE = 0.15  # min |cross_window_pct| to enter (PolyBackTest threshold)
+MOMENTUM_ENABLED = False   # disabled 2026-04-09: 80 trades at 30% WR — not predictive enough
 
 
 @dataclass

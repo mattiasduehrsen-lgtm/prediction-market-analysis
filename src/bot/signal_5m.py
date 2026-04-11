@@ -162,5 +162,18 @@ def should_exit(
     return False, ""
 
 
-def take_profit_price(entry_price: float) -> float:
-    return TAKE_PROFIT
+def take_profit_price(entry_price: float) -> float | None:
+    """
+    Returns the take-profit target for this entry price, or None to skip the trade.
+
+    Replaces fixed TAKE_PROFIT=0.92 with an entry-price-dependent formula derived
+    from Cowork analysis of 685 paper trades (2026-04-11):
+      entry ≤ 0.32 → TP 0.63   (+97–127% gain needed)
+      entry ≤ 0.36 → TP 0.62   (+72–82%)
+      entry ≤ 0.40 → TP 0.60   (+50–67%)
+      entry ≤ 0.42 → TP 0.59   (+40–48%)
+      entry  > 0.42 → None (skip — negative EV above 0.42)
+    Simulated full-dataset PnL: +$2,108 vs −$1,073 actual (65% vs 39% WR).
+    """
+    from src.bot.tp_optimizer import compute_take_profit
+    return compute_take_profit(entry_price)

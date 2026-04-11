@@ -45,7 +45,7 @@ SLUG_PREFIXES: dict[str, dict[str, str]] = {
 # ── Mean-reversion strategy constants (5m) ────────────────────────────────────
 ENTRY_MIN        = 0.32   # raised 0.28→0.32: avg hard_stop_floor entry was ~0.31 midpoint (0.374 taker); cuts worst collapses
 ENTRY_MAX        = 0.335  # lowered 0.35→0.335: 0.34-0.35 entries had 17% WR; real edge is ≤0.335
-TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00
+TAKE_PROFIT      = 0.92   # legacy — replaced by tp_optimizer.compute_take_profit() (entry-price dependent)
 MIN_SECONDS      = 240    # enter in first 60s of 5m window (300 - 60 = 240s remaining)
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos
 SOFT_EXIT_SECS   = 115    # soft exit: bail on stalled reversions with ~2min left

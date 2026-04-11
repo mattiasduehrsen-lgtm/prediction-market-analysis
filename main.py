@@ -653,7 +653,13 @@ def run_5m_loop(
                             else:
                                 entry_price = round(1.0 - book_bid, 6)
 
-                        # ── GBM collapse gate ────────────────────────────────
+                        # ── Dynamic TP + negative-EV gate ────────────────────
+                        tp = take_profit_price(entry_price)
+                        if tp is None:
+                            print(f"  [TP] Skip — entry {entry_price:.3f} > 0.42 (negative EV)")
+                            continue
+
+                        # ── GBM collapse gate ─────────────────────────────────
                         from src.bot.collapse_model import collapse_prob, should_skip, COLLAPSE_THRESHOLD
                         btc_at_entry   = btc_history[-1][1] if btc_history else 0.0
                         btc_pct_chg_entry = 0.0
@@ -662,7 +668,7 @@ def run_5m_loop(
 
                         c_prob = collapse_prob(
                             entry_price=entry_price,
-                            take_profit=take_profit_price(entry_price),
+                            take_profit=tp,
                             btc_pct_change_at_entry=btc_pct_chg_entry,
                             secs_remaining=market.seconds_remaining,
                             liquidity=market.liquidity,
@@ -680,7 +686,7 @@ def run_5m_loop(
                         vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
                         xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
                         spd_str   = f"{book_spread:.4f}" if book_spread > 0 else "n/a"
-                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str} collapse={c_prob:.3f}")
+                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str} collapse={c_prob:.3f} tp={tp:.2f}")
 
                         if live:
                             token_id = market.token_id_up if side == "UP" else market.token_id_down
@@ -691,7 +697,7 @@ def run_5m_loop(
                                 side=side,
                                 token_id=token_id,
                                 entry_price=entry_price,
-                                take_profit=take_profit_price(entry_price),
+                                take_profit=tp,
                                 window_end_ts=market.window_end_ts,
                                 btc_price_at_window_start=btc_at_window_start,
                                 btc_price_at_entry=btc_at_entry,
@@ -707,7 +713,7 @@ def run_5m_loop(
                                 asset=asset,
                                 side=side,
                                 entry_price=entry_price,
-                                take_profit=take_profit_price(entry_price),
+                                take_profit=tp,
                                 window_end_ts=market.window_end_ts,
                                 window=window,
                                 strategy=strategy,

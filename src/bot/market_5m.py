@@ -43,7 +43,7 @@ SLUG_PREFIXES: dict[str, dict[str, str]] = {
 }
 
 # ── Mean-reversion strategy constants (5m) ────────────────────────────────────
-ENTRY_MIN        = 0.28   # lowered 0.33→0.28: 59% of windows had price below 0.33 (all missed)
+ENTRY_MIN        = 0.32   # raised 0.28→0.32: avg hard_stop_floor entry was ~0.31 midpoint (0.374 taker); cuts worst collapses
 ENTRY_MAX        = 0.335  # lowered 0.35→0.335: 0.34-0.35 entries had 17% WR; real edge is ≤0.335
 TAKE_PROFIT      = 0.92   # hold for full reversal — settlement pays $1.00
 MIN_SECONDS      = 240    # enter in first 60s of 5m window (300 - 60 = 240s remaining)
@@ -58,6 +58,13 @@ MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiqu
 MOMENTUM_ENTRY_WINDOW = 30   # seconds — enter within first 30s of window only
 MOMENTUM_MIN_PREV_MOVE = 0.15  # min |cross_window_pct| to enter (PolyBackTest threshold)
 MOMENTUM_ENABLED = False   # disabled 2026-04-09: 80 trades at 30% WR — not predictive enough
+
+# ── Cross-window filter (mean_reversion) ─────────────────────────────────────
+# Only enter when prior window had a small dip (-0.06 to 0.02%).
+# Data: cross_window in [-0.05,0] = 40.5% WR (+$126); all other bands negative.
+# cross_window=0.0 means no Chainlink data — pass through.
+CROSS_WINDOW_MIN = -0.06   # reject entries where prev window fell harder than this
+CROSS_WINDOW_MAX =  0.02   # reject entries where prev window rose more than this
 
 
 @dataclass

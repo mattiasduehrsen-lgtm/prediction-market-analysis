@@ -13,6 +13,7 @@ from src.bot.market_5m import (
     MIN_SECONDS, FORCE_EXIT, SOFT_EXIT_SECS, SOFT_EXIT_PRICE,
     BTC_SKIP_RATE, BTC_MAGNITUDE_MAX, MAX_SPREAD,
     MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE, MOMENTUM_ENABLED,
+    CROSS_WINDOW_MIN, CROSS_WINDOW_MAX,
 )
 
 
@@ -22,6 +23,7 @@ def should_enter(
     cl_pct_change: float = 0.0,
     min_seconds: float = MIN_SECONDS,
     spread: float = 0.0,
+    cross_window_pct: float = 0.0,
 ) -> tuple[bool, str, float]:
     """
     Mean-reversion entry: buy the cheap side (ENTRY_MIN–ENTRY_MAX) in the entry window.
@@ -42,6 +44,14 @@ def should_enter(
     if spread > 0 and spread > MAX_SPREAD:
         print(f"[SIGNAL] Skip — spread {spread:.4f} > {MAX_SPREAD} (illiquid)")
         return False, "", 0.0
+
+    # Cross-window filter: only enter on small prior-window dips.
+    # cross_window=0.0 means no Chainlink data yet — pass through.
+    # Data: [-0.05,0] = 40.5% WR; all other bands ≤27% WR and negative EV.
+    if cross_window_pct != 0.0:
+        if cross_window_pct < CROSS_WINDOW_MIN or cross_window_pct > CROSS_WINDOW_MAX:
+            print(f"[SIGNAL] Skip — cross_window {cross_window_pct:+.3f}% outside [{CROSS_WINDOW_MIN},{CROSS_WINDOW_MAX}]")
+            return False, "", 0.0
 
     # Cheaper side is our mean-reversion candidate
     if market.up_price <= market.down_price:

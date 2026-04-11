@@ -626,6 +626,7 @@ def run_5m_loop(
                         cl_pct_change=cl.pct_change if cl.price > 0 else 0.0,
                         min_seconds=mr_min_seconds,
                         spread=book_spread,
+                        cross_window_pct=cross_window_pct,
                     )
                     if do_enter:
                         now_ts = time.time()
@@ -816,8 +817,8 @@ if __name__ == "__main__":
         else:
             # Default: BTC 5m mean-reversion + BTC 5m momentum + 15m markets
             _configs = [
-                # BTC 5m mean_reversion removed: 25 trades, 16% WR, -$104 — clear negative EV
-                ("BTC", "5m",  "momentum"),
+                # BTC 5m mean_reversion removed: 55 trades, 16% WR, -$217 — negative EV
+                # BTC 5m momentum removed: 102 trades, 31% WR, -$168 (MOMENTUM_ENABLED=False anyway)
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),

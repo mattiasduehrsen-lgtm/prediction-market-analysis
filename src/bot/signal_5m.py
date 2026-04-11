@@ -11,7 +11,7 @@ from src.bot.market_5m import (
     Market5m,
     ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
     MIN_SECONDS, FORCE_EXIT, SOFT_EXIT_SECS, SOFT_EXIT_PRICE,
-    BTC_SKIP_RATE, BTC_MAGNITUDE_MAX, MAX_SPREAD,
+    BTC_SKIP_RATE, BTC_MAGNITUDE_MAX, MAX_SPREAD, MIN_LIQUIDITY,
     MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE, MOMENTUM_ENABLED,
     CROSS_WINDOW_MIN, CROSS_WINDOW_MAX,
 )
@@ -36,7 +36,8 @@ def should_enter(
     if secs < min_seconds:
         return False, "", 0.0
 
-    if market.liquidity < 1000:
+    if market.liquidity < MIN_LIQUIDITY:
+        print(f"[SIGNAL] Skip — liquidity ${market.liquidity:,.0f} < ${MIN_LIQUIDITY:,} (thin market)")
         return False, "", 0.0
 
     # Spread filter: skip when the order book is too wide (illiquid or stale prices).

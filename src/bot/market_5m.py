@@ -53,6 +53,7 @@ SOFT_EXIT_PRICE  = 0.25   # exit at 115s if price ≤ 0.25
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry
 BTC_MAGNITUDE_MAX = 0.05  # max Chainlink % move from window start to allow entry
 MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiquid/stale book)
+MIN_LIQUIDITY    = 22_000  # raised 1000→22000: Cowork found HSF rate 37% at 15-20k liq, drops to 9% above 30k
 
 # ── Momentum strategy constants ───────────────────────────────────────────────
 MOMENTUM_ENTRY_WINDOW = 30   # seconds — enter within first 30s of window only

@@ -653,13 +653,34 @@ def run_5m_loop(
                             else:
                                 entry_price = round(1.0 - book_bid, 6)
 
+                        # ── GBM collapse gate ────────────────────────────────
+                        from src.bot.collapse_model import collapse_prob, should_skip, COLLAPSE_THRESHOLD
+                        btc_at_entry   = btc_history[-1][1] if btc_history else 0.0
+                        btc_pct_chg_entry = 0.0
+                        if btc_at_window_start > 0 and btc_at_entry > 0:
+                            btc_pct_chg_entry = (btc_at_entry - btc_at_window_start) / btc_at_window_start * 100
+
+                        c_prob = collapse_prob(
+                            entry_price=entry_price,
+                            take_profit=take_profit_price(entry_price),
+                            btc_pct_change_at_entry=btc_pct_chg_entry,
+                            secs_remaining=market.seconds_remaining,
+                            liquidity=market.liquidity,
+                            price_60s=p_60s,
+                            price_30s=p_30s,
+                            price_velocity=cheap_side_velocity,
+                            side=side,
+                            up_price_at_window_start=up_price_at_window_start,
+                        )
+                        if should_skip(c_prob):
+                            print(f"  [GBM] Skip — collapse_prob={c_prob:.3f} >= {COLLAPSE_THRESHOLD}")
+                            continue
+
                         decel_str = f"{btc_momentum_decel:+.2f}" if btc_momentum_decel else "n/a"
                         vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
                         xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
                         spd_str   = f"{book_spread:.4f}" if book_spread > 0 else "n/a"
-                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str}")
-
-                        btc_at_entry = btc_history[-1][1] if btc_history else 0.0
+                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str} collapse={c_prob:.3f}")
 
                         if live:
                             token_id = market.token_id_up if side == "UP" else market.token_id_down

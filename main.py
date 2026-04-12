@@ -682,11 +682,26 @@ def run_5m_loop(
                             print(f"  [GBM] Skip — collapse_prob={c_prob:.3f} >= {COLLAPSE_THRESHOLD}")
                             continue
 
+                        # ── CLOB midpoint trend filter ────────────────────────
+                        # Cowork: strong upward trend → 29.4% WR, downward → 13.8% WR
+                        # Skip when CLOB trend opposes trade direction.
+                        # 0.0 = no history yet → pass through.
+                        clob_trend = clob_feed.get_midpoint_trend(lookback_secs=60)
+                        CLOB_TREND_THRESHOLD = 0.10
+                        if clob_trend != 0.0:
+                            if side == "UP" and clob_trend < -CLOB_TREND_THRESHOLD:
+                                print(f"  [CLOB] Skip UP — midpoint trending down {clob_trend:+.3f}")
+                                continue
+                            if side == "DOWN" and clob_trend > CLOB_TREND_THRESHOLD:
+                                print(f"  [CLOB] Skip DOWN — midpoint trending up {clob_trend:+.3f}")
+                                continue
+
                         decel_str = f"{btc_momentum_decel:+.2f}" if btc_momentum_decel else "n/a"
                         vel_str   = f"{cheap_side_velocity:+.4f}" if cheap_side_velocity else "n/a"
                         xw_str    = f"{cross_window_pct:+.3f}%" if cross_window_pct else "n/a"
                         spd_str   = f"{book_spread:.4f}" if book_spread > 0 else "n/a"
-                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str} collapse={c_prob:.3f} tp={tp:.2f}")
+                        trend_str = f"{clob_trend:+.3f}" if clob_trend != 0.0 else "n/a"
+                        print(f"  [SIGNAL] decel={decel_str} vel={vel_str} cross={xw_str} spread={spd_str} collapse={c_prob:.3f} tp={tp:.2f} trend={trend_str}")
 
                         if live:
                             token_id = market.token_id_up if side == "UP" else market.token_id_down
@@ -729,6 +744,7 @@ def run_5m_loop(
                                 spread_at_entry=book_spread,
                                 bid_depth_at_entry=book_bid_depth,
                                 ask_depth_at_entry=book_ask_depth,
+                                clob_midpoint_trend_60s=clob_trend,
                             )
 
             # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────

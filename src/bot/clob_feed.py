@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import websocket  # websocket-client
@@ -49,6 +50,8 @@ class _TokenState:
     best_ask:  float = 1.0
     midpoint:  float = 0.5
     last_updated: float = 0.0
+    # Rolling 120s of (timestamp, midpoint) for trend computation
+    midpoint_history: deque = field(default_factory=lambda: deque(maxlen=120))
 
     def _recompute(self) -> None:
         if self.bids:
@@ -58,6 +61,7 @@ class _TokenState:
         if self.bids and self.asks:
             self.midpoint = round((self.best_bid + self.best_ask) / 2, 6)
         self.last_updated = time.time()
+        self.midpoint_history.append((self.last_updated, self.midpoint))
 
     def apply_book(self, bids: list, asks: list) -> None:
         """Replace the full order book from a snapshot."""
@@ -204,6 +208,38 @@ class ClobFeed:
 
         spread = round(ba - bb, 6)
         return bb, ba, spread, bid_depth, ask_depth
+
+    def get_midpoint_trend(self, lookback_secs: float = 60.0) -> float:
+        """
+        Return the UP-token midpoint change over the last lookback_secs.
+
+        Positive = midpoint rose (market pricing UP higher).
+        Negative = midpoint fell (market pricing DOWN higher).
+        Returns 0.0 if insufficient history — caller should pass through.
+
+        Used to filter entries where CLOB trend opposes trade direction:
+          - Skip UP  when trend < -0.10 (market trending down)
+          - Skip DOWN when trend > +0.10 (market trending up)
+        Cowork finding: strong upward trend → 29.4% WR; strong downward → 13.8% WR.
+        """
+        with self._lock:
+            up_id = self._token_id_up
+            st    = self._states.get(up_id)
+
+        if not (up_id and st and len(st.midpoint_history) >= 2):
+            return 0.0
+
+        now    = time.time()
+        cutoff = now - lookback_secs
+
+        with self._lock:
+            history = list(st.midpoint_history)  # snapshot to avoid lock hold
+
+        in_window = [(ts, mid) for ts, mid in history if ts >= cutoff]
+        if len(in_window) < 2:
+            return 0.0
+
+        return round(in_window[-1][1] - in_window[0][1], 6)
 
     def get_prices(self) -> tuple[float, float, bool]:
         """

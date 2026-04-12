@@ -50,9 +50,10 @@ POSITION_FIELDS = [
     "cheap_side_velocity",   # ¢/s of our side's price change in last 20s at entry: <0=still falling
     "cross_window_pct",      # Chainlink % move from prev window start to this window start
     # Order book microstructure at entry (from CLOB WebSocket)
-    "spread_at_entry",       # best_ask - best_bid for UP token at entry (0 = WS not ready)
-    "bid_depth_at_entry",    # total shares on bid side of UP token order book
-    "ask_depth_at_entry",    # total shares on ask side of UP token order book
+    "spread_at_entry",            # best_ask - best_bid for UP token at entry (0 = WS not ready)
+    "bid_depth_at_entry",         # total shares on bid side of UP token order book
+    "ask_depth_at_entry",         # total shares on ask side of UP token order book
+    "clob_midpoint_trend_60s",    # UP-token midpoint change over 60s before entry (0 = no data)
 ]
 
 TRADE_FIELDS = POSITION_FIELDS + [
@@ -112,6 +113,7 @@ class Position5m:
     spread_at_entry: float = 0.0           # best_ask - best_bid for UP token (0 = WS not ready)
     bid_depth_at_entry: float = 0.0        # total shares on bid side of UP token order book
     ask_depth_at_entry: float = 0.0        # total shares on ask side of UP token order book
+    clob_midpoint_trend_60s: float = 0.0   # UP-token midpoint change over 60s before entry (0 = no data)
 
 
 @dataclass
@@ -148,6 +150,7 @@ class ClosedTrade5m:
     spread_at_entry: float = 0.0
     bid_depth_at_entry: float = 0.0
     ask_depth_at_entry: float = 0.0
+    clob_midpoint_trend_60s: float = 0.0
     # Exit context for ML analysis
     price_60s_after_entry: float = 0.0   # UP token price 60s after entry — for hold-vs-exit analysis
     # Exit fields
@@ -343,6 +346,7 @@ class Engine5m:
         spread_at_entry: float = 0.0,
         bid_depth_at_entry: float = 0.0,
         ask_depth_at_entry: float = 0.0,
+        clob_midpoint_trend_60s: float = 0.0,
     ) -> Position5m | None:
         if self.already_in(condition_id):
             return None
@@ -395,6 +399,7 @@ class Engine5m:
             spread_at_entry=round(spread_at_entry, 6),
             bid_depth_at_entry=round(bid_depth_at_entry, 2),
             ask_depth_at_entry=round(ask_depth_at_entry, 2),
+            clob_midpoint_trend_60s=round(clob_midpoint_trend_60s, 6),
         )
         self.positions[pos.position_id] = pos
         _save_positions(self.positions, self._positions_file)

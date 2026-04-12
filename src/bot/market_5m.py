@@ -44,7 +44,7 @@ SLUG_PREFIXES: dict[str, dict[str, str]] = {
 
 # ── Mean-reversion strategy constants (5m) ────────────────────────────────────
 ENTRY_MIN        = 0.32   # raised 0.28→0.32: avg hard_stop_floor entry was ~0.31 midpoint (0.374 taker); cuts worst collapses
-ENTRY_MAX        = 0.335  # lowered 0.35→0.335: 0.34-0.35 entries had 17% WR; real edge is ≤0.335
+ENTRY_MAX        = 0.40   # lowered 0.335→0.40 (Cowork): 0.35-0.40 band = 47.6% WR, >0.40 = 18.8% WR
 TAKE_PROFIT      = 0.92   # legacy — replaced by tp_optimizer.compute_take_profit() (entry-price dependent)
 MIN_SECONDS      = 240    # enter in first 60s of 5m window (300 - 60 = 240s remaining)
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos
@@ -53,7 +53,7 @@ SOFT_EXIT_PRICE  = 0.25   # exit at 115s if price ≤ 0.25
 BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry
 BTC_MAGNITUDE_MAX = 0.05  # max Chainlink % move from window start to allow entry
 MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiquid/stale book)
-MIN_LIQUIDITY    = 22_000  # raised 1000→22000: Cowork found HSF rate 37% at 15-20k liq, drops to 9% above 30k
+MIN_LIQUIDITY    = 15_000  # Cowork: <10k=53.4% WR, 10-20k=45.4%, >=20k=29.1%; set to 15k to exclude danger band
 
 # ── Momentum strategy constants ───────────────────────────────────────────────
 MOMENTUM_ENTRY_WINDOW = 30   # seconds — enter within first 30s of window only

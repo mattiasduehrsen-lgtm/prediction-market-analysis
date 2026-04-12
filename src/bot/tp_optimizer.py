@@ -28,7 +28,7 @@ _TP_INTERCEPT = 0.8012   # fitted by OLS on bucket (entry, optimal_tp) pairs
 _TP_SLOPE     = -0.5267  # negative: higher entry → lower TP target
 _TP_MIN       = 0.55     # never exit this close to entry
 _TP_MAX       = 0.75     # never hold for a monster reversion
-_ENTRY_MAX    = 0.42     # above this entry price, strategy has negative EV
+_ENTRY_MAX    = 0.40     # above this entry price, strategy has negative EV (Cowork: 0.35-0.40 = 47.6% WR, >0.40 = 18.8%)
 
 
 def get_take_profit(
@@ -75,12 +75,10 @@ def _tp_piecewise(entry_price: float) -> float:
     ≤ 0.32         →  0.63  (+97 to +127%)
     ≤ 0.36         →  0.62  (+72 to  +82%)
     ≤ 0.40         →  0.60  (+50 to  +67%)
-    ≤ 0.42         →  0.59  (+40 to  +48%)
     """
     if   entry_price <= 0.32: return 0.63
     elif entry_price <= 0.36: return 0.62
-    elif entry_price <= 0.40: return 0.60
-    else:                     return 0.59   # 0.40–0.42
+    else:                     return 0.60   # 0.32–0.40
 
 
 def _tp_linear(entry_price: float) -> float:
@@ -140,5 +138,4 @@ if __name__ == "__main__":
     print("  entry ≤ 0.32  →  TP = 0.63")
     print("  entry ≤ 0.36  →  TP = 0.62")
     print("  entry ≤ 0.40  →  TP = 0.60")
-    print("  entry ≤ 0.42  →  TP = 0.59")
-    print("  entry  > 0.42 →  SKIP (negative EV)")
+    print("  entry  > 0.40 →  SKIP (negative EV)")

@@ -28,8 +28,7 @@ def should_enter(
     """
     Mean-reversion entry: buy the cheap side (ENTRY_MIN–ENTRY_MAX) in the entry window.
     Returns (should_enter, side, entry_price).
-    min_seconds: seconds that must remain to allow entry (computed from window size in caller).
-    spread: best_ask - best_bid for the UP token (0 = unknown). Wide spread = stale/illiquid book.
+    Asset-specific filters derived from Cowork analysis of 698 trades.
     """
     secs = market.seconds_remaining
 
@@ -62,6 +61,40 @@ def should_enter(
 
     if price < ENTRY_MIN or price > ENTRY_MAX:
         return False, "", 0.0
+
+    # ── Asset-specific filters (Cowork analysis) ──────────────────────────
+    asset = market.asset
+    window = market.window
+
+    # SOL-15m: DOWN trades are losing (-$73); UP only (+$88)
+    if asset == "SOL" and window == "15m":
+        if side == "DOWN":
+            print(f"[SIGNAL] Skip SOL DOWN — only UP side is profitable (+$88 vs -$73)")
+            return False, "", 0.0
+        if price > 0.35:
+            print(f"[SIGNAL] Skip SOL — entry {price:.3f} > 0.35 (loses money in high band)")
+            return False, "", 0.0
+
+    # ETH-15m: 0.30-0.35 band loses $165; 0.35-0.40 zone wins +$40 on 21 trades
+    if asset == "ETH" and window == "15m":
+        if price < 0.35:
+            print(f"[SIGNAL] Skip ETH — entry {price:.3f} < 0.35 (loss zone)")
+            return False, "", 0.0
+
+    # BTC-5m: prefer 0.33-0.40; skip high liquidity (overcrowded)
+    if asset == "BTC" and window == "5m":
+        if not (0.33 <= price <= 0.40):
+            print(f"[SIGNAL] Skip BTC-5m — entry {price:.3f} outside 0.33–0.40 sweet spot")
+            return False, "", 0.0
+        if market.liquidity >= 17_000:
+            print(f"[SIGNAL] Skip BTC-5m — liquidity ${market.liquidity:,.0f} >= $17k (overcrowded)")
+            return False, "", 0.0
+
+    # BTC-15m: only 0.35-0.40 zone is profitable (+$14 on 17 trades)
+    if asset == "BTC" and window == "15m":
+        if not (0.35 <= price <= 0.40):
+            print(f"[SIGNAL] Skip BTC-15m — entry {price:.3f} outside 0.35–0.40")
+            return False, "", 0.0
 
     # Magnitude filter: only applies to BTC 5m — threshold was calibrated for BTC.
     # ETH/SOL/XRP and 15m markets move differently; skip the filter for them.

@@ -683,12 +683,12 @@ def run_5m_loop(
                             continue
 
                         # ── CLOB midpoint trend filter ────────────────────────
-                        # Cowork: strong upward trend → 29.4% WR, downward → 13.8% WR
-                        # Skip when CLOB trend opposes trade direction.
+                        # Cowork: strong upward trend → 29.4% WR (BTC), downward → 13.8% WR
+                        # NOT predictive for ETH (confusing signal); skip for ETH.
                         # 0.0 = no history yet → pass through.
                         clob_trend = clob_feed.get_midpoint_trend(lookback_secs=60)
                         CLOB_TREND_THRESHOLD = 0.10
-                        if clob_trend != 0.0:
+                        if clob_trend != 0.0 and asset != "ETH":
                             if side == "UP" and clob_trend < -CLOB_TREND_THRESHOLD:
                                 print(f"  [CLOB] Skip UP — midpoint trending down {clob_trend:+.3f}")
                                 continue

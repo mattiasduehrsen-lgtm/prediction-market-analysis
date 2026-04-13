@@ -584,6 +584,17 @@ def run_5m_loop(
                     btc_momentum_decel = round(btc_rate_10s / btc_rate_30s, 4)
                     print(f"  [DECEL] rate_10s={btc_rate_10s:.2f} rate_30s={btc_rate_30s:.2f} decel={btc_momentum_decel:.3f}")
 
+                # Binance 60s return — monitor only, not yet a hard filter (p=0.081, n=22)
+                btc_pct_60s = 0.0
+                if len(btc_history) >= 2:
+                    latest_btc_ts, latest_btc_px = btc_history[-1]
+                    for old_ts, old_px in btc_history:
+                        if (latest_btc_ts - old_ts) >= 60 and old_px > 0:
+                            btc_pct_60s = round((latest_btc_px - old_px) / old_px * 100, 4)
+                            break
+                if asset == "BTC" and window == "5m" and btc_pct_60s != 0.0:
+                    print(f"  [MONITOR] bnb_pct_60s={btc_pct_60s:+.4f}% ({'rising' if btc_pct_60s >= 0 else 'falling'})")
+
                 # Cross-window direction from Chainlink
                 cross_window_pct = 0.0
                 if cl.prev_window_start_price > 0 and cl.window_start_price > 0:
@@ -621,6 +632,10 @@ def run_5m_loop(
 
                 else:
                     # ── Mean reversion: buy cheap side in entry window ─────────────────
+                    window_duration  = 900 if window == "15m" else 300
+                    secs_into_window = round(max(0.0, time.time() - (market.window_end_ts - window_duration)), 1)
+                    clob_trades_60s  = clob_feed.get_recent_trade_count(lookback_secs=60)
+
                     do_enter, side, entry_price = should_enter(
                         market,
                         btc_rate_per_min=btc_rate_per_min,
@@ -628,6 +643,8 @@ def run_5m_loop(
                         min_seconds=mr_min_seconds,
                         spread=book_spread,
                         cross_window_pct=cross_window_pct,
+                        secs_into_window=secs_into_window,
+                        clob_trades_60s=clob_trades_60s,
                     )
                     if do_enter:
                         now_ts = time.time()

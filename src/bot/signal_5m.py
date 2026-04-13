@@ -24,6 +24,8 @@ def should_enter(
     min_seconds: float = MIN_SECONDS,
     spread: float = 0.0,
     cross_window_pct: float = 0.0,
+    secs_into_window: float = 0.0,    # seconds elapsed since window start
+    clob_trades_60s: int = 0,         # CLOB last_trade_price events in last 60s
 ) -> tuple[bool, str, float]:
     """
     Mean-reversion entry: buy the cheap side (ENTRY_MIN–ENTRY_MAX) in the entry window.
@@ -76,9 +78,17 @@ def should_enter(
             return False, "", 0.0
 
     # ETH-15m: 0.30-0.35 band loses $165; 0.35-0.40 zone wins +$40 on 21 trades
+    # Cowork (133 trades, Apr 10-13): first 30s hits 54.5% WR vs 24.0% after (p=0.040)
+    # Crowded book (>5 CLOB trades/60s) → 28.6% WR vs 66.7% (p=0.037)
     if asset == "ETH" and window == "15m":
         if price < 0.35:
             print(f"[SIGNAL] Skip ETH — entry {price:.3f} < 0.35 (loss zone)")
+            return False, "", 0.0
+        if secs_into_window > 30:
+            print(f"[SIGNAL] Skip ETH-15m — {secs_into_window:.0f}s into window (>30s cutoff, WR drops to 24%)")
+            return False, "", 0.0
+        if clob_trades_60s > 5:
+            print(f"[SIGNAL] Skip ETH-15m — {clob_trades_60s} CLOB trades in 60s (crowded, WR 28.6%)")
             return False, "", 0.0
 
     # BTC-5m: prefer 0.33-0.40; skip high liquidity (overcrowded)

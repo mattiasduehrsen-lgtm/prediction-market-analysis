@@ -122,6 +122,9 @@ class ClobFeed:
         # Per-token order book state
         self._states: dict[str, _TokenState] = {}
 
+        # Rolling timestamps of last_trade_price events per token, for crowding detection
+        self._trade_timestamps: dict[str, list] = {}
+
         # WebSocket
         self._ws:        websocket.WebSocketApp | None = None
         self._thread:    threading.Thread | None = None
@@ -241,6 +244,22 @@ class ClobFeed:
 
         return round(in_window[-1][1] - in_window[0][1], 6)
 
+    def get_recent_trade_count(self, lookback_secs: float = 60.0) -> int:
+        """
+        Return the number of last_trade_price events on the UP token in the
+        last lookback_secs. Used to detect crowded/active markets.
+
+        Cowork finding (133 trades, Apr 10-13): ETH-15m with >5 trades in 60s
+        has 28.6% WR vs 66.7% when ≤5 trades (p=0.037).
+        Returns 0 if no history available.
+        """
+        with self._lock:
+            up_id = self._token_id_up
+            ts_list = list(self._trade_timestamps.get(up_id, []))
+
+        cutoff = time.time() - lookback_secs
+        return sum(1 for t in ts_list if t > cutoff)
+
     def get_prices(self) -> tuple[float, float, bool]:
         """
         Return (up_price, down_price, is_live).
@@ -355,11 +374,17 @@ class ClobFeed:
             price = float(msg.get("price", 0))
             size  = float(msg.get("size", 0))
             side  = msg.get("side", "")
+            now   = time.time()
             with self._lock:
-                state.last_updated = time.time()
+                state.last_updated = now
                 mid = state.midpoint
                 bb  = state.best_bid
                 ba  = state.best_ask
+                # Track trade timestamps; prune entries older than 120s
+                ts_list = self._trade_timestamps.setdefault(asset_id, [])
+                ts_list.append(now)
+                cutoff = now - 120
+                self._trade_timestamps[asset_id] = [t for t in ts_list if t > cutoff]
             self._log(event_type, asset_id, condition_id, slug,
                       price, side, size, bb, ba, mid, seconds_left)
 

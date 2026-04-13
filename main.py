@@ -582,6 +582,7 @@ def run_5m_loop(
                 btc_momentum_decel = 0.0
                 if abs(btc_rate_30s) > 1.0:
                     btc_momentum_decel = round(btc_rate_10s / btc_rate_30s, 4)
+                    print(f"  [DECEL] rate_10s={btc_rate_10s:.2f} rate_30s={btc_rate_30s:.2f} decel={btc_momentum_decel:.3f}")
 
                 # Cross-window direction from Chainlink
                 cross_window_pct = 0.0
@@ -643,6 +644,9 @@ def run_5m_loop(
                         cheap_side_velocity = 0.0
                         if cheap_20s_ago > 0:
                             cheap_side_velocity = round((entry_price - cheap_20s_ago) / 20.0, 6)
+
+                        if asset == "ETH" and cheap_side_velocity < -0.006:
+                            print(f"  [MONITOR] ETH entry with cheap_side_velocity={cheap_side_velocity:+.4f} (below -0.006 threshold)")
 
                         # Realistic fill price: taker pays best_ask, not midpoint.
                         # Buying DOWN = paying that token's ask ≈ 1 - best_bid_UP.

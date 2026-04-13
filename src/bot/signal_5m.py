@@ -83,6 +83,9 @@ def should_enter(
 
     # BTC-5m: prefer 0.33-0.40; skip high liquidity (overcrowded)
     if asset == "BTC" and window == "5m":
+        if secs < 292:
+            print(f"[SIGNAL] Skip BTC-5m — late entry ({secs:.0f}s remaining, dead zone 240–290)")
+            return False, "", 0.0
         if not (0.33 <= price <= 0.40):
             print(f"[SIGNAL] Skip BTC-5m — entry {price:.3f} outside 0.33–0.40 sweet spot")
             return False, "", 0.0

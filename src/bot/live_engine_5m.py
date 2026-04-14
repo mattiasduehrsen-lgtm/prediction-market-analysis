@@ -54,6 +54,12 @@ MIN_SHARES      = 5       # Polymarket CLOB minimum order size in shares
 # bid — effectively a market order with price improvement.
 AGGRESSIVE_EXIT_PRICE = 0.01
 
+# Cancel unfilled entry orders after this many seconds (price likely moved away).
+ENTRY_FILL_TIMEOUT = 45
+
+# Re-submit exit as aggressive FOK if GTC exit has been pending this long.
+EXIT_STUCK_TIMEOUT = 90
+
 
 # ── Position states ────────────────────────────────────────────────────────────
 
@@ -240,6 +246,15 @@ class LiveEngine5m:
         open_count    = sum(1 for p in self.positions.values() if p.state == State.OPEN)
         pending_count = sum(1 for p in self.positions.values() if p.state == State.PENDING_ENTRY)
         print(f"[LIVE5M] Loaded {open_count} open, {pending_count} pending-entry positions")
+        self._cancel_expired_entries()
+
+    def _cancel_expired_entries(self) -> None:
+        """On startup, cancel any PENDING_ENTRY orders whose window already closed."""
+        now = time.time()
+        for pos_id, pos in list(self.positions.items()):
+            if pos.state == State.PENDING_ENTRY and pos.window_end_ts < now:
+                print(f"[LIVE5M] STARTUP cancel orphaned entry {pos_id} (window expired)")
+                self.cancel_entry(pos_id)
 
     def already_in(self, condition_id: str) -> bool:
         return any(
@@ -361,11 +376,21 @@ class LiveEngine5m:
     def check_pending_entries(self) -> None:
         """
         Poll entry order status. Transition PENDING_ENTRY → OPEN on fill.
+        Cancels orders that haven't filled within ENTRY_FILL_TIMEOUT seconds.
         Called every poll cycle.
         """
+        now = time.time()
         for pos_id, pos in list(self.positions.items()):
             if pos.state != State.PENDING_ENTRY:
                 continue
+
+            # Timeout: cancel entries that price has moved away from
+            age = now - pos.opened_at
+            if age > ENTRY_FILL_TIMEOUT:
+                print(f"[LIVE5M] TIMEOUT {pos_id} — unfilled after {age:.0f}s, cancelling")
+                self.cancel_entry(pos_id)
+                continue
+
             try:
                 order = self._client.get_order(pos.entry_order_id)
             except Exception as exc:
@@ -403,13 +428,20 @@ class LiveEngine5m:
         if pos is None or pos.state != State.OPEN:
             return
 
-        aggressive_reasons = {"hard_stop", "trailing_stop_z2", "trailing_stop_z3",
-                               "force_exit_time", "window_expired"}
+        # All stop/floor/stalled reasons must exit immediately via FOK.
+        # hard_stop_floor and soft_exit_stalled are the paper engine names for
+        # the same conditions — include both forms so nothing slips through.
+        aggressive_reasons = {
+            "hard_stop", "hard_stop_floor",
+            "soft_exit_stalled",
+            "trailing_stop_z2", "trailing_stop_z3",
+            "force_exit_time", "window_expired",
+        }
         if exit_reason in aggressive_reasons:
             exit_price = AGGRESSIVE_EXIT_PRICE
             order_type = OrderType.FOK   # Fill or Kill — must fill immediately
         else:
-            # take_profit or force_exit_price — place limit and let it sit
+            # take_profit — post GTC limit at TP price and let it sit on the book
             exit_price = pos.take_profit
             order_type = OrderType.GTC
 
@@ -427,6 +459,11 @@ class LiveEngine5m:
             return
 
         order_id = resp.get("orderID", "")
+        if not order_id and order_type != OrderType.FOK:
+            # GTC exit with no order_id means the API rejected it — don't
+            # transition state or the position will be stuck in PENDING_EXIT forever.
+            print(f"[LIVE5M] Exit order rejected (no orderID): {resp}")
+            return
         pos.exit_order_id = order_id
         pos.state = State.PENDING_EXIT
         _save_positions(self.positions)
@@ -444,12 +481,32 @@ class LiveEngine5m:
     def check_pending_exits(self, price_60s_after_entry: float = 0.0) -> list[ClosedLiveTrade5m]:
         """
         Poll exit order status. Transition PENDING_EXIT → CLOSED on fill.
+        Re-submits as aggressive FOK if GTC exit has been stuck > EXIT_STUCK_TIMEOUT.
         Called every poll cycle. Returns list of trades closed this call.
         """
+        now    = time.time()
         closed = []
         for pos_id, pos in list(self.positions.items()):
-            if pos.state != State.PENDING_EXIT or not pos.exit_order_id:
+            if pos.state != State.PENDING_EXIT:
                 continue
+
+            # Rescue: GTC exit stuck too long — re-submit as aggressive FOK
+            if not pos.exit_order_id or (now - pos.opened_at > EXIT_STUCK_TIMEOUT):
+                age = now - pos.opened_at
+                print(f"[LIVE5M] STUCK EXIT {pos_id} — pending {age:.0f}s, re-submitting as FOK")
+                # Cancel existing GTC order if we have one
+                if pos.exit_order_id:
+                    try:
+                        self._client.cancel(pos.exit_order_id)
+                    except Exception:
+                        pass
+                # Reset to OPEN so place_exit() can fire again as aggressive
+                pos.state = State.OPEN
+                pos.exit_order_id = ""
+                _save_positions(self.positions)
+                self._settle_exit(pos_id, AGGRESSIVE_EXIT_PRICE, "force_exit_stuck", price_60s_after_entry)
+                continue
+
             try:
                 order = self._client.get_order(pos.exit_order_id)
             except Exception as exc:

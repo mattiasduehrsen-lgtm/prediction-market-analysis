@@ -665,14 +665,19 @@ def run_5m_loop(
                         if asset == "ETH" and cheap_side_velocity < -0.006:
                             print(f"  [MONITOR] ETH entry with cheap_side_velocity={cheap_side_velocity:+.4f} (below -0.006 threshold)")
 
-                        # Realistic fill price: taker pays best_ask, not midpoint.
-                        # Buying DOWN = paying that token's ask ≈ 1 - best_bid_UP.
-                        # Only applies when the WS book is live; falls back to midpoint.
+                        # Fill price depends on order type:
+                        #   Live (limit/maker): post at midpoint — no fee, better price
+                        #   Paper (taker sim): use book_ask — conservative baseline
                         if ws_ok and book_ask > 0 and book_bid > 0:
-                            if side == "UP":
-                                entry_price = book_ask
+                            if live:
+                                # Midpoint limit order — sits between bid and ask, fills as maker
+                                midpoint = round((book_bid + book_ask) / 2, 4)
+                                entry_price = midpoint if side == "UP" else round(1.0 - midpoint, 4)
                             else:
-                                entry_price = round(1.0 - book_bid, 6)
+                                if side == "UP":
+                                    entry_price = book_ask
+                                else:
+                                    entry_price = round(1.0 - book_bid, 6)
 
                         # ── Dynamic TP + negative-EV gate ────────────────────
                         tp = take_profit_price(entry_price)

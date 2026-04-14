@@ -236,6 +236,7 @@ def run_5m_loop(
     live: bool = False,
     window: str = "5m",
     strategy: str = "mean_reversion",
+    cb=None,   # shared CircuitBreaker for multi-thread live mode (Finding 2.B)
 ) -> None:
     import collections
     from src.bot.market_5m import (
@@ -265,8 +266,9 @@ def run_5m_loop(
     if live:
         from src.bot.live_engine_5m import LiveEngine5m
         from src.bot.circuit_breaker import CircuitBreaker
-        engine = LiveEngine5m()
-        cb = CircuitBreaker(max_daily_loss_usd=50.0)
+        engine = LiveEngine5m(tag=f"{asset}-{window}")   # per-market file (Finding 2.A)
+        if cb is None:
+            cb = CircuitBreaker()   # reads LIVE_MAX_DAILY_LOSS_USD from .env (Finding 6.B)
         print(cb.status())
     else:
         from src.bot.engine_5m import Engine5m
@@ -352,6 +354,8 @@ def run_5m_loop(
                 # Reset per-window context
                 price_history.clear()
                 window_stopped.clear()
+                if live:
+                    engine.reset_window()   # clear re-entry guard (Finding 5.D)
                 btc_at_window_start = _fetch_price(binance_symbol)
                 up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
 
@@ -476,7 +480,8 @@ def run_5m_loop(
                 cur_up = market.up_price if market.condition_id == pos.condition_id else None
                 if cur_up is None:
                     if live:
-                        engine.place_exit(pos_id, market.token_id_up, "window_expired")
+                        # Use pos.token_id — market.token_id_up is the NEW window's token (Finding 1.C)
+                        engine.place_exit(pos_id, pos.token_id, "window_expired")
                     else:
                         engine.close(pos_id, 0.01, "window_expired", price_60s_after_entry=0.0)
                     continue
@@ -803,12 +808,20 @@ def run_multi_loop(configs: list[tuple[str, str, str]], live: bool = False) -> N
     configs: list of (asset, window, strategy) e.g.
       [("BTC","5m","mean_reversion"), ("SOL","15m","mean_reversion"), ("BTC","5m","momentum")]
     """
+    # Shared circuit breaker — one instance for all live threads so the daily loss
+    # limit is global across markets, not per-market. Thread-safe (Finding 2.B).
+    shared_cb = None
+    if live:
+        from src.bot.circuit_breaker import CircuitBreaker
+        shared_cb = CircuitBreaker()
+        print(f"[MULTI] {shared_cb.status()}")
+
     threads = []
     for asset, window, strategy in configs:
         name = f"{asset}-{window}-{strategy}"
         t = threading.Thread(
             target=run_5m_loop,
-            kwargs={"asset": asset, "live": live, "window": window, "strategy": strategy},
+            kwargs={"asset": asset, "live": live, "window": window, "strategy": strategy, "cb": shared_cb},
             name=name,
             daemon=True,
         )

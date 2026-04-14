@@ -6,7 +6,7 @@ configured limit, the bot is halted and must be manually reset.
 
 Usage in the live loop:
     from src.bot.circuit_breaker import CircuitBreaker
-    cb = CircuitBreaker(max_daily_loss_usd=50.0)
+    cb = CircuitBreaker()   # reads LIVE_MAX_DAILY_LOSS_USD from .env
 
     # After each closed trade:
     cb.record_trade(pnl_usd)
@@ -20,15 +20,23 @@ Usage in the live loop:
 
 State is persisted to output/5m_live/circuit_breaker.json so a restart
 does not reset the daily counter.
+
+Thread-safety: all public methods are protected by a threading.Lock so the
+circuit breaker can safely be shared across market threads (Finding 2.B).
 """
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_FILE = Path("output/5m_live/circuit_breaker.json")
+
+# Default limit — override via .env LIVE_MAX_DAILY_LOSS_USD (Finding 6.B)
+_DEFAULT_MAX_LOSS = float(os.environ.get("LIVE_MAX_DAILY_LOSS_USD", "50.0"))
 
 
 def _today_utc() -> str:
@@ -40,29 +48,45 @@ class CircuitBreaker:
     """
     Halts new entries when daily losses exceed max_daily_loss_usd.
     Resets automatically at UTC midnight.
+    Thread-safe: safe to share across multiple market threads.
     """
 
-    def __init__(self, max_daily_loss_usd: float = 50.0) -> None:
-        self.max_daily_loss_usd = max_daily_loss_usd
+    def __init__(self, max_daily_loss_usd: float | None = None) -> None:
+        self.max_daily_loss_usd = max_daily_loss_usd if max_daily_loss_usd is not None else _DEFAULT_MAX_LOSS
+        self._lock = threading.Lock()
         self._load()
 
     # ── Persistence ────────────────────────────────────────────────────────────
 
     def _load(self) -> None:
+        """Load state from disk. Must be called with lock held (or from __init__)."""
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         today = _today_utc()
         if STATE_FILE.exists():
             try:
                 data = json.loads(STATE_FILE.read_text())
                 if data.get("date") == today:
-                    self._date       = today
-                    self._daily_pnl  = float(data.get("daily_pnl", 0.0))
+                    self._date        = today
+                    self._daily_pnl   = float(data.get("daily_pnl", 0.0))
                     self._trade_count = int(data.get("trade_count", 0))
-                    self._tripped    = bool(data.get("tripped", False))
+                    self._tripped     = bool(data.get("tripped", False))
                     return
+                # Different date — new day, fall through to reset
             except Exception:
-                pass
-        # New day or corrupt file — reset
+                # Corrupt file — treat as tripped (safe default) rather than
+                # resetting the counter to 0, which could allow unlimited losses
+                # on the same day after a crash. (Finding 6.A)
+                print(
+                    "[CIRCUIT BREAKER] WARNING: corrupt state file — treating as TRIPPED. "
+                    "Delete output/5m_live/circuit_breaker.json to reset."
+                )
+                self._date        = today
+                self._daily_pnl   = 0.0
+                self._trade_count = 0
+                self._tripped     = True
+                self._save()
+                return
+        # Missing file or new day — fresh start
         self._date        = today
         self._daily_pnl   = 0.0
         self._trade_count = 0
@@ -70,6 +94,7 @@ class CircuitBreaker:
         self._save()
 
     def _save(self) -> None:
+        """Write state to disk. Must be called with lock held."""
         STATE_FILE.write_text(json.dumps({
             "date":        self._date,
             "daily_pnl":   round(self._daily_pnl, 4),
@@ -83,34 +108,40 @@ class CircuitBreaker:
 
     def record_trade(self, pnl_usd: float) -> None:
         """Call after every closed trade. Updates daily P&L and trips if limit hit."""
-        # Auto-reset on new day
-        if _today_utc() != self._date:
-            self._load()
+        with self._lock:
+            # Auto-reset on new day
+            if _today_utc() != self._date:
+                self._load()
 
-        self._daily_pnl   += pnl_usd
-        self._trade_count += 1
+            self._daily_pnl   += pnl_usd
+            self._trade_count += 1
 
-        if self._daily_pnl <= -abs(self.max_daily_loss_usd):
-            if not self._tripped:
-                self._tripped = True
-                print(
-                    f"\n[CIRCUIT BREAKER] TRIPPED — daily loss ${self._daily_pnl:.2f} "
-                    f"exceeds limit -${self.max_daily_loss_usd:.2f}. "
-                    f"No new entries until UTC midnight.\n"
-                )
-        self._save()
+            if self._daily_pnl <= -abs(self.max_daily_loss_usd):
+                if not self._tripped:
+                    self._tripped = True
+                    print(
+                        f"\n[CIRCUIT BREAKER] TRIPPED — daily loss ${self._daily_pnl:.2f} "
+                        f"exceeds limit -${self.max_daily_loss_usd:.2f}. "
+                        f"No new entries until UTC midnight.\n"
+                    )
+            self._save()
 
     def is_open(self) -> bool:
         """True = safe to enter new trades. False = halted."""
-        if _today_utc() != self._date:
-            self._load()   # new day → auto-reset
-        return not self._tripped
+        with self._lock:
+            if _today_utc() != self._date:
+                self._load()   # new day → auto-reset
+            return not self._tripped
 
     def status(self) -> str:
+        with self._lock:
+            tripped = self._tripped
+            pnl     = self._daily_pnl
+            count   = self._trade_count
         return (
-            f"[CIRCUIT BREAKER] {'OPEN' if self.is_open() else 'TRIPPED'} | "
-            f"today P&L=${self._daily_pnl:+.2f} | "
+            f"[CIRCUIT BREAKER] {'OPEN' if not tripped else 'TRIPPED'} | "
+            f"today P&L=${pnl:+.2f} | "
             f"limit=-${self.max_daily_loss_usd:.2f} | "
-            f"trades={self._trade_count} | "
+            f"trades={count} | "
             f"resets at UTC midnight"
         )

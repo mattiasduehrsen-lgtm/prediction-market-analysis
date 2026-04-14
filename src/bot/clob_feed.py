@@ -195,19 +195,19 @@ class ClobFeed:
 
         Used by the signal to filter wide-spread entries and to compute the
         realistic taker fill price (entry at best_ask, not midpoint).
+
+        Single lock for the full operation — avoids TOCTOU race where the book
+        changes between the first and second lock acquisitions (Finding 2.C).
         """
         with self._lock:
             up_id = self._token_id_up
             st    = self._states.get(up_id)
-
-        if not (up_id and st and st.last_updated > 0 and st.best_bid > 0):
-            return 0.0, 1.0, 0.0, 0.0, 0.0
-
-        with self._lock:
-            bb         = st.best_bid
-            ba         = st.best_ask
-            bid_depth  = round(sum(st.bids.values()), 2)
-            ask_depth  = round(sum(st.asks.values()), 2)
+            if not (up_id and st and st.last_updated > 0 and st.best_bid > 0):
+                return 0.0, 1.0, 0.0, 0.0, 0.0
+            bb        = st.best_bid
+            ba        = st.best_ask
+            bid_depth = round(sum(st.bids.values()), 2)
+            ask_depth = round(sum(st.asks.values()), 2)
 
         spread = round(ba - bb, 6)
         return bb, ba, spread, bid_depth, ask_depth

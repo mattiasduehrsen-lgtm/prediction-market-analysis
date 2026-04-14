@@ -21,14 +21,15 @@ State machine per position:
   PENDING_ENTRY → CANCELLED                       (window closed, no fill)
 
 Files (separate from paper trading):
-  output/5m_live/positions.csv   — open + pending positions
-  output/5m_live/trades.csv      — closed trade history
-  output/5m_live/summary.json    — running P&L
+  output/5m_live/positions_{tag}.csv   — open + pending positions
+  output/5m_live/trades_{tag}.csv      — closed trade history
+  output/5m_live/summary_{tag}.json    — running P&L
 """
 from __future__ import annotations
 
 import csv
 import json
+import os
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -40,10 +41,7 @@ from py_clob_client.order_builder.constants import BUY, SELL
 
 from src.bot.clob_auth import get_client
 
-OUT_DIR        = Path("output/5m_live")
-POSITIONS_FILE = OUT_DIR / "positions.csv"
-TRADES_FILE    = OUT_DIR / "trades.csv"
-SUMMARY_FILE   = OUT_DIR / "summary.json"
+OUT_DIR = Path("output/5m_live")
 
 STARTING_EQUITY = 1000.0
 POSITION_SIZE   = 20.0    # USD per trade (real money)
@@ -78,6 +76,9 @@ POSITION_FIELDS = [
     "window_end_ts", "opened_at",
     # Order tracking
     "entry_order_id", "exit_order_id",
+    "token_id",          # ERC-1155 token ID for our side — needed for any exit without market context
+    "exit_placed_at",    # timestamp when exit order was posted — for stuck-exit timeout
+    "exit_reason",       # reason that triggered the exit — preserved through PENDING_EXIT
     # Entry context (mirrors paper engine for ML parity)
     "btc_price_at_window_start", "btc_price_at_entry", "btc_pct_change_at_entry",
     "up_price_at_window_start", "secs_remaining_at_entry", "liquidity",
@@ -86,7 +87,7 @@ POSITION_FIELDS = [
 
 TRADE_FIELDS = POSITION_FIELDS + [
     "price_60s_after_entry",
-    "exit_price", "exit_fee_usd", "exit_reason",
+    "exit_price", "exit_fee_usd",
     "closed_at", "hold_seconds", "pnl_usd", "return_pct",
 ]
 
@@ -106,9 +107,12 @@ class LivePosition5m:
     entry_fee_usd: float
     window_end_ts: float
     opened_at: float    # time buy order was placed (not fill time)
-    # Order IDs
+    # Order IDs and exit tracking
     entry_order_id: str = ""
     exit_order_id: str = ""
+    token_id: str = ""           # ERC-1155 token ID for our side
+    exit_placed_at: float = 0.0  # timestamp when exit order was posted
+    exit_reason: str = ""        # reason that triggered the exit
     # Entry context
     btc_price_at_window_start: float = 0.0
     btc_price_at_entry: float = 0.0
@@ -138,6 +142,9 @@ class ClosedLiveTrade5m:
     opened_at: float
     entry_order_id: str = ""
     exit_order_id: str = ""
+    token_id: str = ""
+    exit_placed_at: float = 0.0
+    exit_reason: str = ""
     btc_price_at_window_start: float = 0.0
     btc_price_at_entry: float = 0.0
     btc_pct_change_at_entry: float = 0.0
@@ -150,7 +157,6 @@ class ClosedLiveTrade5m:
     price_60s_after_entry: float = 0.0
     exit_price: float = 0.0
     exit_fee_usd: float = 0.0
-    exit_reason: str = ""
     closed_at: float = 0.0
     hold_seconds: float = 0.0
     pnl_usd: float = 0.0
@@ -159,26 +165,32 @@ class ClosedLiveTrade5m:
 
 # ── Persistence ────────────────────────────────────────────────────────────────
 
-def _save_positions(positions: dict[str, LivePosition5m]) -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(POSITIONS_FILE, "w", newline="", encoding="utf-8") as f:
+STR_FIELDS_POS   = {"position_id","condition_id","slug","asset","side","state",
+                    "entry_order_id","exit_order_id","token_id","exit_reason"}
+STR_FIELDS_TRADE = STR_FIELDS_POS | {"exit_reason"}
+
+
+def _save_positions(positions: dict[str, LivePosition5m], path: Path) -> None:
+    """Atomic write — positions file is always complete or previous version."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=POSITION_FIELDS)
         writer.writeheader()
         for p in positions.values():
             writer.writerow(asdict(p))
+    os.replace(tmp, path)
 
 
-def _load_positions() -> dict[str, LivePosition5m]:
-    if not POSITIONS_FILE.exists():
+def _load_positions(path: Path) -> dict[str, LivePosition5m]:
+    if not path.exists():
         return {}
     out: dict[str, LivePosition5m] = {}
-    str_fields = {"position_id","condition_id","slug","asset","side","state",
-                  "entry_order_id","exit_order_id"}
-    with open(POSITIONS_FILE, newline="", encoding="utf-8") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             try:
                 out[row["position_id"]] = LivePosition5m(**{
-                    k: (row[k] if k in str_fields else float(row[k]))
+                    k: (row[k] if k in STR_FIELDS_POS else float(row.get(k, 0) or 0))
                     for k in POSITION_FIELDS if k in row
                 })
             except Exception:
@@ -186,31 +198,29 @@ def _load_positions() -> dict[str, LivePosition5m]:
     return out
 
 
-def _append_trade(trade: ClosedLiveTrade5m) -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    write_header = not TRADES_FILE.exists()
-    with open(TRADES_FILE, "a", newline="", encoding="utf-8") as f:
+def _append_trade(trade: ClosedLiveTrade5m, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
         if write_header:
             writer.writeheader()
         writer.writerow(asdict(trade))
 
 
-def _compute_summary() -> dict[str, Any]:
-    if not TRADES_FILE.exists():
+def _compute_summary(trades_path: Path) -> dict[str, Any]:
+    if not trades_path.exists():
         return {
             "equity": STARTING_EQUITY, "closed_trades": 0,
             "wins": 0, "losses": 0, "win_rate": 0.0,
             "total_pnl": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
         }
     trades: list[ClosedLiveTrade5m] = []
-    str_fields = {"position_id","condition_id","slug","asset","side","state",
-                  "entry_order_id","exit_order_id","exit_reason"}
-    with open(TRADES_FILE, newline="", encoding="utf-8") as f:
+    with open(trades_path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             try:
                 trades.append(ClosedLiveTrade5m(**{
-                    k: (row[k] if k in str_fields else float(row[k]))
+                    k: (row[k] if k in STR_FIELDS_TRADE else float(row.get(k, 0) or 0))
                     for k in TRADE_FIELDS if k in row
                 }))
             except Exception:
@@ -239,14 +249,38 @@ class LiveEngine5m:
     Call check_pending() every poll to advance the order state machine.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tag: str = "default") -> None:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
-        self._client = get_client()
-        self.positions: dict[str, LivePosition5m] = _load_positions()
+        # Per-market files prevent multi-thread overwrites (Finding 2.A)
+        self._positions_file = OUT_DIR / f"positions_{tag}.csv"
+        self._trades_file    = OUT_DIR / f"trades_{tag}.csv"
+        self._summary_file   = OUT_DIR / f"summary_{tag}.json"
+        self._tag            = tag
+        self._auth_failed    = False   # set on 401 — halts new entries (Finding 3.A)
+        self._cancelled_this_window: set[str] = set()  # re-entry guard (Finding 5.D)
+        self._client  = get_client()
+        self.positions: dict[str, LivePosition5m] = _load_positions(self._positions_file)
         open_count    = sum(1 for p in self.positions.values() if p.state == State.OPEN)
         pending_count = sum(1 for p in self.positions.values() if p.state == State.PENDING_ENTRY)
-        print(f"[LIVE5M] Loaded {open_count} open, {pending_count} pending-entry positions")
+        print(f"[LIVE5M:{tag}] Loaded {open_count} open, {pending_count} pending-entry positions")
+        self._repair_startup_state()
         self._cancel_expired_entries()
+
+    def _repair_startup_state(self) -> None:
+        """
+        Startup repair: fix any PENDING_EXIT positions missing exit_placed_at.
+        Without this, stuck-exit detection uses age=0 and the timeout never fires.
+        Finding 1.E.
+        """
+        now = time.time()
+        repaired = 0
+        for pos in self.positions.values():
+            if pos.state == State.PENDING_EXIT and pos.exit_placed_at == 0.0:
+                pos.exit_placed_at = now
+                repaired += 1
+        if repaired:
+            print(f"[LIVE5M:{self._tag}] Repaired exit_placed_at for {repaired} PENDING_EXIT position(s)")
+            _save_positions(self.positions, self._positions_file)
 
     def _cancel_expired_entries(self) -> None:
         """On startup, cancel any PENDING_ENTRY orders whose window already closed."""
@@ -255,6 +289,14 @@ class LiveEngine5m:
             if pos.state == State.PENDING_ENTRY and pos.window_end_ts < now:
                 print(f"[LIVE5M] STARTUP cancel orphaned entry {pos_id} (window expired)")
                 self.cancel_entry(pos_id)
+
+    def reset_window(self) -> None:
+        """
+        Clear the per-window re-entry guard. Call at the start of every new
+        window so a fresh signal on the same market can trigger an entry again.
+        Finding 5.D.
+        """
+        self._cancelled_this_window.clear()
 
     def already_in(self, condition_id: str) -> bool:
         return any(
@@ -283,31 +325,31 @@ class LiveEngine5m:
         price_30s_before_entry: float = 0.0,
     ) -> LivePosition5m | None:
         """Place a GTC limit BUY order. Returns position in PENDING_ENTRY state."""
+        # Auth failure guard — halt new entries after a 401 (Finding 3.A)
+        if self._auth_failed:
+            print(f"[LIVE5M] BLOCKED — auth failed, not placing new entries")
+            return None
+
+        # Re-entry guard — don't re-enter a market we already cancelled this window (Finding 5.D)
+        if condition_id in self._cancelled_this_window:
+            print(f"[LIVE5M] Skip — already cancelled entry for {condition_id} this window")
+            return None
+
         if self.already_in(condition_id):
             return None
 
-        shares = round(POSITION_SIZE / entry_price, 4)
+        # Price sanity check — CLOB feed garbage in → bad order (Finding 5.A)
+        if not (0.01 <= entry_price <= 0.99):
+            print(f"[LIVE5M] Skip — entry_price {entry_price} out of sane range [0.01, 0.99]")
+            return None
+        if not (0.01 <= take_profit <= 0.99):
+            print(f"[LIVE5M] Skip — take_profit {take_profit} out of sane range [0.01, 0.99]")
+            return None
+
+        # Round shares to 2dp — Polymarket CLOB standard (Finding 5.C)
+        shares = round(POSITION_SIZE / entry_price, 2)
         if shares < MIN_SHARES:
             print(f"[LIVE5M] Skip — {shares:.2f} shares below minimum {MIN_SHARES}")
-            return None
-
-        # Place the order
-        try:
-            order_args = OrderArgs(
-                price=entry_price,
-                size=shares,
-                side=BUY,
-                token_id=token_id,
-            )
-            signed = self._client.create_order(order_args)
-            resp   = self._client.post_order(signed, OrderType.GTC)
-        except Exception as exc:
-            print(f"[LIVE5M] Entry order failed: {exc}")
-            return None
-
-        order_id = resp.get("orderID", "")
-        if not order_id:
-            print(f"[LIVE5M] Entry order rejected: {resp}")
             return None
 
         # Derived context fields
@@ -322,6 +364,9 @@ class LiveEngine5m:
         if price_60s_before_entry > 0:
             price_velocity = round((entry_price - price_60s_before_entry) / 60.0, 6)
 
+        # Build and persist position BEFORE placing the order — if we crash between
+        # place and record, we'll see the PENDING_ENTRY on restart and can check/cancel.
+        # (Finding 1.F pre-save)
         pos = LivePosition5m(
             position_id=str(uuid.uuid4())[:8],
             condition_id=condition_id,
@@ -336,7 +381,8 @@ class LiveEngine5m:
             entry_fee_usd=0.0,
             window_end_ts=window_end_ts,
             opened_at=now,
-            entry_order_id=order_id,
+            entry_order_id="__pending__",   # placeholder until API returns order_id
+            token_id=token_id,
             btc_price_at_window_start=btc_price_at_window_start,
             btc_price_at_entry=btc_price_at_entry,
             btc_pct_change_at_entry=btc_pct,
@@ -348,7 +394,40 @@ class LiveEngine5m:
             price_velocity=price_velocity,
         )
         self.positions[pos.position_id] = pos
-        _save_positions(self.positions)
+        _save_positions(self.positions, self._positions_file)
+
+        # Place the order
+        try:
+            order_args = OrderArgs(
+                price=entry_price,
+                size=shares,
+                side=BUY,
+                token_id=token_id,
+            )
+            signed = self._client.create_order(order_args)
+            resp   = self._client.post_order(signed, OrderType.GTC)
+        except Exception as exc:
+            exc_str = str(exc)
+            if "401" in exc_str or "Unauthorized" in exc_str:
+                self._auth_failed = True
+                print(f"[LIVE5M] AUTH FAILURE — halting new entries: {exc}")
+            else:
+                print(f"[LIVE5M] Entry order failed: {exc}")
+            # Remove the pre-saved position since no order was placed
+            self.positions.pop(pos.position_id, None)
+            _save_positions(self.positions, self._positions_file)
+            return None
+
+        order_id = resp.get("orderID", "")
+        if not order_id:
+            print(f"[LIVE5M] Entry order rejected: {resp}")
+            self.positions.pop(pos.position_id, None)
+            _save_positions(self.positions, self._positions_file)
+            return None
+
+        # Update with real order_id now that we have it
+        pos.entry_order_id = order_id
+        _save_positions(self.positions, self._positions_file)
 
         print(
             f"[LIVE5M] ORDER  {pos.position_id} | {asset} {side} "
@@ -363,13 +442,16 @@ class LiveEngine5m:
         if pos is None or pos.state != State.PENDING_ENTRY:
             return
         try:
-            self._client.cancel(pos.entry_order_id)
+            if pos.entry_order_id and pos.entry_order_id != "__pending__":
+                self._client.cancel(pos.entry_order_id)
             print(f"[LIVE5M] CANCEL {position_id} | entry order cancelled (window expired)")
         except Exception as exc:
             print(f"[LIVE5M] Cancel failed for {position_id}: {exc}")
+        # Record so we don't re-enter this market in the same window (Finding 5.D)
+        self._cancelled_this_window.add(pos.condition_id)
         pos.state = State.CANCELLED
         self.positions.pop(position_id, None)
-        _save_positions(self.positions)
+        _save_positions(self.positions, self._positions_file)
 
     # ── Fill detection ─────────────────────────────────────────────────────────
 
@@ -382,6 +464,10 @@ class LiveEngine5m:
         now = time.time()
         for pos_id, pos in list(self.positions.items()):
             if pos.state != State.PENDING_ENTRY:
+                continue
+
+            # Skip placeholder entries — order not yet placed (race with place_entry crash)
+            if pos.entry_order_id == "__pending__":
                 continue
 
             # Timeout: cancel entries that price has moved away from
@@ -397,16 +483,24 @@ class LiveEngine5m:
                 print(f"[LIVE5M] get_order failed for {pos_id}: {exc}")
                 continue
 
-            status = order.get("status", "")
-            size_matched = float(order.get("size_matched", 0))
+            status       = order.get("status", "")
+            raw_matched  = order.get("size_matched", 0) or 0
+            size_matched = float(raw_matched)
 
             if status in ("matched", "filled") and size_matched > 0:
-                pos.shares = size_matched
+                # Use actual fill price if available (Finding 3.C)
+                avg_price = order.get("average_price")
+                if avg_price:
+                    try:
+                        pos.entry_price = round(float(avg_price), 6)
+                    except (TypeError, ValueError):
+                        pass
+                pos.shares = round(size_matched, 2)
                 pos.state  = State.OPEN
-                _save_positions(self.positions)
+                _save_positions(self.positions, self._positions_file)
                 print(
                     f"[LIVE5M] FILLED {pos_id} | {pos.asset} {pos.side} "
-                    f"{size_matched:.2f} shares @ {pos.entry_price:.3f}"
+                    f"{pos.shares:.2f} shares @ {pos.entry_price:.3f}"
                 )
 
     # ── Exit ──────────────────────────────────────────────────────────────────
@@ -420,8 +514,8 @@ class LiveEngine5m:
     ) -> None:
         """
         Place an exit (SELL) order.
-        - take_profit / force_exit_price: GTC limit at take_profit price (sits on book)
-        - hard_stop / trailing_stop / force_exit_time: aggressive limit at 0.01
+        - take_profit: GTC limit at take_profit price (sits on book)
+        - hard_stop / force_exit_time / window_expired / etc: aggressive FOK at 0.01
           (immediately matches best available bid — effective market order)
         """
         pos = self.positions.get(position_id)
@@ -435,7 +529,8 @@ class LiveEngine5m:
             "hard_stop", "hard_stop_floor",
             "soft_exit_stalled",
             "trailing_stop_z2", "trailing_stop_z3",
-            "force_exit_time", "window_expired",
+            "force_exit_time", "force_exit_stuck",
+            "window_expired",
         }
         if exit_reason in aggressive_reasons:
             exit_price = AGGRESSIVE_EXIT_PRICE
@@ -455,7 +550,12 @@ class LiveEngine5m:
             signed = self._client.create_order(order_args)
             resp   = self._client.post_order(signed, order_type)
         except Exception as exc:
-            print(f"[LIVE5M] Exit order failed for {position_id}: {exc}")
+            exc_str = str(exc)
+            if "401" in exc_str or "Unauthorized" in exc_str:
+                self._auth_failed = True
+                print(f"[LIVE5M] AUTH FAILURE during exit for {position_id}: {exc}")
+            else:
+                print(f"[LIVE5M] Exit order failed for {position_id}: {exc}")
             return
 
         order_id = resp.get("orderID", "")
@@ -464,9 +564,12 @@ class LiveEngine5m:
             # transition state or the position will be stuck in PENDING_EXIT forever.
             print(f"[LIVE5M] Exit order rejected (no orderID): {resp}")
             return
-        pos.exit_order_id = order_id
-        pos.state = State.PENDING_EXIT
-        _save_positions(self.positions)
+
+        pos.exit_order_id  = order_id
+        pos.exit_placed_at = time.time()
+        pos.exit_reason    = exit_reason
+        pos.state          = State.PENDING_EXIT
+        _save_positions(self.positions, self._positions_file)
 
         print(
             f"[LIVE5M] EXIT   {position_id} | {exit_reason} "
@@ -474,9 +577,39 @@ class LiveEngine5m:
             f"order_id={order_id[:16] if order_id else 'FOK-immediate'}..."
         )
 
-        # FOK resolves immediately — check right away
+        # FOK: verify it actually filled before settling — a FOK with no bids is killed silently
         if order_type == OrderType.FOK:
-            self._settle_exit(position_id, exit_price, exit_reason, price_60s_after_entry)
+            try:
+                if order_id:
+                    fok_status  = self._client.get_order(order_id)
+                    raw_matched = fok_status.get("size_matched", 0) or 0
+                    matched     = float(raw_matched)
+                    if matched <= 0:
+                        print(f"[LIVE5M] FOK KILLED for {position_id} — no bids, resetting to OPEN")
+                        pos.state          = State.OPEN
+                        pos.exit_order_id  = ""
+                        pos.exit_placed_at = 0.0
+                        pos.exit_reason    = ""
+                        _save_positions(self.positions, self._positions_file)
+                        return
+                    actual_exit = float(fok_status.get("average_price") or exit_price)
+                else:
+                    print(f"[LIVE5M] FOK REJECTED (no orderID) for {position_id} — resetting to OPEN")
+                    pos.state          = State.OPEN
+                    pos.exit_order_id  = ""
+                    pos.exit_placed_at = 0.0
+                    pos.exit_reason    = ""
+                    _save_positions(self.positions, self._positions_file)
+                    return
+            except Exception as exc:
+                print(f"[LIVE5M] FOK status check failed for {position_id}: {exc} — resetting to OPEN")
+                pos.state          = State.OPEN
+                pos.exit_order_id  = ""
+                pos.exit_placed_at = 0.0
+                pos.exit_reason    = ""
+                _save_positions(self.positions, self._positions_file)
+                return
+            self._settle_exit(position_id, actual_exit, exit_reason, price_60s_after_entry)
 
     def check_pending_exits(self, price_60s_after_entry: float = 0.0) -> list[ClosedLiveTrade5m]:
         """
@@ -490,21 +623,25 @@ class LiveEngine5m:
             if pos.state != State.PENDING_EXIT:
                 continue
 
-            # Rescue: GTC exit stuck too long — re-submit as aggressive FOK
-            if not pos.exit_order_id or (now - pos.opened_at > EXIT_STUCK_TIMEOUT):
-                age = now - pos.opened_at
-                print(f"[LIVE5M] STUCK EXIT {pos_id} — pending {age:.0f}s, re-submitting as FOK")
-                # Cancel existing GTC order if we have one
-                if pos.exit_order_id:
+            # Rescue: GTC exit stuck too long — cancel and re-submit as aggressive FOK
+            exit_age = (now - pos.exit_placed_at) if pos.exit_placed_at > 0 else 0
+            if not pos.exit_order_id or exit_age > EXIT_STUCK_TIMEOUT:
+                age_str = f"{exit_age:.0f}s" if pos.exit_placed_at > 0 else "unknown age"
+                print(f"[LIVE5M] STUCK EXIT {pos_id} — pending {age_str}, re-submitting as FOK")
+                if pos.exit_order_id and pos.exit_order_id != "__pending__":
                     try:
                         self._client.cancel(pos.exit_order_id)
                     except Exception:
                         pass
-                # Reset to OPEN so place_exit() can fire again as aggressive
-                pos.state = State.OPEN
-                pos.exit_order_id = ""
-                _save_positions(self.positions)
-                self._settle_exit(pos_id, AGGRESSIVE_EXIT_PRICE, "force_exit_stuck", price_60s_after_entry)
+                pos.state          = State.OPEN
+                pos.exit_order_id  = ""
+                pos.exit_placed_at = 0.0
+                _save_positions(self.positions, self._positions_file)
+                # place_exit() requires token_id — use stored value
+                if pos.token_id:
+                    self.place_exit(pos_id, pos.token_id, "force_exit_stuck", price_60s_after_entry)
+                else:
+                    print(f"[LIVE5M] CRITICAL: no token_id for {pos_id}, cannot place rescue exit")
                 continue
 
             try:
@@ -515,8 +652,8 @@ class LiveEngine5m:
 
             status = order.get("status", "")
             if status in ("matched", "filled"):
-                actual_exit = float(order.get("average_price", pos.take_profit))
-                trade = self._settle_exit(pos_id, actual_exit, "take_profit", price_60s_after_entry)
+                actual_exit = float(order.get("average_price") or pos.take_profit)
+                trade = self._settle_exit(pos_id, actual_exit, pos.exit_reason or "take_profit", price_60s_after_entry)
                 if trade:
                     closed.append(trade)
         return closed
@@ -531,26 +668,32 @@ class LiveEngine5m:
         """Record the closed trade and remove from active positions."""
         pos = self.positions.pop(position_id, None)
         if pos is None:
-            return
+            return None
 
         gross_proceeds = pos.shares * actual_exit_price
         pnl_usd    = gross_proceeds - pos.size_usd
         return_pct = pnl_usd / pos.size_usd * 100
         hold_sec   = time.time() - pos.opened_at
 
+        # Build the closed trade — note exit_reason comes from the parameter,
+        # not pos.exit_reason, since the reason may be overridden (e.g. force_exit_stuck).
+        # We must exclude exit_reason from asdict(pos) to avoid duplicate-kwarg TypeError.
+        pos_dict = asdict(pos)
+        pos_dict.pop("exit_reason", None)
+
         trade = ClosedLiveTrade5m(
-            **asdict(pos),
+            **pos_dict,
+            exit_reason=exit_reason,
             price_60s_after_entry=round(price_60s_after_entry, 4),
             exit_price=actual_exit_price,
             exit_fee_usd=0.0,    # maker orders: 0% fee
-            exit_reason=exit_reason,
             closed_at=time.time(),
             hold_seconds=round(hold_sec, 1),
             pnl_usd=round(pnl_usd, 4),
             return_pct=round(return_pct, 2),
         )
-        _append_trade(trade)
-        _save_positions(self.positions)
+        _append_trade(trade, self._trades_file)
+        _save_positions(self.positions, self._positions_file)
 
         emoji = "WIN " if pnl_usd > 0 else "LOSS"
         print(
@@ -562,10 +705,10 @@ class LiveEngine5m:
     # ── Summary ───────────────────────────────────────────────────────────────
 
     def summary(self) -> dict[str, Any]:
-        s = _compute_summary()
+        s = _compute_summary(self._trades_file)
         s["open_positions"]    = sum(1 for p in self.positions.values() if p.state == State.OPEN)
         s["pending_positions"] = sum(1 for p in self.positions.values() if p.state == State.PENDING_ENTRY)
         return s
 
     def save_summary(self) -> None:
-        SUMMARY_FILE.write_text(json.dumps(self.summary(), indent=2), encoding="utf-8")
+        self._summary_file.write_text(json.dumps(self.summary(), indent=2), encoding="utf-8")

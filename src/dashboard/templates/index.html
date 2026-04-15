@@ -298,6 +298,10 @@
 
   <div class="cards">
     <div class="card">
+      <div class="label">Wallet Balance</div>
+      <div class="value yellow" id="eq-balance">$—</div>
+    </div>
+    <div class="card">
       <div class="label">Live P&L</div>
       <div class="value" id="eq-live-pnl">$0.00</div>
     </div>
@@ -677,6 +681,18 @@ async function refreshLiveLog() {
 // ── Equity tab ───────────────────────────────────────────────────────────────
 let eqChart = null;
 
+async function refreshBalance() {
+  try {
+    const d = await fetch('/api/live/balance').then(r => r.json());
+    const el = $('eq-balance');
+    if (d.usdc !== null && d.usdc !== undefined) {
+      el.textContent = '$' + parseFloat(d.usdc).toFixed(2);
+    } else {
+      el.textContent = '$—';
+    }
+  } catch(e) {}
+}
+
 async function refreshEquity() {
   try {
     const d = await fetch('/api/equity').then(r => r.json());
@@ -785,6 +801,7 @@ function refreshAll() {
   refreshLiveTrades();
   refreshLiveLog();
   refreshEquity();
+  refreshBalance();
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 

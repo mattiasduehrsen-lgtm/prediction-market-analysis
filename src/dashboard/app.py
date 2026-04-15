@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template
@@ -341,3 +342,34 @@ def api_live_log():
         return jsonify({"lines": events[-80:]})
     except Exception:
         return jsonify({"lines": []})
+
+
+# ── Wallet balance endpoint ────────────────────────────────────────────────────
+# Cached so the dashboard doesn't hammer the CLOB API on every 5s poll.
+_balance_cache: dict = {"usdc": None, "fetched_at": 0.0}
+_BALANCE_TTL = 30.0   # seconds between live refreshes
+
+
+@app.route("/api/live/balance")
+def api_live_balance():
+    now = time.time()
+    if now - _balance_cache["fetched_at"] < _BALANCE_TTL and _balance_cache["usdc"] is not None:
+        return jsonify({"usdc": _balance_cache["usdc"]})
+    try:
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        from src.bot.clob_auth import get_client
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        client = get_client()
+        resp = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        # balance is returned in USDC micro-units (6 decimals)
+        raw = float(resp.get("balance", 0))
+        usdc = round(raw / 1_000_000, 2)
+        _balance_cache["usdc"] = usdc
+        _balance_cache["fetched_at"] = now
+        return jsonify({"usdc": usdc})
+    except Exception as e:
+        return jsonify({"usdc": None, "error": str(e)})

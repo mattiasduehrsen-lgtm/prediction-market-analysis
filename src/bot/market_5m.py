@@ -51,7 +51,7 @@ MIN_SECONDS      = 240    # enter in first 60s of 5m window (300 - 60 = 240s rem
 FORCE_EXIT       = 5      # close at 5s remaining — avoid settlement chaos
 SOFT_EXIT_SECS   = 115    # soft exit: bail on stalled reversions with ~2min left
 SOFT_EXIT_PRICE  = 0.25   # exit at 115s if price ≤ 0.25
-BTC_SKIP_RATE    = 20.0   # $/min BTC move against your side → skip entry
+BTC_SKIP_RATE    = float(os.environ.get("BTC_SKIP_RATE", "50.0"))  # $/min BTC move against your side → skip entry
 BTC_MAGNITUDE_MAX = 0.05  # max Chainlink % move from window start to allow entry
 MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiquid/stale book)
 MIN_LIQUIDITY    = 15_000  # Cowork: <10k=53.4% WR, 10-20k=45.4%, >=20k=29.1%; set to 15k to exclude danger band

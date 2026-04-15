@@ -2,6 +2,31 @@
 
 ---
 
+## v1.6 — 2026-04-15
+**BTC_SKIP_RATE configurable via .env; default raised from $20 → $50/min**
+
+**Problem:** Paper bot and live bot are separate processes with independent BTC price
+histories. At the moment of decision they computed slightly different `btc_rate_per_min`
+values — the paper process saw ~-$15/min (passed), the live process saw -$30.6/min
+(blocked by the -$20 threshold). The trade went on to win +50%, confirming the filter
+gave a false block.
+
+Root causes:
+1. Two separate Python processes each maintain their own `btc_history` list, so the
+   rate calculation samples slightly different time windows — one can be above the
+   threshold while the other is below it.
+2. `BTC_SKIP_RATE = 20.0` was too tight. At $74k BTC that's only 0.027%/min — normal
+   short-term jitter can cross the line.
+
+**Fix:** `BTC_SKIP_RATE` now reads from `.env` (default 50.0 $/min). Set in `.env`:
+```
+BTC_SKIP_RATE=50.0
+```
+
+**Files:** `src/bot/market_5m.py`, `.env`
+
+---
+
 ## v1.5 — 2026-04-15
 **Cross-window filter configurable via .env**
 

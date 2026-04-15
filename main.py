@@ -464,10 +464,13 @@ def run_5m_loop(
                 for closed_trade in engine.check_pending_exits():
                     if cb:
                         cb.record_trade(closed_trade.pnl_usd)
-                # Cancel any pending entries whose window has expired
+                # Cancel any pending entries whose window has expired.
+                # Finding 4 (HIGH): use pos.window_end_ts instead of secs — secs may
+                # already reflect the NEW window (~300s) after a market roll, causing
+                # the secs<=0 guard to never fire for old PENDING_ENTRY positions.
                 for pos_id, pos in list(engine.positions.items()):
                     from src.bot.live_engine_5m import State
-                    if pos.state == State.PENDING_ENTRY and secs <= 0:
+                    if pos.state == State.PENDING_ENTRY and pos.window_end_ts < time.time():
                         engine.cancel_entry(pos_id)
 
             # ── Check exits ────────────────────────────────────────────────────
@@ -670,19 +673,16 @@ def run_5m_loop(
                         if asset == "ETH" and cheap_side_velocity < -0.006:
                             print(f"  [MONITOR] ETH entry with cheap_side_velocity={cheap_side_velocity:+.4f} (below -0.006 threshold)")
 
-                        # Fill price depends on order type:
-                        #   Live (limit/maker): post at midpoint — no fee, better price
-                        #   Paper (taker sim): use book_ask — conservative baseline
+                        # Finding 6 (MEDIUM): use taker price for both live and paper.
+                        # The previous live midpoint (maker limit) frequently timed out
+                        # without filling in fast markets — causing live to miss entries
+                        # that paper caught at book_ask. Taker pricing ensures consistent
+                        # fill rates at the cost of a small fee difference.
                         if ws_ok and book_ask > 0 and book_bid > 0:
-                            if live:
-                                # Midpoint limit order — sits between bid and ask, fills as maker
-                                midpoint = round((book_bid + book_ask) / 2, 4)
-                                entry_price = midpoint if side == "UP" else round(1.0 - midpoint, 4)
+                            if side == "UP":
+                                entry_price = book_ask
                             else:
-                                if side == "UP":
-                                    entry_price = book_ask
-                                else:
-                                    entry_price = round(1.0 - book_bid, 6)
+                                entry_price = round(1.0 - book_bid, 6)
 
                         # ── Dynamic TP + negative-EV gate ────────────────────
                         tp = take_profit_price(entry_price)

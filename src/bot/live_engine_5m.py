@@ -285,6 +285,16 @@ class LiveEngine5m:
             print(f"[LIVE5M:{self._tag}] Repaired exit_placed_at for {repaired} PENDING_EXIT position(s)")
             _save_positions(self.positions, self._positions_file)
 
+        # Finding 7 (MEDIUM): Log open/pending counts on startup so operator can
+        # cross-check the Polymarket UI for any untracked holdings.
+        open_count         = sum(1 for p in self.positions.values() if p.state == State.OPEN)
+        pending_exit_count = sum(1 for p in self.positions.values() if p.state == State.PENDING_EXIT)
+        if open_count + pending_exit_count > 0:
+            print(
+                f"[LIVE5M:{self._tag}] STARTUP: {open_count} OPEN, {pending_exit_count} PENDING_EXIT. "
+                f"Cross-check your Polymarket portfolio to verify these match."
+            )
+
     def _cancel_expired_entries(self) -> None:
         """On startup, cancel any PENDING_ENTRY orders whose window already closed."""
         now = time.time()
@@ -335,7 +345,9 @@ class LiveEngine5m:
 
         # Auth failure guard — halt new entries after a 401 (Finding 3.A)
         if self._auth_failed:
-            print(f"[LIVE5M] BLOCKED — auth failed, not placing new entries")
+            # Finding 8 (MEDIUM): clearer message so operator knows what action to take
+            print(f"[LIVE5M] BLOCKED — auth failed (401). Restart bot after fixing credentials. "
+                  f"Existing positions are still being managed.")
             return None
 
         # Re-entry guard — don't re-enter a market we already cancelled this window (Finding 5.D)
@@ -455,6 +467,37 @@ class LiveEngine5m:
             print(f"[LIVE5M] CANCEL {position_id} | entry order cancelled (window expired)")
         except Exception as exc:
             print(f"[LIVE5M] Cancel failed for {position_id}: {exc}")
+
+        # Finding 1 (CRITICAL): Verify the cancel actually worked — if the order filled
+        # between the last poll and the cancel call, transition to OPEN instead of
+        # discarding the shares. Without this, real shares are silently lost.
+        if pos.entry_order_id and pos.entry_order_id != "__pending__":
+            try:
+                order        = self._client.get_order(pos.entry_order_id)
+                status       = order.get("status", "")
+                raw_matched  = order.get("size_matched", 0) or 0
+                size_matched = float(raw_matched)
+                if status in ("matched", "filled") and size_matched > 0:
+                    avg_price = order.get("average_price")
+                    if avg_price:
+                        try:
+                            pos.entry_price = round(float(avg_price), 6)
+                        except (TypeError, ValueError):
+                            pass
+                    pos.shares = round(size_matched, 2)
+                    pos.state  = State.OPEN
+                    _save_positions(self.positions, self._positions_file)
+                    print(
+                        f"[LIVE5M] CANCEL→OPEN {position_id} — order filled before cancel; "
+                        f"now tracking {pos.shares:.2f} shares @ {pos.entry_price:.4f}"
+                    )
+                    return   # do NOT remove or mark cancelled
+            except Exception as exc2:
+                print(
+                    f"[LIVE5M] Post-cancel status check failed for {position_id}: {exc2} — "
+                    f"treating as cancelled; verify manually on Polymarket"
+                )
+
         # Record so we don't re-enter this market in the same window (Finding 5.D)
         self._cancelled_this_window.add(pos.condition_id)
         pos.state = State.CANCELLED
@@ -474,8 +517,19 @@ class LiveEngine5m:
             if pos.state != State.PENDING_ENTRY:
                 continue
 
-            # Skip placeholder entries — order not yet placed (race with place_entry crash)
+            # Finding 2 (CRITICAL): Placeholder entries — API call was never made (crash
+            # between pre-save and post_order). If stuck >30s the API call is gone — clean up.
             if pos.entry_order_id == "__pending__":
+                orphan_age = now - pos.opened_at
+                if orphan_age > 30:
+                    print(
+                        f"[LIVE5M] ORPHAN {pos_id} — stuck as __pending__ for {orphan_age:.0f}s "
+                        f"(API call never completed), removing"
+                    )
+                    self._cancelled_this_window.add(pos.condition_id)
+                    pos.state = State.CANCELLED
+                    self.positions.pop(pos_id, None)
+                    _save_positions(self.positions, self._positions_file)
                 continue
 
             # Timeout: cancel entries that price has moved away from
@@ -548,6 +602,15 @@ class LiveEngine5m:
             exit_price = pos.take_profit
             order_type = OrderType.GTC
 
+        # Finding 3 (HIGH): Pre-save as PENDING_EXIT before the API call. If the process
+        # crashes between post_order() and the save, restart sees PENDING_EXIT and checks
+        # fills rather than placing a duplicate exit order.
+        pos.exit_placed_at = time.time()
+        pos.exit_reason    = exit_reason
+        pos.exit_order_id  = "__pending_exit__"
+        pos.state          = State.PENDING_EXIT
+        _save_positions(self.positions, self._positions_file)
+
         try:
             order_args = OrderArgs(
                 price=exit_price,
@@ -564,19 +627,26 @@ class LiveEngine5m:
                 print(f"[LIVE5M] AUTH FAILURE during exit for {position_id}: {exc}")
             else:
                 print(f"[LIVE5M] Exit order failed for {position_id}: {exc}")
+            # Revert pre-save — no order was placed
+            pos.state          = State.OPEN
+            pos.exit_order_id  = ""
+            pos.exit_placed_at = 0.0
+            pos.exit_reason    = ""
+            _save_positions(self.positions, self._positions_file)
             return
 
         order_id = resp.get("orderID", "")
         if not order_id and order_type != OrderType.FOK:
-            # GTC exit with no order_id means the API rejected it — don't
-            # transition state or the position will be stuck in PENDING_EXIT forever.
+            # GTC exit with no order_id means the API rejected it — revert pre-save.
             print(f"[LIVE5M] Exit order rejected (no orderID): {resp}")
+            pos.state          = State.OPEN
+            pos.exit_order_id  = ""
+            pos.exit_placed_at = 0.0
+            pos.exit_reason    = ""
+            _save_positions(self.positions, self._positions_file)
             return
 
-        pos.exit_order_id  = order_id
-        pos.exit_placed_at = time.time()
-        pos.exit_reason    = exit_reason
-        pos.state          = State.PENDING_EXIT
+        pos.exit_order_id  = order_id   # replace __pending_exit__ with real ID
         _save_positions(self.positions, self._positions_file)
 
         print(
@@ -631,11 +701,37 @@ class LiveEngine5m:
             if pos.state != State.PENDING_EXIT:
                 continue
 
+            # Finding 3: __pending_exit__ means place_exit() pre-saved but the API call
+            # hasn't returned yet (or crashed mid-call). Let the stuck-exit timeout handle
+            # it after EXIT_STUCK_TIMEOUT seconds rather than acting immediately.
+            if pos.exit_order_id == "__pending_exit__":
+                exit_age = (now - pos.exit_placed_at) if pos.exit_placed_at > 0 else 0
+                if exit_age <= EXIT_STUCK_TIMEOUT:
+                    continue   # still within grace period — wait for place_exit() to update
+                # Timeout on __pending_exit__ — treat as a failed pre-save: rescue via FOK
+                print(f"[LIVE5M] STUCK __pending_exit__ {pos_id} — rescuing via FOK")
+                pos.state          = State.OPEN
+                pos.exit_order_id  = ""
+                pos.exit_placed_at = 0.0
+                _save_positions(self.positions, self._positions_file)
+                if pos.token_id:
+                    self.place_exit(pos_id, pos.token_id, "force_exit_stuck", price_60s_after_entry)
+                else:
+                    print(f"[LIVE5M] CRITICAL: no token_id for {pos_id}, cannot rescue __pending_exit__")
+                continue
+
             # Rescue: GTC exit stuck too long — cancel and re-submit as aggressive FOK
             exit_age = (now - pos.exit_placed_at) if pos.exit_placed_at > 0 else 0
             if not pos.exit_order_id or exit_age > EXIT_STUCK_TIMEOUT:
                 age_str = f"{exit_age:.0f}s" if pos.exit_placed_at > 0 else "unknown age"
                 print(f"[LIVE5M] STUCK EXIT {pos_id} — pending {age_str}, re-submitting as FOK")
+                # Finding 9 (LOW): log escalation after multiple failed rescue attempts
+                pos.exit_retry_count = getattr(pos, "exit_retry_count", 0) + 1
+                if pos.exit_retry_count > 3:
+                    print(
+                        f"[LIVE5M] CRITICAL: {pos_id} has failed exit {pos.exit_retry_count} times. "
+                        f"Manual intervention may be required on Polymarket."
+                    )
                 if pos.exit_order_id and pos.exit_order_id != "__pending__":
                     try:
                         self._client.cancel(pos.exit_order_id)

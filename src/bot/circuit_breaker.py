@@ -53,6 +53,12 @@ class CircuitBreaker:
 
     def __init__(self, max_daily_loss_usd: float | None = None) -> None:
         self.max_daily_loss_usd = max_daily_loss_usd if max_daily_loss_usd is not None else _DEFAULT_MAX_LOSS
+        # Finding 5 (HIGH): warn if limit is too high to provide meaningful protection
+        if self.max_daily_loss_usd > 40:
+            print(
+                f"[CIRCUIT BREAKER] WARNING: max_daily_loss_usd={self.max_daily_loss_usd} is very high. "
+                f"Set LIVE_MAX_DAILY_LOSS_USD to ~20-30% of account equity to get meaningful protection."
+            )
         self._lock = threading.Lock()
         self._load()
 

@@ -719,6 +719,31 @@ def run_5m_loop(
                         secs_into_window=secs_into_window,
                         clob_trades_60s=clob_trades_60s,
                     )
+
+                    # ── Mirror: live bot follows paper when signal diverges ───────────
+                    # Paper and live are separate processes with independent price histories
+                    # (btc_rate, clob_trend, GBM inputs). When should_enter() returns True
+                    # for paper but not live, the paper bot writes a mirror file. The live
+                    # bot picks it up here and mirrors the entry within 1-2 poll cycles.
+                    _mirror_path = pathlib.Path("output/5m_live") / f"signal_mirror_{asset}_{window}.json"
+                    if live and not do_enter and not engine.already_in(market.condition_id):
+                        if _mirror_path.exists():
+                            try:
+                                _sh = json.loads(_mirror_path.read_text())
+                                _age = time.time() - float(_sh.get("written_at", 0))
+                                if (
+                                    _sh.get("condition_id") == market.condition_id
+                                    and _age < 30
+                                    and market.seconds_remaining >= mr_min_seconds
+                                ):
+                                    do_enter   = True
+                                    side       = _sh["side"]
+                                    entry_price = float(_sh.get("entry_price", market.up_price))
+                                    _mirror_path.unlink(missing_ok=True)
+                                    print(f"[MIRROR] {asset} {side} — following paper entry (age {_age:.1f}s)")
+                            except Exception as _me:
+                                print(f"[MIRROR] Error reading mirror: {_me}")
+
                     if do_enter:
                         now_ts = time.time()
                         p_60s = p_30s = cheap_20s_ago = 0.0
@@ -842,17 +867,44 @@ def run_5m_loop(
                                 ask_depth_at_entry=book_ask_depth,
                                 clob_midpoint_trend_60s=clob_trend,
                             )
+                            # Write mirror signal so live bot can follow this entry
+                            # even if its independent history-based checks diverged.
+                            try:
+                                _mp = pathlib.Path("output/5m_live") / f"signal_mirror_{asset}_{window}.json"
+                                _mp.parent.mkdir(parents=True, exist_ok=True)
+                                _mp.write_text(json.dumps({
+                                    "condition_id": market.condition_id,
+                                    "slug":         market.slug,
+                                    "asset":        asset,
+                                    "side":         side,
+                                    "token_id_up":  market.token_id_up,
+                                    "token_id_down": market.token_id_down,
+                                    "entry_price":  entry_price,
+                                    "take_profit":  tp,
+                                    "window_end_ts": market.window_end_ts,
+                                    "written_at":   time.time(),
+                                }))
+                            except Exception as _we:
+                                print(f"[MIRROR] Write failed: {_we}")
 
             # ── Summary every ~60s (time-based, stable across poll intervals) ──
             if time.time() - last_summary_ts >= 60:
                 last_summary_ts = time.time()
                 engine.save_summary()
                 s = engine.summary()
-                print(
-                    f"[SUMMARY] equity=${s['equity']:.2f} | open={s['open_positions']} | "
-                    f"closed={s['closed_trades']} ({s['wins']}W/{s['losses']}L) | "
-                    f"pnl=${s['total_pnl']:+.2f} | win_rate={s['win_rate']:.0f}%"
-                )
+                if live:
+                    wallet = s.get("wallet_usdc", 0.0)
+                    print(
+                        f"[SUMMARY] wallet=${wallet:.2f} | open={s['open_positions']} | "
+                        f"closed={s['closed_trades']} ({s['wins']}W/{s['losses']}L) | "
+                        f"pnl=${s['total_pnl']:+.2f} | win_rate={s['win_rate']:.0f}%"
+                    )
+                else:
+                    print(
+                        f"[SUMMARY] equity=${s['equity']:.2f} | open={s['open_positions']} | "
+                        f"closed={s['closed_trades']} ({s['wins']}W/{s['losses']}L) | "
+                        f"pnl=${s['total_pnl']:+.2f} | win_rate={s['win_rate']:.0f}%"
+                    )
 
         except KeyboardInterrupt:
             flush_all()

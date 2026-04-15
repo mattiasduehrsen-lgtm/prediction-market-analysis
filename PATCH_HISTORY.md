@@ -2,6 +2,30 @@
 
 ---
 
+## v1.8 — 2026-04-15
+**Signal mirroring: live bot follows paper entries when process histories diverge**
+
+**Problem:** Paper and live bots are separate OS processes. Each maintains its own
+`btc_history`, `price_history`, and `clob_feed` — so history-based filters
+(`btc_rate_per_min`, `clob_trend`, GBM collapse probability) compute different
+values. The paper process fires `should_enter()=True`; the live process computes
+a different rate and gets `False`. Trade is missed. Happened twice in one day,
+both times the paper trade won.
+
+**Fix:** Signal mirror file (`output/5m_live/signal_mirror_{ASSET}_{WINDOW}.json`).
+- **Paper side**: after `engine.open()`, writes a mirror containing `condition_id`,
+  `side`, `entry_price`, `take_profit`, `window_end_ts`, `written_at`.
+- **Live side**: every poll cycle, after `should_enter()` returns False, checks for
+  a fresh mirror (`condition_id` matches, `written_at < 30s`, still in entry window).
+  If found, sets `do_enter=True` and falls through the existing entry path — uses
+  current taker price from the live book, GBM/CLOB checks still apply.
+- Mirror file is deleted after being consumed to prevent re-use.
+- 30s freshness check prevents stale mirrors from triggering entries in later windows.
+
+**Files:** `main.py`
+
+---
+
 ## v1.6 — 2026-04-15
 **BTC_SKIP_RATE configurable via .env; default raised from $20 → $50/min**
 

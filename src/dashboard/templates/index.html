@@ -249,7 +249,11 @@
 
 <div class="cards">
   <div class="card">
-    <div class="label">Real P&L</div>
+    <div class="label">Wallet (USDC)</div>
+    <div class="value yellow" id="live-wallet">$—</div>
+  </div>
+  <div class="card">
+    <div class="label">Bot P&L</div>
     <div class="value" id="live-pnl">$0.00</div>
   </div>
   <div class="card">
@@ -640,6 +644,10 @@ function stateColor(state) {
 async function refreshLiveSummary() {
   try {
     const d = await fetch('/api/live/summary').then(r => r.json());
+    // Wallet balance — show from summary if available, else leave for refreshBalance()
+    if (d.wallet_usdc !== undefined && d.wallet_usdc !== null) {
+      $('live-wallet').textContent = '$' + parseFloat(d.wallet_usdc).toFixed(2);
+    }
     if (!d.closed_trades && !d.open_positions) {
       $('live-pnl').textContent = '$0.00';
       return;

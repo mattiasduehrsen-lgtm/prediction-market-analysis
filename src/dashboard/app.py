@@ -309,6 +309,15 @@ def api_live_summary():
     loss_pnls = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) <= 0]
     totals["avg_win"]  = round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0
     totals["avg_loss"] = round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0
+    # Wallet balance — written to summary JSON by the live engine every 60s
+    wallet_usdc = None
+    for f in OUT_5M_LIVE.glob("summary*.json"):
+        w = _read_json(f).get("wallet_usdc")
+        if w is not None:
+            wallet_usdc = float(w)
+            break   # all threads share the same wallet; one file is enough
+    if wallet_usdc is not None:
+        totals["wallet_usdc"] = wallet_usdc
     return jsonify(totals)
 
 

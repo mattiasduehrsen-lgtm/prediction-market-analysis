@@ -1007,12 +1007,40 @@ class LiveEngine5m:
         )
         return trade
 
+    # ── Wallet balance (cached) ───────────────────────────────────────────────
+
+    _wallet_usdc:      float = 0.0   # last fetched USDC balance
+    _wallet_fetched:   float = 0.0   # timestamp of last fetch
+    _WALLET_TTL:       float = 60.0  # re-fetch at most once per minute
+
+    def _fetch_wallet_balance(self) -> float:
+        """
+        Return USDC collateral balance from the Polymarket CLOB.
+        Result is cached for _WALLET_TTL seconds so this is safe to call
+        on every summary refresh (every 60s) without hammering the API.
+        """
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        now = time.time()
+        if now - self._wallet_fetched < self._WALLET_TTL and self._wallet_usdc > 0:
+            return self._wallet_usdc
+        try:
+            resp = self._client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+            raw = float(resp.get("balance", 0) or 0)
+            self._wallet_usdc    = round(raw / 1_000_000, 2)
+            self._wallet_fetched = now
+        except Exception:
+            pass   # keep stale value on error
+        return self._wallet_usdc
+
     # ── Summary ───────────────────────────────────────────────────────────────
 
     def summary(self) -> dict[str, Any]:
         s = _compute_summary(self._trades_file)
         s["open_positions"]    = sum(1 for p in self.positions.values() if p.state == State.OPEN)
         s["pending_positions"] = sum(1 for p in self.positions.values() if p.state == State.PENDING_ENTRY)
+        s["wallet_usdc"]       = self._fetch_wallet_balance()
         return s
 
     def save_summary(self) -> None:

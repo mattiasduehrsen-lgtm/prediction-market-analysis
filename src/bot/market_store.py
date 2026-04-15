@@ -73,14 +73,20 @@ class DataStore:
         today = time.strftime("%Y-%m-%d")
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / f"{today}.parquet"
-        tmp  = self._dir / f"{today}.tmp.parquet"
+        # PID-unique tmp so two processes never write to the same temp file
+        tmp  = self._dir / f"{today}.{os.getpid()}.tmp.parquet"
 
         df_new = pd.DataFrame(self._buffer)
 
         try:
             if path.exists():
-                df_existing = pd.read_parquet(path)
-                df_out = pd.concat([df_existing, df_new], ignore_index=True)
+                try:
+                    df_existing = pd.read_parquet(path)
+                    df_out = pd.concat([df_existing, df_new], ignore_index=True)
+                except Exception:
+                    # File corrupt or mid-rename by another process — write
+                    # only our buffer; the other process owns the existing rows.
+                    df_out = df_new
             else:
                 df_out = df_new
 

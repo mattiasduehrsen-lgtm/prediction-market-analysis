@@ -79,6 +79,7 @@
   <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
   <button class="tab-btn" onclick="showTab('ev')">EV Analysis</button>
   <button class="tab-btn" onclick="showTab('live')">🔴 Live Trading</button>
+  <button class="tab-btn" onclick="showTab('equity')">Equity</button>
 </div>
 
 <!-- ══ OVERVIEW TAB ══ -->
@@ -291,6 +292,47 @@
 </section>
 
 </div><!-- end tab-live -->
+
+<!-- ══ EQUITY TAB ══ -->
+<div id="tab-equity" class="tab-pane">
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Live P&L</div>
+      <div class="value" id="eq-live-pnl">$0.00</div>
+    </div>
+    <div class="card">
+      <div class="label">Live Trades</div>
+      <div class="value" id="eq-live-ct">0</div>
+    </div>
+    <div class="card">
+      <div class="label">Paper P&L</div>
+      <div class="value" id="eq-paper-pnl">$0.00</div>
+    </div>
+    <div class="card">
+      <div class="label">Paper Trades</div>
+      <div class="value" id="eq-paper-ct">0</div>
+    </div>
+  </div>
+
+  <div class="chart-wrap" style="padding:0 24px 8px">
+    <h2>Cumulative P&L — Live (orange) vs Paper (blue)</h2>
+    <canvas id="eq-chart" style="max-height:280px"></canvas>
+  </div>
+
+  <section>
+    <h2>Live Trade Log</h2>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Asset</th><th>Exit Reason</th><th>Trade P&L</th><th>Cumulative</th><th>Time</th></tr>
+      </thead>
+      <tbody id="eq-live-body">
+        <tr><td colspan="6" style="color:#555;text-align:center;padding:12px">No live trades yet</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</div><!-- end tab-equity -->
 
 <script>
 const $ = id => document.getElementById(id);
@@ -632,6 +674,105 @@ async function refreshLiveLog() {
   } catch(e) {}
 }
 
+// ── Equity tab ───────────────────────────────────────────────────────────────
+let eqChart = null;
+
+async function refreshEquity() {
+  try {
+    const d = await fetch('/api/equity').then(r => r.json());
+    const live  = d.live  || [];
+    const paper = d.paper || [];
+
+    // Summary cards
+    const livePnl  = live.length  ? live[live.length - 1].cum_pnl  : 0;
+    const paperPnl = paper.length ? paper[paper.length - 1].cum_pnl : 0;
+    const setCard = (id, val) => {
+      $(id).textContent = (val >= 0 ? '+' : '') + '$' + fmt(Math.abs(val));
+      $(id).className = 'value ' + (val >= 0 ? 'green' : 'red');
+    };
+    setCard('eq-live-pnl',  livePnl);
+    setCard('eq-paper-pnl', paperPnl);
+    $('eq-live-ct').textContent  = live.length;
+    $('eq-paper-ct').textContent = paper.length;
+
+    // Chart — both series on same axis, indexed by trade number
+    const ctx = document.getElementById('eq-chart').getContext('2d');
+    const zeroLine = { id: 'zeroLine', afterDraw(chart) {
+      const { ctx: c, chartArea: { left, right }, scales: { y } } = chart;
+      const y0 = y.getPixelForValue(0);
+      c.save(); c.beginPath(); c.strokeStyle = '#333'; c.lineWidth = 1;
+      c.setLineDash([4, 4]); c.moveTo(left, y0); c.lineTo(right, y0);
+      c.stroke(); c.restore();
+    }};
+
+    const liveLabels  = live.map((_, i) => i + 1);
+    const paperLabels = paper.map((_, i) => i + 1);
+    const maxLen = Math.max(liveLabels.length, paperLabels.length);
+    const labels = Array.from({length: maxLen}, (_, i) => i + 1);
+
+    if (eqChart) eqChart.destroy();
+    eqChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Live',
+            data: live.map((p, i) => ({ x: i + 1, y: p.cum_pnl })),
+            borderColor: '#ff9800',
+            backgroundColor: 'rgba(255,152,0,0.08)',
+            borderWidth: 2,
+            pointRadius: live.length < 50 ? 3 : 0,
+            fill: true,
+            tension: 0.3,
+          },
+          {
+            label: 'Paper',
+            data: paper.map((p, i) => ({ x: i + 1, y: p.cum_pnl })),
+            borderColor: '#4fc3f7',
+            backgroundColor: 'rgba(79,195,247,0.05)',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: true,
+            tension: 0.3,
+          }
+        ]
+      },
+      options: {
+        animation: false,
+        plugins: { legend: { labels: { color: '#888', boxWidth: 12 } } },
+        scales: {
+          x: { ticks: { color: '#555', maxTicksLimit: 10 }, grid: { color: '#1e2130' },
+               title: { display: true, text: 'Trade #', color: '#555' } },
+          y: { ticks: { color: '#555', callback: v => '$' + v.toFixed(2) },
+               grid: { color: '#1e2130' } }
+        }
+      },
+      plugins: [zeroLine],
+    });
+
+    // Live trade log table (newest first)
+    const tbody = $('eq-live-body');
+    if (!live.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="color:#555;text-align:center;padding:12px">No live trades yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = [...live].reverse().map((p, ri) => {
+      const i = live.length - ri;
+      const cls = p.pnl >= 0 ? 'win' : 'loss';
+      const ccls = p.cum_pnl >= 0 ? 'win' : 'loss';
+      return `<tr>
+        <td style="color:#555">${i}</td>
+        <td>${p.asset}</td>
+        <td style="color:#666">${p.exit_reason}</td>
+        <td class="${cls}">${p.pnl >= 0 ? '+' : ''}$${fmt(Math.abs(p.pnl))}</td>
+        <td class="${ccls}" style="font-weight:700">${p.cum_pnl >= 0 ? '+' : ''}$${fmt(Math.abs(p.cum_pnl))}</td>
+        <td style="color:#888">${fmtDate(p.t)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error('Equity refresh error', e); }
+}
+
 function refreshAll() {
   refreshSummary();
   refreshPositions();
@@ -643,6 +784,7 @@ function refreshAll() {
   refreshLivePositions();
   refreshLiveTrades();
   refreshLiveLog();
+  refreshEquity();
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 

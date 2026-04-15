@@ -239,6 +239,43 @@ def api_log():
         return jsonify({"lines": []})
 
 
+# ── Equity curve endpoint ─────────────────────────────────────────────────────
+
+@app.route("/api/equity")
+def api_equity():
+    """Return cumulative P&L series for paper and live bots."""
+
+    def _series(rows):
+        """Sort by closed_at, return list of {t, pnl, cum_pnl, label} dicts."""
+        pts = []
+        for r in rows:
+            try:
+                pts.append((float(r["closed_at"]), float(r["pnl_usd"]),
+                            r.get("asset", ""), r.get("exit_reason", "")))
+            except Exception:
+                pass
+        pts.sort(key=lambda x: x[0])
+        cum = 0.0
+        out = []
+        for t, pnl, asset, reason in pts:
+            cum = round(cum + pnl, 4)
+            out.append({"t": t, "pnl": round(pnl, 4), "cum_pnl": cum,
+                        "asset": asset, "exit_reason": reason})
+        return out
+
+    # Paper — all trades since reset
+    paper_rows  = _trades_since_reset()
+    paper_series = _series(paper_rows)
+
+    # Live — all trades across all tags
+    live_rows = []
+    for f in sorted(OUT_5M_LIVE.glob("trades*.csv")):
+        live_rows.extend(_read_csv(f))
+    live_series = _series(live_rows)
+
+    return jsonify({"paper": paper_series, "live": live_series})
+
+
 # ── Live trading endpoints ─────────────────────────────────────────────────────
 
 @app.route("/api/live/summary")

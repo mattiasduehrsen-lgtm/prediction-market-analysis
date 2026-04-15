@@ -43,7 +43,8 @@ import os
 
 from src.bot.clob_auth import get_client
 
-OUT_DIR = Path("output/5m_live")
+OUT_DIR    = Path("output/5m_live")
+PAUSE_FLAG = OUT_DIR / "paused.flag"   # dashboard writes this to pause new entries
 
 STARTING_EQUITY = 1000.0
 POSITION_SIZE   = float(os.environ.get("LIVE_POSITION_SIZE_USD", "20.0"))
@@ -327,6 +328,11 @@ class LiveEngine5m:
         price_30s_before_entry: float = 0.0,
     ) -> LivePosition5m | None:
         """Place a GTC limit BUY order. Returns position in PENDING_ENTRY state."""
+        # Dashboard pause flag — halts new entries, existing positions keep running
+        if PAUSE_FLAG.exists():
+            print(f"[LIVE5M] PAUSED — not placing new entries (delete paused.flag to resume)")
+            return None
+
         # Auth failure guard — halt new entries after a 401 (Finding 3.A)
         if self._auth_failed:
             print(f"[LIVE5M] BLOCKED — auth failed, not placing new entries")

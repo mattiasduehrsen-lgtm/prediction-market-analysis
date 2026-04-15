@@ -6,13 +6,14 @@ import re
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 # Price-tick lines: [HH:MM:SS] BTC UP=0.505 DOWN=0.495 | 179s left
 _PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
 
 OUT_5M      = Path(__file__).resolve().parents[2] / "output/5m_trading"
 OUT_5M_LIVE = Path(__file__).resolve().parents[2] / "output/5m_live"
+PAUSE_FLAG  = OUT_5M_LIVE / "paused.flag"
 
 app = Flask(__name__)
 
@@ -373,3 +374,23 @@ def api_live_balance():
         return jsonify({"usdc": usdc})
     except Exception as e:
         return jsonify({"usdc": None, "error": str(e)})
+
+
+# ── Pause / resume controls ────────────────────────────────────────────────────
+
+@app.route("/api/live/paused")
+def api_live_paused():
+    return jsonify({"paused": PAUSE_FLAG.exists()})
+
+
+@app.route("/api/live/pause", methods=["POST"])
+def api_live_pause():
+    OUT_5M_LIVE.mkdir(parents=True, exist_ok=True)
+    PAUSE_FLAG.touch()
+    return jsonify({"paused": True})
+
+
+@app.route("/api/live/resume", methods=["POST"])
+def api_live_resume():
+    PAUSE_FLAG.unlink(missing_ok=True)
+    return jsonify({"paused": False})

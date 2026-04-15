@@ -11,6 +11,7 @@ Window starts are at multiples of window_seconds (Unix epoch).
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -61,11 +62,12 @@ MOMENTUM_MIN_PREV_MOVE = 0.15  # min |cross_window_pct| to enter (PolyBackTest t
 MOMENTUM_ENABLED = False   # disabled 2026-04-09: 80 trades at 30% WR — not predictive enough
 
 # ── Cross-window filter (mean_reversion) ─────────────────────────────────────
-# Only enter when prior window had a small dip (-0.06 to 0.02%).
+# Only enter when prior window had a small dip/rise within the configured band.
 # Data: cross_window in [-0.05,0] = 40.5% WR (+$126); all other bands negative.
 # cross_window=0.0 means no Chainlink data — pass through.
-CROSS_WINDOW_MIN = -0.06   # reject entries where prev window fell harder than this
-CROSS_WINDOW_MAX =  0.02   # reject entries where prev window rose more than this
+# Configurable via .env so the band can be widened without a code deploy.
+CROSS_WINDOW_MIN = float(os.environ.get("CROSS_WINDOW_MIN", "-0.15"))  # reject entries where prev window fell harder than this
+CROSS_WINDOW_MAX = float(os.environ.get("CROSS_WINDOW_MAX",  "0.02"))  # reject entries where prev window rose more than this
 
 
 @dataclass

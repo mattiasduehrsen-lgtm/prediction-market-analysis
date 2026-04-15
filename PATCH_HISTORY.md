@@ -1,5 +1,24 @@
 # Patch History
 
+---
+
+## v1.5 — 2026-04-15
+**Cross-window filter configurable via .env**
+
+**Problem:** `CROSS_WINDOW_MIN` was hardcoded to `-0.06%`. During a slow downtrend,
+every window was showing a cross-window move of `-0.07%` to `-0.14%` — just past the
+floor — causing the bot to skip every single entry opportunity.
+
+**Fix:** `CROSS_WINDOW_MIN` and `CROSS_WINDOW_MAX` now read from `.env` at startup.
+Default changed from `-0.06` → `-0.15` so the current market conditions pass through.
+To tighten or loosen the filter without a code deploy, set in `.env`:
+```
+CROSS_WINDOW_MIN=-0.15
+CROSS_WINDOW_MAX=0.02
+```
+
+**Files:** `src/bot/market_5m.py`, `.env`
+
 Each entry covers what changed, why, and what file(s) were touched.
 The dashboard header always shows the current patch (`src/bot/version.py`).
 

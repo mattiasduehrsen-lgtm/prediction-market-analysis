@@ -884,6 +884,27 @@ if __name__ == "__main__":
     elif cmd == "btc-5m-live":
         _setup_logging()
         run_5m_loop("BTC", live=True)
+    elif cmd == "multi-live":
+        # Live multi-market loop: BTC/ETH/SOL 15m + optional overrides
+        # Usage: python main.py multi-live [ASSET:WINDOW:STRATEGY ...]
+        _raw = sys.argv[2:]
+        if _raw:
+            _configs = []
+            for _arg in _raw:
+                _parts = _arg.split(":")
+                if len(_parts) == 3:
+                    _configs.append((_parts[0].upper(), _parts[1], _parts[2]))
+                else:
+                    print(f"Bad config '{_arg}' — expected ASSET:WINDOW:STRATEGY")
+                    sys.exit(1)
+        else:
+            _configs = [
+                ("BTC", "15m", "mean_reversion"),
+                ("ETH", "15m", "mean_reversion"),
+                ("SOL", "15m", "mean_reversion"),
+            ]
+        _setup_logging()
+        run_multi_loop(_configs, live=True)
     elif cmd == "multi-loop":
         # Parse ASSET:WINDOW:STRATEGY args, default if none given
         _raw = sys.argv[2:]

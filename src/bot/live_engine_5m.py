@@ -39,12 +39,14 @@ from typing import Any
 from py_clob_client.clob_types import OrderArgs, OrderType
 from py_clob_client.order_builder.constants import BUY, SELL
 
+import os
+
 from src.bot.clob_auth import get_client
 
 OUT_DIR = Path("output/5m_live")
 
 STARTING_EQUITY = 1000.0
-POSITION_SIZE   = 20.0    # USD per trade (real money)
+POSITION_SIZE   = float(os.environ.get("LIVE_POSITION_SIZE_USD", "20.0"))
 MIN_SHARES      = 5       # Polymarket CLOB minimum order size in shares
 
 # Aggressive exit price for hard stops / force exits.

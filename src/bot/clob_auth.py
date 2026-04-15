@@ -4,6 +4,19 @@ Polymarket CLOB authentication.
 L1 auth: private key (read-only endpoints)
 L2 auth: API key derived from private key (required for order placement)
 
+Two wallet setups are supported:
+
+  signature_type=0  EOA direct — MetaMask key holds funds directly.
+                    POLYMARKET_PROXY_ADDRESS not set.
+
+  signature_type=1  Poly Proxy — MetaMask key signs, but funds sit in a
+                    separate Polymarket proxy wallet.
+                    Set POLYMARKET_PROXY_ADDRESS=0x... in .env.
+
+Most users who connected MetaMask to Polymarket and deposited funds will
+need signature_type=1 because Polymarket creates a proxy wallet controlled
+by the MetaMask EOA.
+
 L2 credentials are derived once and stored in .env. To generate them:
   python main.py setup-clob-auth
 
@@ -37,17 +50,35 @@ def get_client() -> ClobClient:
             "Then add POLYMARKET_API_KEY / _SECRET / _PASSPHRASE to .env."
         )
 
-    return ClobClient(
-        host=CLOB_HOST,
-        chain_id=POLYGON,
-        key=key,
-        signature_type=0,   # EOA — direct private key signing
-        creds=ApiCreds(
-            api_key=api_key,
-            api_secret=api_secret,
-            api_passphrase=api_passphrase,
-        ),
-    )
+    proxy = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+
+    if proxy:
+        # signature_type=1: MetaMask EOA signs, proxy wallet holds funds
+        return ClobClient(
+            host=CLOB_HOST,
+            chain_id=POLYGON,
+            key=key,
+            signature_type=1,
+            funder=proxy,
+            creds=ApiCreds(
+                api_key=api_key,
+                api_secret=api_secret,
+                api_passphrase=api_passphrase,
+            ),
+        )
+    else:
+        # signature_type=0: EOA direct — wallet signs and holds funds
+        return ClobClient(
+            host=CLOB_HOST,
+            chain_id=POLYGON,
+            key=key,
+            signature_type=0,
+            creds=ApiCreds(
+                api_key=api_key,
+                api_secret=api_secret,
+                api_passphrase=api_passphrase,
+            ),
+        )
 
 
 def get_l1_client() -> ClobClient:
@@ -55,6 +86,10 @@ def get_l1_client() -> ClobClient:
     key = os.environ.get("POLYMARKET_PRIVATE_KEY", "").strip()
     if not key:
         raise RuntimeError("POLYMARKET_PRIVATE_KEY not set in .env")
+    proxy = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    if proxy:
+        return ClobClient(host=CLOB_HOST, chain_id=POLYGON, key=key,
+                          signature_type=1, funder=proxy)
     return ClobClient(host=CLOB_HOST, chain_id=POLYGON, key=key, signature_type=0)
 
 

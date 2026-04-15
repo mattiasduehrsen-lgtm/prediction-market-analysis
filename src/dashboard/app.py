@@ -10,7 +10,8 @@ from flask import Flask, jsonify, render_template
 # Price-tick lines: [HH:MM:SS] BTC UP=0.505 DOWN=0.495 | 179s left
 _PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
 
-OUT_5M = Path(__file__).resolve().parents[2] / "output/5m_trading"
+OUT_5M      = Path(__file__).resolve().parents[2] / "output/5m_trading"
+OUT_5M_LIVE = Path(__file__).resolve().parents[2] / "output/5m_live"
 
 app = Flask(__name__)
 
@@ -230,6 +231,73 @@ def api_log():
         # Keep all non-price-tick lines (events, windows, summaries, errors)
         events = [l for l in recent if not _PRICE_TICK.match(l)]
         # Append the single most recent price tick so current state is visible
+        price_lines = [l for l in recent if _PRICE_TICK.match(l)]
+        if price_lines:
+            events.append("— " + price_lines[-1])
+        return jsonify({"lines": events[-80:]})
+    except Exception:
+        return jsonify({"lines": []})
+
+
+# ── Live trading endpoints ─────────────────────────────────────────────────────
+
+@app.route("/api/live/summary")
+def api_live_summary():
+    totals = {"closed_trades": 0, "wins": 0, "losses": 0,
+              "total_pnl": 0.0, "open_positions": 0}
+    found = False
+    for f in OUT_5M_LIVE.glob("summary*.json"):
+        d = _read_json(f)
+        if not d:
+            continue
+        found = True
+        totals["closed_trades"] += int(d.get("closed_trades", 0))
+        totals["wins"]          += int(d.get("wins", 0))
+        totals["losses"]        += int(d.get("losses", 0))
+        totals["total_pnl"]     += float(d.get("total_pnl", 0))
+        totals["open_positions"]+= int(d.get("open_positions", 0))
+    if not found:
+        return jsonify({})
+    ct = totals["closed_trades"]
+    totals["win_rate"]  = round(totals["wins"] / ct * 100, 1) if ct else 0.0
+    totals["total_pnl"] = round(totals["total_pnl"], 2)
+    # avg win/loss from all live trades
+    rows = []
+    for f in sorted(OUT_5M_LIVE.glob("trades*.csv")):
+        rows.extend(_read_csv(f))
+    win_pnls  = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) > 0]
+    loss_pnls = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) <= 0]
+    totals["avg_win"]  = round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0
+    totals["avg_loss"] = round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0
+    return jsonify(totals)
+
+
+@app.route("/api/live/positions")
+def api_live_positions():
+    rows = []
+    for f in sorted(OUT_5M_LIVE.glob("positions*.csv")):
+        rows.extend(_read_csv(f))
+    return jsonify(rows)
+
+
+@app.route("/api/live/trades")
+def api_live_trades():
+    rows = []
+    for f in sorted(OUT_5M_LIVE.glob("trades*.csv")):
+        rows.extend(_read_csv(f))
+    clean = [{k: v for k, v in row.items() if k is not None} for row in rows]
+    return jsonify(clean[-100:])
+
+
+@app.route("/api/live/log")
+def api_live_log():
+    """Return last 80 meaningful lines of live.log."""
+    log_path = Path(__file__).resolve().parents[2] / "live.log"
+    if not log_path.exists():
+        return jsonify({"lines": []})
+    try:
+        recent = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-2000:]
+        events = [l for l in recent if not _PRICE_TICK.match(l)]
         price_lines = [l for l in recent if _PRICE_TICK.match(l)]
         if price_lines:
             events.append("— " + price_lines[-1])

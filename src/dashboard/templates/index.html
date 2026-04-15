@@ -78,6 +78,7 @@
 <div class="tabs">
   <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
   <button class="tab-btn" onclick="showTab('ev')">EV Analysis</button>
+  <button class="tab-btn" onclick="showTab('live')">🔴 Live Trading</button>
 </div>
 
 <!-- ══ OVERVIEW TAB ══ -->
@@ -229,6 +230,67 @@
   </section>
 
 </div><!-- end tab-ev -->
+
+<!-- ══ LIVE TAB ══ -->
+<div id="tab-live" class="tab-pane">
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Real P&L</div>
+    <div class="value" id="live-pnl">$0.00</div>
+  </div>
+  <div class="card">
+    <div class="label">Open</div>
+    <div class="value" id="live-open">0</div>
+  </div>
+  <div class="card">
+    <div class="label">Closed Trades</div>
+    <div class="value" id="live-closed">0</div>
+  </div>
+  <div class="card">
+    <div class="label">Win Rate</div>
+    <div class="value yellow" id="live-wr">0%</div>
+  </div>
+  <div class="card">
+    <div class="label">Avg Win</div>
+    <div class="value green" id="live-avgw">$0.00</div>
+  </div>
+  <div class="card">
+    <div class="label">Avg Loss</div>
+    <div class="value red" id="live-avgl">$0.00</div>
+  </div>
+</div>
+
+<section>
+  <h2>Positions</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Asset</th><th>Side</th><th>State</th><th>Entry</th><th>TP</th><th>Size</th><th>Opened</th><th>Time Left</th></tr>
+    </thead>
+    <tbody id="live-pos-body">
+      <tr><td colspan="9" style="color:#555;text-align:center;padding:12px">No positions</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section style="margin-top:16px">
+  <h2>Closed Trades</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Asset</th><th>Side</th><th>Entry</th><th>Exit</th><th>Shares</th><th>P&L</th><th>Return</th><th>Opened</th><th>Closed</th><th>Reason</th></tr>
+    </thead>
+    <tbody id="live-trades-body">
+      <tr><td colspan="11" style="color:#555;text-align:center;padding:12px">No closed trades yet</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section style="margin-top:16px">
+  <h2>Live Log</h2>
+  <div id="live-log-box" style="background:#0d0f18;border:1px solid #2a2d3a;border-radius:6px;padding:12px;height:320px;overflow-y:auto;font-family:monospace;font-size:12px;line-height:1.6;color:#aaa">Loading...</div>
+</section>
+
+</div><!-- end tab-live -->
 
 <script>
 const $ = id => document.getElementById(id);
@@ -470,6 +532,106 @@ async function refreshBTC() {
   } catch(e) {}
 }
 
+// ── Live tab ─────────────────────────────────────────────────────────────────
+
+function stateColor(state) {
+  if (state === 'open')          return 'color:#00c853';
+  if (state === 'pending_entry') return 'color:#4fc3f7';
+  if (state === 'pending_exit')  return 'color:#ffd54f';
+  if (state === 'cancelled')     return 'color:#555';
+  return '';
+}
+
+async function refreshLiveSummary() {
+  try {
+    const d = await fetch('/api/live/summary').then(r => r.json());
+    if (!d.closed_trades && !d.open_positions) {
+      $('live-pnl').textContent = '$0.00';
+      return;
+    }
+    const pnl = parseFloat(d.total_pnl || 0);
+    $('live-pnl').textContent  = (pnl >= 0 ? '+' : '') + '$' + fmt(Math.abs(pnl));
+    $('live-pnl').className    = 'value ' + (pnl >= 0 ? 'green' : 'red');
+    $('live-open').textContent   = d.open_positions || 0;
+    $('live-closed').textContent = d.closed_trades  || 0;
+    $('live-wr').textContent     = fmt(d.win_rate, 0) + '%';
+    $('live-avgw').textContent   = '$' + fmt(d.avg_win);
+    $('live-avgl').textContent   = '$' + fmt(d.avg_loss);
+  } catch(e) {}
+}
+
+async function refreshLivePositions() {
+  try {
+    const rows = await fetch('/api/live/positions').then(r => r.json());
+    const active = rows.filter(p => p.state !== 'closed' && p.state !== 'cancelled');
+    const tbody = $('live-pos-body');
+    if (!active.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="color:#555;text-align:center;padding:12px">No positions</td></tr>';
+      return;
+    }
+    tbody.innerHTML = active.map(p => `
+      <tr>
+        <td style="color:#666;font-size:11px">${(p.position_id||'').slice(0,8)}</td>
+        <td>${p.asset || '—'}</td>
+        <td class="${p.side === 'UP' ? 'up' : 'down'}">${p.side}</td>
+        <td style="${stateColor(p.state)};font-size:11px">${p.state}</td>
+        <td>${fmt(p.entry_price, 3)}</td>
+        <td>${fmt(p.take_profit, 3)}</td>
+        <td>$${fmt(p.size_usd, 2)}</td>
+        <td style="color:#888">${fmtTime(p.opened_at)}</td>
+        <td>${timeUntil(p.window_end_ts)}</td>
+      </tr>`).join('');
+  } catch(e) {}
+}
+
+async function refreshLiveTrades() {
+  try {
+    const rows = await fetch('/api/live/trades').then(r => r.json());
+    const tbody = $('live-trades-body');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="11" style="color:#555;text-align:center;padding:12px">No closed trades yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = [...rows].reverse().map(t => {
+      const pnl = parseFloat(t.pnl_usd || 0);
+      const cls = pnl >= 0 ? 'win' : 'loss';
+      return `<tr>
+        <td style="color:#666;font-size:11px">${(t.position_id||'').slice(0,8)}</td>
+        <td>${t.asset || '—'}</td>
+        <td class="${t.side === 'UP' ? 'up' : 'down'}">${t.side}</td>
+        <td>${fmt(t.entry_price, 3)}</td>
+        <td>${fmt(t.exit_price, 3)}</td>
+        <td style="color:#888">${fmt(t.shares, 2)}</td>
+        <td class="${cls}">${pnl >= 0 ? '+' : ''}$${fmt(Math.abs(pnl))}</td>
+        <td class="${cls}">${fmt(t.return_pct, 1)}%</td>
+        <td style="color:#888">${fmtDate(t.opened_at)}</td>
+        <td style="color:#888">${fmtDate(t.closed_at)}</td>
+        <td style="color:#666">${t.exit_reason || '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function refreshLiveLog() {
+  try {
+    const d = await fetch('/api/live/log').then(r => r.json());
+    const box = $('live-log-box');
+    const lines = d.lines || [];
+    box.innerHTML = lines.map(line => {
+      let cls = '';
+      if (line.includes('UP=') || line.includes('DOWN=')) cls = 'log-price';
+      else if (line.includes('OPEN')) cls = 'log-open';
+      else if (line.includes('WIN') || line.includes('CLOSE') || line.includes('LOSS')) cls = 'log-close';
+      else if (line.includes('ERROR') || line.includes('error')) cls = 'log-err';
+      else if (line.includes('NEW WINDOW')) cls = 'log-new';
+      else if (line.includes('SUMMARY') || line.includes('circuit')) cls = 'log-sum';
+      const safe = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div class="${cls}">${safe}</div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch(e) {}
+}
+
 function refreshAll() {
   refreshSummary();
   refreshPositions();
@@ -477,6 +639,10 @@ function refreshAll() {
   refreshLog();
   refreshBTC();
   refreshEV();
+  refreshLiveSummary();
+  refreshLivePositions();
+  refreshLiveTrades();
+  refreshLiveLog();
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 

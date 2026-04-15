@@ -231,6 +231,44 @@ def _fetch_price(symbol: str = "BTCUSDT") -> float:
         return 0.0
 
 
+class BinanceFeed:
+    """
+    Background thread that fetches Binance spot price on a fixed interval.
+
+    Replaces the blocking _fetch_price() call in the poll loop. The main
+    loop reads self.get() — an instant cached read — instead of waiting
+    100-300ms for each Binance REST round-trip.
+    """
+
+    def __init__(self, symbol: str, interval: float = 2.0) -> None:
+        import httpx as _httpx
+        self._symbol   = symbol
+        self._interval = interval
+        self._price: float = 0.0
+        self._lock  = threading.Lock()
+        self._http  = _httpx.Client(timeout=5)
+        self._thread = threading.Thread(target=self._run, daemon=True, name=f"binance-{symbol}")
+        self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            try:
+                r = self._http.get(
+                    "https://api.binance.com/api/v3/ticker/price",
+                    params={"symbol": self._symbol},
+                )
+                price = float(r.json()["price"])
+                with self._lock:
+                    self._price = price
+            except Exception:
+                pass
+            time.sleep(self._interval)
+
+    def get(self) -> float:
+        with self._lock:
+            return self._price
+
+
 def run_5m_loop(
     asset: str = "BTC",
     live: bool = False,
@@ -248,7 +286,13 @@ def run_5m_loop(
     from src.bot.claude_advisor import advise_entry
     from src.bot.chainlink_feed import ChainlinkFeed
 
-    POLL_INTERVAL  = 2
+    # Live: default 1s for faster fill detection and exit reactions.
+    # Paper: 2s (no real money, save Binance API quota).
+    # Override via LIVE_POLL_INTERVAL_SECONDS / PAPER_POLL_INTERVAL_SECONDS in .env.
+    if live:
+        POLL_INTERVAL = int(os.environ.get("LIVE_POLL_INTERVAL_SECONDS", "1"))
+    else:
+        POLL_INTERVAL = int(os.environ.get("PAPER_POLL_INTERVAL_SECONDS", "2"))
     window_seconds = WINDOW_SECONDS.get(window, 300)
     # Mean-reversion: enter in first 60s of window regardless of window size
     mr_min_seconds = window_seconds - 60
@@ -284,6 +328,10 @@ def run_5m_loop(
     clob_feed.start()
     print("[MAIN] CLOB WebSocket feed active — event-driven prices → clob_events.csv")
 
+    # Binance price in background thread — removes blocking REST call from poll loop
+    binance_feed = BinanceFeed(binance_symbol, interval=2.0)
+    print(f"[MAIN] Binance feed active ({binance_symbol}) — non-blocking background poll")
+
     # Start Chainlink feed — actual window start prices, not stale API data
     feed = ChainlinkFeed(asset)
     feed.start()
@@ -295,6 +343,7 @@ def run_5m_loop(
         print("[MAIN] Chainlink unavailable — continuing without window-start tracking")
 
     iteration = 0
+    last_summary_ts: float = 0.0   # time-based summary — stays at ~60s regardless of POLL_INTERVAL
     market = None   # cached — only refetched when window expires
 
     # ── Context tracking for ML data capture ──────────────────────────────────
@@ -356,7 +405,7 @@ def run_5m_loop(
                 window_stopped.clear()
                 if live:
                     engine.reset_window()   # clear re-entry guard (Finding 5.D)
-                btc_at_window_start = _fetch_price(binance_symbol)
+                btc_at_window_start = binance_feed.get()
                 up_price_at_window_start = market.up_price  # Gamma initial price (≈0.5)
 
                 # Save this window's starting state for resolution at next transition
@@ -396,8 +445,8 @@ def run_5m_loop(
             # Record price history for this window
             price_history.append((time.time(), market.up_price))
 
-            # Continuous BTC price — every poll, independent of windows
-            btc_now = _fetch_price(binance_symbol)
+            # Continuous BTC price — non-blocking read from background BinanceFeed
+            btc_now = binance_feed.get()
             if btc_now > 0:
                 btc_history.append((time.time(), btc_now))
                 BINANCE_SPOT.append({
@@ -778,8 +827,9 @@ def run_5m_loop(
                                 clob_midpoint_trend_60s=clob_trend,
                             )
 
-            # ── Summary every 30 polls (≈ 1 min at 2s interval) ───────────────
-            if iteration % 30 == 0:
+            # ── Summary every ~60s (time-based, stable across poll intervals) ──
+            if time.time() - last_summary_ts >= 60:
+                last_summary_ts = time.time()
                 engine.save_summary()
                 s = engine.summary()
                 print(

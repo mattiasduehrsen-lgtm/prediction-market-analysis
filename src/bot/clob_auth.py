@@ -10,12 +10,17 @@ Two wallet setups are supported:
                     POLYMARKET_PROXY_ADDRESS not set.
 
   signature_type=1  Poly Proxy — MetaMask key signs, but funds sit in a
-                    separate Polymarket proxy wallet.
+                    separate Polymarket proxy wallet (simple proxy, older accounts).
                     Set POLYMARKET_PROXY_ADDRESS=0x... in .env.
 
+  signature_type=2  Poly Gnosis Safe — MetaMask key signs, funds in a Gnosis Safe
+                    proxy wallet. Most accounts created via MetaMask since ~2022.
+                    Set POLYMARKET_PROXY_ADDRESS=0x... in .env.
+                    Change POLYMARKET_SIGNATURE_TYPE=2 in .env (default is 2).
+
 Most users who connected MetaMask to Polymarket and deposited funds will
-need signature_type=1 because Polymarket creates a proxy wallet controlled
-by the MetaMask EOA.
+need signature_type=2 (Gnosis Safe) because Polymarket creates a Gnosis Safe
+wallet controlled by the MetaMask EOA.
 
 L2 credentials are derived once and stored in .env. To generate them:
   python main.py setup-clob-auth
@@ -31,6 +36,15 @@ from py_clob_client.clob_types import ApiCreds
 from py_clob_client.constants import POLYGON
 
 CLOB_HOST = "https://clob.polymarket.com"
+
+
+def _get_sig_type() -> int:
+    """
+    Read POLYMARKET_SIGNATURE_TYPE from .env.
+    Default is 2 (Gnosis Safe) — covers most MetaMask-connected accounts.
+    Use 1 for older simple-proxy accounts, 0 for EOA-direct (no proxy).
+    """
+    return int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
 
 
 def get_client() -> ClobClient:
@@ -50,15 +64,17 @@ def get_client() -> ClobClient:
             "Then add POLYMARKET_API_KEY / _SECRET / _PASSPHRASE to .env."
         )
 
-    proxy = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    proxy    = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    sig_type = _get_sig_type()
 
     if proxy:
-        # signature_type=1: MetaMask EOA signs, proxy wallet holds funds
+        # sig_type=2: Gnosis Safe (most MetaMask accounts since ~2022)
+        # sig_type=1: simple proxy (older accounts)
         return ClobClient(
             host=CLOB_HOST,
             chain_id=POLYGON,
             key=key,
-            signature_type=1,
+            signature_type=sig_type,
             funder=proxy,
             creds=ApiCreds(
                 api_key=api_key,
@@ -86,10 +102,11 @@ def get_l1_client() -> ClobClient:
     key = os.environ.get("POLYMARKET_PRIVATE_KEY", "").strip()
     if not key:
         raise RuntimeError("POLYMARKET_PRIVATE_KEY not set in .env")
-    proxy = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    proxy    = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    sig_type = _get_sig_type()
     if proxy:
         return ClobClient(host=CLOB_HOST, chain_id=POLYGON, key=key,
-                          signature_type=1, funder=proxy)
+                          signature_type=sig_type, funder=proxy)
     return ClobClient(host=CLOB_HOST, chain_id=POLYGON, key=key, signature_type=0)
 
 

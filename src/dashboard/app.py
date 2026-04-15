@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
+from src.bot.version import PATCH, PATCH_DATE, PATCH_NOTES
 
 # Price-tick lines: [HH:MM:SS] BTC UP=0.505 DOWN=0.495 | 179s left
 _PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
@@ -374,6 +375,13 @@ def api_live_balance():
         return jsonify({"usdc": usdc})
     except Exception as e:
         return jsonify({"usdc": None, "error": str(e)})
+
+
+# ── Patch version ─────────────────────────────────────────────────────────────
+
+@app.route("/api/version")
+def api_version():
+    return jsonify({"patch": PATCH, "date": PATCH_DATE, "notes": PATCH_NOTES})
 
 
 # ── Pause / resume controls ────────────────────────────────────────────────────

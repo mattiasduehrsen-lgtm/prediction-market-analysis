@@ -11,6 +11,9 @@
   header { background: #1a1d27; border-bottom: 1px solid #2a2d3a; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
   header h1 { font-size: 18px; color: #fff; }
   .badge { background: #00c853; color: #000; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+  .patch-badge { background: #1e2a3a; color: #4fc3f7; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; border: 1px solid #4fc3f7; cursor: default; }
+  .patch-badge:hover::after { content: attr(data-notes); position: absolute; background: #1a1d27; border: 1px solid #4fc3f7; color: #e0e0e0; font-size: 11px; padding: 6px 10px; border-radius: 6px; white-space: nowrap; margin-top: 22px; margin-left: -80px; z-index: 100; }
+  .patch-badge { position: relative; }
   #btc-price { font-size: 20px; font-weight: 700; color: #ffd54f; margin-left: auto; }
   #last-updated { font-size: 11px; color: #555; }
 
@@ -71,6 +74,7 @@
 <header>
   <h1>⚡ Multi-Asset Up/Down Bot</h1>
   <span class="badge">PAPER</span>
+  <span class="patch-badge" id="patch-badge" data-notes="loading...">—</span>
   <div id="btc-price">$—</div>
   <div id="last-updated">—</div>
 </header>
@@ -850,6 +854,16 @@ function refreshAll() {
   refreshPauseState();
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
+
+// Fetch patch version once on load — doesn't change while running
+(async function loadVersion() {
+  try {
+    const v = await fetch('/api/version').then(r => r.json());
+    const el = $('patch-badge');
+    el.textContent = v.patch + ' (' + v.date + ')';
+    el.setAttribute('data-notes', v.notes);
+  } catch(e) {}
+})();
 
 refreshAll();
 setInterval(refreshAll, 5000);

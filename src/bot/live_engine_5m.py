@@ -295,6 +295,65 @@ class LiveEngine5m:
                 f"Cross-check your Polymarket portfolio to verify these match."
             )
 
+    def check_exchange_balances(
+        self,
+        token_id_up: str,
+        token_id_down: str,
+        slug: str = "",
+    ) -> None:
+        """
+        Query Polymarket for actual conditional token balances and compare against
+        our tracked positions. If we hold shares we have no position record for,
+        log a CRITICAL warning so the operator can act before the position is lost.
+
+        Call once after the first market fetch on startup (token IDs are required).
+        This catches the case where positions_*.csv was deleted or never written,
+        leaving real holdings on Polymarket with no exit management.
+        """
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
+        for token_id, label in [(token_id_up, "UP"), (token_id_down, "DOWN")]:
+            if not token_id:
+                continue
+            try:
+                resp = self._client.get_balance_allowance(
+                    BalanceAllowanceParams(
+                        asset_type=AssetType.CONDITIONAL,
+                        token_id=token_id,
+                    )
+                )
+                raw = float(resp.get("balance", 0) or 0)
+                shares = round(raw / 1_000_000, 4)
+                if shares < 0.01:
+                    continue  # dust / zero balance — nothing to worry about
+
+                # Check whether we have a tracked open position for this token
+                tracked = any(
+                    p.token_id == token_id
+                    and p.state in (State.OPEN, State.PENDING_EXIT, State.PENDING_ENTRY)
+                    for p in self.positions.values()
+                )
+                if tracked:
+                    print(
+                        f"[LIVE5M:{self._tag}] BALANCE OK — {shares:.4f} shares of "
+                        f"{label} ({slug}) — tracked in positions file ✓"
+                    )
+                else:
+                    print(
+                        f"\n[LIVE5M:{self._tag}] *** UNTRACKED HOLDING *** "
+                        f"{shares:.4f} {label} shares of {slug} "
+                        f"(token {token_id[:20]}...) are on Polymarket "
+                        f"but NOT in our positions file. "
+                        f"The bot will NOT manage or exit this position automatically. "
+                        f"Sell manually on polymarket.com or restart the bot after "
+                        f"manually adding a row to {self._positions_file.name}.\n"
+                    )
+            except Exception as exc:
+                print(
+                    f"[LIVE5M:{self._tag}] Balance check failed for {label} token "
+                    f"{token_id[:20]}...: {exc}"
+                )
+
     def _cancel_expired_entries(self) -> None:
         """On startup, cancel any PENDING_ENTRY orders whose window already closed."""
         now = time.time()

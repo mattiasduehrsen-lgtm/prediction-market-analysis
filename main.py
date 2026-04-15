@@ -344,6 +344,7 @@ def run_5m_loop(
 
     iteration = 0
     last_summary_ts: float = 0.0   # time-based summary — stays at ~60s regardless of POLL_INTERVAL
+    _balance_checked = False        # run exchange reconciliation once after first market fetch
     market = None   # cached — only refetched when window expires
 
     # ── Context tracking for ML data capture ──────────────────────────────────
@@ -390,6 +391,17 @@ def run_5m_loop(
                     time.sleep(POLL_INTERVAL)
                     continue
                 market = new_market
+
+                # One-time startup: check Polymarket for untracked holdings.
+                # Detects positions held on exchange but missing from positions file
+                # (e.g. file deleted, process killed before save, previous session crash).
+                if live and not _balance_checked:
+                    _balance_checked = True
+                    engine.check_exchange_balances(
+                        token_id_up=market.token_id_up,
+                        token_id_down=market.token_id_down,
+                        slug=market.slug,
+                    )
 
                 # Subscribe CLOB WebSocket to the new window's token IDs
                 clob_feed.subscribe(

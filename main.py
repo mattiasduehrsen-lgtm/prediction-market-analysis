@@ -525,6 +525,10 @@ def run_5m_loop(
                 for closed_trade in engine.check_pending_exits():
                     if cb:
                         cb.record_trade(closed_trade.pnl_usd)
+                # Poll standing TP orders — fills settled at exchange level
+                for closed_trade in engine.check_open_tp_fills():
+                    if cb:
+                        cb.record_trade(closed_trade.pnl_usd)
                 # Cancel any pending entries whose window has expired.
                 # Finding 4 (HIGH): use pos.window_end_ts instead of secs — secs may
                 # already reflect the NEW window (~300s) after a market roll, causing

@@ -82,6 +82,7 @@ POSITION_FIELDS = [
     "token_id",          # ERC-1155 token ID for our side — needed for any exit without market context
     "exit_placed_at",    # timestamp when exit order was posted — for stuck-exit timeout
     "exit_reason",       # reason that triggered the exit — preserved through PENDING_EXIT
+    "tp_order_id",       # standing GTC limit SELL at take_profit, placed immediately on fill
     # Entry context (mirrors paper engine for ML parity)
     "btc_price_at_window_start", "btc_price_at_entry", "btc_pct_change_at_entry",
     "up_price_at_window_start", "secs_remaining_at_entry", "liquidity",
@@ -116,6 +117,7 @@ class LivePosition5m:
     token_id: str = ""           # ERC-1155 token ID for our side
     exit_placed_at: float = 0.0  # timestamp when exit order was posted
     exit_reason: str = ""        # reason that triggered the exit
+    tp_order_id: str = ""        # standing GTC SELL at take_profit, placed immediately on fill
     # Entry context
     btc_price_at_window_start: float = 0.0
     btc_price_at_entry: float = 0.0
@@ -148,6 +150,7 @@ class ClosedLiveTrade5m:
     token_id: str = ""
     exit_placed_at: float = 0.0
     exit_reason: str = ""
+    tp_order_id: str = ""
     btc_price_at_window_start: float = 0.0
     btc_price_at_entry: float = 0.0
     btc_pct_change_at_entry: float = 0.0
@@ -169,7 +172,7 @@ class ClosedLiveTrade5m:
 # ── Persistence ────────────────────────────────────────────────────────────────
 
 STR_FIELDS_POS   = {"position_id","condition_id","slug","asset","side","state",
-                    "entry_order_id","exit_order_id","token_id","exit_reason"}
+                    "entry_order_id","exit_order_id","token_id","exit_reason","tp_order_id"}
 STR_FIELDS_TRADE = STR_FIELDS_POS | {"exit_reason"}
 
 
@@ -295,6 +298,14 @@ class LiveEngine5m:
                 f"Cross-check your Polymarket portfolio to verify these match."
             )
 
+        # Place (or re-place) TP orders for OPEN positions that have none.
+        # This handles restarts where the TP order was never placed or was lost.
+        # Balance check inside _place_tp_order ensures we don't submit before fill settles.
+        for pos_id, pos in list(self.positions.items()):
+            if pos.state == State.OPEN and not pos.tp_order_id and pos.shares > 0:
+                print(f"[LIVE5M:{self._tag}] Placing startup TP order for {pos_id} ({pos.asset} {pos.side})")
+                self._place_tp_order(pos_id)
+
     def check_exchange_balances(
         self,
         token_id_up: str,
@@ -376,6 +387,114 @@ class LiveEngine5m:
             for p in self.positions.values()
             if p.state in (State.PENDING_ENTRY, State.OPEN, State.PENDING_EXIT)
         )
+
+    # ── TP order management ───────────────────────────────────────────────────
+
+    def _place_tp_order(self, position_id: str) -> None:
+        """
+        Place a standing GTC SELL at take_profit immediately after fill confirmation.
+
+        Polymarket will reject a SELL if the wallet balance hasn't settled yet
+        (the fill needs a moment to propagate on-chain). We verify the balance via
+        get_balance_allowance first. If the balance is still zero / too low, we
+        return without placing — check_open_tp_fills() will retry on the next poll.
+        """
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
+        pos = self.positions.get(position_id)
+        if pos is None or pos.state != State.OPEN or not pos.token_id:
+            return
+        if pos.tp_order_id:
+            return   # already on the book
+        if pos.shares <= 0 or pos.take_profit <= 0:
+            return
+
+        # ── Verify balance has settled before posting the SELL ──────────────
+        try:
+            resp = self._client.get_balance_allowance(
+                BalanceAllowanceParams(
+                    asset_type=AssetType.CONDITIONAL,
+                    token_id=pos.token_id,
+                )
+            )
+            raw              = float(resp.get("balance", 0) or 0)
+            confirmed_shares = round(raw / 1_000_000, 4)
+            # Allow a 5% tolerance for rounding differences
+            if confirmed_shares < pos.shares * 0.95:
+                print(
+                    f"[LIVE5M] TP deferred {position_id} — "
+                    f"balance {confirmed_shares:.4f} < expected {pos.shares:.2f} shares "
+                    f"(fill not settled yet, will retry)"
+                )
+                return
+        except Exception as exc:
+            print(
+                f"[LIVE5M] Balance check before TP order failed for {position_id}: {exc} — "
+                f"deferring TP order (will retry)"
+            )
+            return
+
+        # ── Post GTC SELL at take_profit ────────────────────────────────────
+        try:
+            order_args = OrderArgs(
+                price=pos.take_profit,
+                size=pos.shares,
+                side=SELL,
+                token_id=pos.token_id,
+            )
+            signed   = self._client.create_order(order_args)
+            resp_ord = self._client.post_order(signed, OrderType.GTC)
+        except Exception as exc:
+            print(f"[LIVE5M] TP order placement failed for {position_id}: {exc}")
+            return
+
+        order_id = resp_ord.get("orderID", "")
+        if not order_id:
+            print(f"[LIVE5M] TP order rejected for {position_id}: {resp_ord}")
+            return
+
+        pos.tp_order_id = order_id
+        _save_positions(self.positions, self._positions_file)
+        print(
+            f"[LIVE5M] TP_ORDER {position_id} | {pos.asset} {pos.side} "
+            f"GTC SELL {pos.shares:.2f} @ {pos.take_profit:.3f} | "
+            f"tp_order_id={order_id[:16]}..."
+        )
+
+    def check_open_tp_fills(self) -> list[ClosedLiveTrade5m]:
+        """
+        Poll TP order status for all OPEN positions.
+        - If tp_order_id is set and the order is filled → settle as take_profit exit.
+        - If tp_order_id is missing (balance deferred) → retry _place_tp_order.
+
+        Call every poll cycle alongside check_pending_exits().
+        Returns list of trades closed this call.
+        """
+        closed: list[ClosedLiveTrade5m] = []
+        for pos_id, pos in list(self.positions.items()):
+            if pos.state != State.OPEN:
+                continue
+
+            # Retry placing if balance wasn't settled on the last attempt
+            if not pos.tp_order_id:
+                if pos.shares > 0:
+                    self._place_tp_order(pos_id)
+                continue
+
+            try:
+                order = self._client.get_order(pos.tp_order_id)
+            except Exception as exc:
+                print(f"[LIVE5M] get_order (TP) failed for {pos_id}: {exc}")
+                continue
+
+            status = order.get("status", "")
+            if status in ("matched", "filled"):
+                actual_exit = float(order.get("average_price") or pos.take_profit)
+                trade = self._settle_exit(pos_id, actual_exit, "take_profit", 0.0)
+                if trade:
+                    closed.append(trade)
+
+        return closed
 
     # ── Entry ─────────────────────────────────────────────────────────────────
 
@@ -550,6 +669,8 @@ class LiveEngine5m:
                         f"[LIVE5M] CANCEL→OPEN {position_id} — order filled before cancel; "
                         f"now tracking {pos.shares:.2f} shares @ {pos.entry_price:.4f}"
                     )
+                    # Place standing GTC SELL at TP for this surprise fill
+                    self._place_tp_order(position_id)
                     return   # do NOT remove or mark cancelled
             except Exception as exc2:
                 print(
@@ -623,6 +744,8 @@ class LiveEngine5m:
                     f"[LIVE5M] FILLED {pos_id} | {pos.asset} {pos.side} "
                     f"{pos.shares:.2f} shares @ {pos.entry_price:.3f}"
                 )
+                # Place standing GTC SELL at TP immediately — verify balance first
+                self._place_tp_order(pos_id)
 
     # ── Exit ──────────────────────────────────────────────────────────────────
 
@@ -656,8 +779,27 @@ class LiveEngine5m:
         if exit_reason in aggressive_reasons:
             exit_price = AGGRESSIVE_EXIT_PRICE
             order_type = OrderType.FOK   # Fill or Kill — must fill immediately
+            # Cancel the standing TP order before firing the aggressive exit,
+            # otherwise both orders would try to sell the same shares.
+            if pos.tp_order_id:
+                try:
+                    self._client.cancel(pos.tp_order_id)
+                    print(
+                        f"[LIVE5M] Cancelled TP order {pos.tp_order_id[:16]}... "
+                        f"before aggressive exit ({exit_reason})"
+                    )
+                except Exception as exc:
+                    print(f"[LIVE5M] TP cancel failed before {exit_reason} for {position_id}: {exc} — continuing")
+                pos.tp_order_id = ""
         else:
-            # take_profit — post GTC limit at TP price and let it sit on the book
+            # take_profit — if a GTC SELL is already on the book, it will fill at
+            # exchange level without any intervention. Skip the redundant place_exit call.
+            if pos.tp_order_id:
+                print(
+                    f"[LIVE5M] TP order already on book for {position_id} "
+                    f"(order {pos.tp_order_id[:16]}...) — no action needed"
+                )
+                return
             exit_price = pos.take_profit
             order_type = OrderType.GTC
 

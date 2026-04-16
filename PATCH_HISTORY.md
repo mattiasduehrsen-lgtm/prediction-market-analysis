@@ -2,6 +2,58 @@
 
 ---
 
+## v1.11 — 2026-04-16
+**Fix: size orders by actual wallet balance, not API `size_matched`; settle on resolved markets**
+
+**Problem (A) — orphaned positions that can't place TP:**
+After a BUY fills, `check_pending_entries()` reads `size_matched` from the order
+API and sets `pos.shares = size_matched`. But Polymarket's `size_matched` consistently
+over-reports the real on-chain balance by ~4–5% (a fee/rounding quirk that is not
+documented, but verified in live logs on 2026-04-16):
+
+```
+[LIVE5M] FILLED 9e6fb366 | BTC DOWN 12.82 shares @ 0.390
+[LIVE5M] TP order placement failed: balance: 12238490, order amount: 12820000
+```
+
+The order said 12.82 shares filled; the wallet only had 12.238. `_place_tp_order`
+then tried to SELL 12.82 and Polymarket rejected with "not enough balance."
+The 5% tolerance check (`confirmed_shares < pos.shares * 0.95`) passed because
+the shortfall was only 4.5% — so the bot proceeded to place a TP it couldn't
+afford, got rejected, and retried forever. The position sat with state=OPEN,
+no `tp_order_id`, and no way to exit. The user had to sell the shares manually.
+
+This is the bug the user described: "the dashboard says 14 @35, but it in
+reality it filled 13.7 @36. The bot loses control of the position when this
+happens and does not create a take profit order on Polymarket."
+
+**Problem (B) — infinite retry on resolved markets:**
+When a window ends and the market resolves, Polymarket removes the orderbook.
+Any subsequent `place_exit` / `_place_tp_order` call fails with
+`"the orderbook <id> does not exist"`. The exception handler reverted state to
+OPEN, and the main loop fired `place_exit("window_expired")` again on the next
+poll — forever, filling `live.log` with the same error every second.
+
+**Fix:**
+- `_place_tp_order()`: The TP SELL size is now `floor(confirmed_shares, 2)`
+  (true wallet balance), never `pos.shares`. If the balance is within 10% of
+  the expected `pos.shares`, we accept it as ground truth and reconcile
+  `pos.shares` to match so PnL stays accurate. If the balance is more than
+  10% short, we defer (fill genuinely hasn't settled yet).
+- `place_exit()`: Same treatment — the SELL size is the floored wallet
+  balance. If the balance is below the Polymarket minimum (5 shares) or
+  essentially zero, we settle via `_settle_exit` without trying to SELL
+  instead of looping on rejection.
+- Both functions now catch `"orderbook does not exist"` and call
+  `_settle_exit(..., exit_reason="market_resolved", exit_price=0.0)`
+  to break the infinite retry loop. The operator sees a clear
+  `market_resolved` exit in trades.csv and can manually reconcile on
+  Polymarket if the position actually won (shares redeemed for $1 in USDC).
+
+**Files:** `src/bot/live_engine_5m.py`
+
+---
+
 ## v1.10 — 2026-04-15
 **Fix: Polymarket returns `"MATCHED"` (uppercase) — bot was checking `"matched"` (lowercase)**
 

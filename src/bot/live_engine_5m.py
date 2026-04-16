@@ -398,7 +398,14 @@ class LiveEngine5m:
         (the fill needs a moment to propagate on-chain). We verify the balance via
         get_balance_allowance first. If the balance is still zero / too low, we
         return without placing — check_open_tp_fills() will retry on the next poll.
+
+        v1.11: The API's `size_matched` can over-report by ~4-5% compared to what
+        actually settles on-chain (appears to be a Polymarket fee/rounding quirk).
+        So we always size the TP SELL using the *actual wallet balance* (floored
+        to 2 decimals), never the stale pos.shares value. We also update
+        pos.shares to match the true balance so _settle_exit accounting is correct.
         """
+        import math
         from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
 
         pos = self.positions.get(position_id)
@@ -418,15 +425,7 @@ class LiveEngine5m:
                 )
             )
             raw              = float(resp.get("balance", 0) or 0)
-            confirmed_shares = round(raw / 1_000_000, 4)
-            # Allow a 5% tolerance for rounding differences
-            if confirmed_shares < pos.shares * 0.95:
-                print(
-                    f"[LIVE5M] TP deferred {position_id} — "
-                    f"balance {confirmed_shares:.4f} < expected {pos.shares:.2f} shares "
-                    f"(fill not settled yet, will retry)"
-                )
-                return
+            confirmed_shares = raw / 1_000_000
         except Exception as exc:
             print(
                 f"[LIVE5M] Balance check before TP order failed for {position_id}: {exc} — "
@@ -434,17 +433,57 @@ class LiveEngine5m:
             )
             return
 
+        # Floor to 2dp — avoids "not enough balance" rejections from rounding up
+        tp_size = math.floor(confirmed_shares * 100) / 100
+
+        # If balance is dramatically less than expected (>10% short), the fill
+        # hasn't settled yet — wait for next poll. If it's within 10%, we accept
+        # the true balance as ground truth (Polymarket ~4.5% deduction is normal).
+        if tp_size < pos.shares * 0.90:
+            print(
+                f"[LIVE5M] TP deferred {position_id} — "
+                f"balance {confirmed_shares:.4f} << expected {pos.shares:.2f} shares "
+                f"(fill not settled yet, will retry)"
+            )
+            return
+
+        if tp_size < MIN_SHARES:
+            print(
+                f"[LIVE5M] TP skipped {position_id} — "
+                f"actual balance {tp_size:.2f} below Polymarket minimum {MIN_SHARES}. "
+                f"Position left OPEN; will exit via aggressive FOK on stop/window-end."
+            )
+            return
+
+        # Reconcile pos.shares with ground-truth balance so exits/PnL are accurate
+        if abs(tp_size - pos.shares) > 0.01:
+            print(
+                f"[LIVE5M] Reconciling {position_id} shares: "
+                f"API said {pos.shares:.2f}, wallet has {tp_size:.2f} — using wallet value"
+            )
+            pos.shares = tp_size
+            _save_positions(self.positions, self._positions_file)
+
         # ── Post GTC SELL at take_profit ────────────────────────────────────
         try:
             order_args = OrderArgs(
                 price=pos.take_profit,
-                size=pos.shares,
+                size=tp_size,
                 side=SELL,
                 token_id=pos.token_id,
             )
             signed   = self._client.create_order(order_args)
             resp_ord = self._client.post_order(signed, OrderType.GTC)
         except Exception as exc:
+            exc_str = str(exc)
+            # Resolved markets: orderbook is gone — position can't be managed anymore
+            if "orderbook" in exc_str and "does not exist" in exc_str:
+                print(
+                    f"[LIVE5M] TP impossible for {position_id} — "
+                    f"orderbook gone (market resolved). Settling as market_resolved."
+                )
+                self._settle_exit(position_id, 0.0, "market_resolved", 0.0)
+                return
             print(f"[LIVE5M] TP order placement failed for {position_id}: {exc}")
             return
 
@@ -457,7 +496,7 @@ class LiveEngine5m:
         _save_positions(self.positions, self._positions_file)
         print(
             f"[LIVE5M] TP_ORDER {position_id} | {pos.asset} {pos.side} "
-            f"GTC SELL {pos.shares:.2f} @ {pos.take_profit:.3f} | "
+            f"GTC SELL {tp_size:.2f} @ {pos.take_profit:.3f} | "
             f"tp_order_id={order_id[:16]}..."
         )
 
@@ -817,6 +856,56 @@ class LiveEngine5m:
             exit_price = pos.take_profit
             order_type = OrderType.GTC
 
+        # v1.11: Size the exit using the actual wallet balance, floored to 2dp.
+        # Polymarket's size_matched over-reports vs. on-chain balance by ~4-5%,
+        # so relying on pos.shares causes "not enough balance" rejections.
+        import math
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        try:
+            bal_resp = self._client.get_balance_allowance(
+                BalanceAllowanceParams(
+                    asset_type=AssetType.CONDITIONAL,
+                    token_id=token_id,
+                )
+            )
+            raw_bal       = float(bal_resp.get("balance", 0) or 0)
+            wallet_shares = raw_bal / 1_000_000
+            exit_size     = math.floor(wallet_shares * 100) / 100
+        except Exception as exc:
+            print(
+                f"[LIVE5M] Exit balance check failed for {position_id}: {exc} — "
+                f"falling back to pos.shares={pos.shares:.2f}"
+            )
+            exit_size = pos.shares
+
+        # If wallet is essentially empty, the market likely resolved and shares
+        # were redeemed (or we never had them). Close out without trying to SELL.
+        if exit_size < 0.01:
+            print(
+                f"[LIVE5M] {position_id} wallet empty (balance={exit_size:.4f}) — "
+                f"shares already redeemed or never received. Settling as {exit_reason}."
+            )
+            self._settle_exit(position_id, 0.0, exit_reason, price_60s_after_entry)
+            return
+
+        if exit_size < MIN_SHARES:
+            # Below Polymarket's minimum order — can't sell, just close out.
+            # Use current price estimate as exit (best effort).
+            print(
+                f"[LIVE5M] {position_id} balance {exit_size:.2f} below minimum {MIN_SHARES} — "
+                f"settling without SELL order"
+            )
+            self._settle_exit(position_id, exit_price, exit_reason, price_60s_after_entry)
+            return
+
+        # Reconcile pos.shares with true balance for accurate PnL
+        if abs(exit_size - pos.shares) > 0.01:
+            print(
+                f"[LIVE5M] Reconciling {position_id} shares before exit: "
+                f"tracked {pos.shares:.2f}, wallet {exit_size:.2f}"
+            )
+            pos.shares = exit_size
+
         # Finding 3 (HIGH): Pre-save as PENDING_EXIT before the API call. If the process
         # crashes between post_order() and the save, restart sees PENDING_EXIT and checks
         # fills rather than placing a duplicate exit order.
@@ -829,7 +918,7 @@ class LiveEngine5m:
         try:
             order_args = OrderArgs(
                 price=exit_price,
-                size=pos.shares,
+                size=exit_size,
                 side=SELL,
                 token_id=token_id,
             )
@@ -837,6 +926,15 @@ class LiveEngine5m:
             resp   = self._client.post_order(signed, order_type)
         except Exception as exc:
             exc_str = str(exc)
+            # v1.11: Resolved market — orderbook is gone, nothing to sell into.
+            # Settle the position so we stop infinitely retrying.
+            if "orderbook" in exc_str and "does not exist" in exc_str:
+                print(
+                    f"[LIVE5M] {position_id} orderbook gone — market resolved. "
+                    f"Settling as market_resolved (manual redemption may be needed on Polymarket)."
+                )
+                self._settle_exit(position_id, 0.0, "market_resolved", price_60s_after_entry)
+                return
             if "401" in exc_str or "Unauthorized" in exc_str:
                 self._auth_failed = True
                 print(f"[LIVE5M] AUTH FAILURE during exit for {position_id}: {exc}")
@@ -866,7 +964,7 @@ class LiveEngine5m:
 
         print(
             f"[LIVE5M] EXIT   {position_id} | {exit_reason} "
-            f"SELL {pos.shares:.2f} @ {exit_price:.3f} | "
+            f"SELL {exit_size:.2f} @ {exit_price:.3f} | "
             f"order_id={order_id[:16] if order_id else 'FOK-immediate'}..."
         )
 

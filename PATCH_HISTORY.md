@@ -2,6 +2,53 @@
 
 ---
 
+## v1.12 — 2026-04-16
+**Cowork pre-live review: per-strategy summary JSON bug fixed; going live with tightened sizing**
+
+Cowork analyzed the 820-trade paper history and produced a NO-GO verdict on the
+full system but a conditional GO on 15m mean-reversion if BTC-5m is suspended
+and entry filters are applied. The BTC-5m kill and entry filters were already
+in place from v1.10–v1.11 (see `src/bot/signal_5m.py` asset-specific blocks
+and `main.py` strategy-config comments). This patch lands the remaining positive
+changes and deploys live.
+
+**Fix — per-strategy summary JSON aggregation bug:**
+`src/bot/engine_5m.py::_compute_summary()` read the shared `TRADES_FILE`
+without filtering by asset/window/strategy. Every `Engine5m(tag="BTC-15m-mean_reversion")`,
+`Engine5m(tag="ETH-15m-mean_reversion")`, and `Engine5m(tag="SOL-15m-mean_reversion")`
+instance therefore wrote the same aggregate numbers to its own `summary_{tag}.json`
+file — making the per-strategy dashboards and the cowork snapshot all show
+identical 820-trade / 43.5% WR / −$850 figures regardless of which strategy
+was in the filename.
+
+Fix: `_compute_summary()` now accepts optional `(asset, window, strategy)`
+filters, `Engine5m.__init__` parses its `tag` into those three components, and
+`Engine5m.summary()` passes them through. Legacy `tag=""` callers and any
+future aggregate caller get unfiltered stats by passing `None` for each filter.
+
+**Live deployment (Cowork-recommended settings):**
+- `LIVE_POSITION_SIZE_USD=3` (down from $20 default; ~0.7× half-Kelly on $500 bankroll)
+- `LIVE_MAX_DAILY_LOSS_USD=25` (down from $50 default)
+- Enabled strategies: `BTC-15m-mean_reversion`, `ETH-15m-mean_reversion`, `SOL-15m-mean_reversion`
+- Disabled: `BTC-5m-mean_reversion` (−$801 paper), `BTC-5m-momentum` (−$168 paper)
+- All changes deployed to laptop via `.env` edit + `git pull` + `schtasks /run`.
+
+**Kill-switches active:**
+- Daily loss ≥ $25 → circuit breaker trips (paused.flag)
+- Concurrent live positions ≤ MAX_POSITIONS (5)
+- Stalled-exit rate monitored manually; >35% in last 20 trades → suspend
+
+**Known caveats from Cowork report:**
+- Filter-uplift numbers (+$373 on 294-trade history) are in-sample fit, not OOS
+  expectancy. Treat as directional, not predictive.
+- advisor_skip counterfactual (+$3.30 avg on 184 skipped windows) suggests
+  disabling it could be meaningful upside — but the CF math hasn't been verified.
+  Leaving advisor disabled (current behaviour) until next review.
+- 15m MR per-strategy CIs all include zero. Going live at $3/trade is the
+  smallest sustainable size to accumulate the next ~150 trades OOS.
+
+---
+
 ## v1.11 — 2026-04-16
 **Fix: size orders by actual wallet balance, not API `size_matched`; settle on resolved markets**
 

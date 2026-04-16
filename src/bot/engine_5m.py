@@ -236,7 +236,22 @@ def _get_reset_epoch() -> float:
         return 0.0
 
 
-def _compute_summary() -> dict[str, Any]:
+def _compute_summary(
+    asset: str | None = None,
+    window: str | None = None,
+    strategy: str | None = None,
+) -> dict[str, Any]:
+    """
+    Compute summary stats over the shared TRADES_FILE.
+
+    If asset/window/strategy are provided, rows are filtered to that slice — this
+    is how per-strategy summary_{tag}.json files avoid showing aggregate numbers
+    (bug fixed 2026-04-16: previously every strategy wrote identical aggregate
+    stats because _compute_summary read the whole trades file unfiltered).
+
+    Passing None for any filter keeps that dimension unfiltered (used by the
+    overall summary.json).
+    """
     reset_epoch = _get_reset_epoch()
     if not TRADES_FILE.exists():
         return {
@@ -254,8 +269,15 @@ def _compute_summary() -> dict[str, Any]:
                     k: (row[k] if k in str_fields else float(row[k] or 0))
                     for k in TRADE_FIELDS if k in row
                 })
-                if t.closed_at >= reset_epoch:
-                    trades.append(t)
+                if t.closed_at < reset_epoch:
+                    continue
+                if asset is not None and t.asset != asset:
+                    continue
+                if window is not None and t.window != window:
+                    continue
+                if strategy is not None and t.strategy != strategy:
+                    continue
+                trades.append(t)
             except Exception:
                 pass
 
@@ -308,8 +330,25 @@ class Engine5m:
         # Each thread gets its own positions file so concurrent saves don't
         # overwrite each other. Trades/summary/skips remain shared.
         suffix = f"_{tag}" if tag else ""
+        self._tag            = tag
         self._positions_file = OUT_DIR / f"positions{suffix}.csv"
         self._summary_file   = OUT_DIR / f"summary{suffix}.json"
+
+        # Parse tag "ASSET-WINDOW-STRATEGY" (e.g. "BTC-15m-mean_reversion") so
+        # summary() can filter trades to this slice. Falls back to (None,None,None)
+        # on legacy / empty tags so the aggregate summary path still works.
+        self._asset: str | None = None
+        self._window: str | None = None
+        self._strategy: str | None = None
+        if tag:
+            _parts = tag.split("-", 2)
+            if len(_parts) >= 1 and _parts[0]:
+                self._asset = _parts[0]
+            if len(_parts) >= 2 and _parts[1]:
+                self._window = _parts[1]
+            if len(_parts) >= 3 and _parts[2]:
+                self._strategy = _parts[2]
+
         _migrate_csv(self._positions_file, POSITION_FIELDS)
         self.positions: dict[str, Position5m] = _load_positions(self._positions_file)
         # Tracks every condition_id traded this session (open OR closed) so we
@@ -484,7 +523,11 @@ class Engine5m:
             print(f"[ENGINE5M] Resolution: {resolution_side} won | {updated} trade(s) updated")
 
     def summary(self) -> dict[str, Any]:
-        s = _compute_summary()
+        s = _compute_summary(
+            asset=self._asset,
+            window=self._window,
+            strategy=self._strategy,
+        )
         s["open_positions"] = len(self.positions)
         return s
 

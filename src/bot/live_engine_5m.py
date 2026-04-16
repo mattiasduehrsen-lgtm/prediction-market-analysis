@@ -811,9 +811,13 @@ class LiveEngine5m:
         token_id: str,
         exit_reason: str,
         price_60s_after_entry: float = 0.0,
+        market_price_at_exit: float = 0.0,
     ) -> None:
         """
         Place an exit (SELL) order.
+        market_price_at_exit: current CLOB mid for our side at the moment this is called.
+          Used as fallback for average_price when Polymarket doesn't return it on FOK fills.
+          Pass cur_up (for UP) or 1.0-cur_up (for DOWN) from the poll loop.
         - take_profit: GTC limit at take_profit price (sits on book)
         - hard_stop / force_exit_time / window_expired / etc: aggressive FOK at 0.01
           (immediately matches best available bid — effective market order)
@@ -986,7 +990,17 @@ class LiveEngine5m:
                         pos.exit_reason    = ""
                         _save_positions(self.positions, self._positions_file)
                         return
-                    actual_exit = float(fok_status.get("average_price") or exit_price)
+                    _ap = fok_status.get("average_price")
+                    actual_exit = float(_ap) if _ap and float(_ap) > 0 else 0.0
+                    if actual_exit <= 0:
+                        # Polymarket didn't return average_price for this FOK fill.
+                        # Use market_price_at_exit (current CLOB mid passed from poll loop)
+                        # as a best estimate rather than the order placement price (0.01).
+                        actual_exit = market_price_at_exit if market_price_at_exit > 0 else exit_price
+                        print(
+                            f"[LIVE5M] WARNING: No average_price for FOK fill {position_id} — "
+                            f"settling at market_price={actual_exit:.4f} (pnl estimate only)"
+                        )
                 else:
                     print(f"[LIVE5M] FOK REJECTED (no orderID) for {position_id} — resetting to OPEN")
                     pos.state          = State.OPEN

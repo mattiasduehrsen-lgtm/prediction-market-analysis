@@ -579,8 +579,10 @@ def run_5m_loop(
                         window_stopped.add(pos.condition_id)
                     if live:
                         token_id = market.token_id_up if pos.side == "UP" else market.token_id_down
+                        cur_side_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
                         engine.place_exit(pos_id, token_id, reason,
-                                          price_60s_after_entry=p60_after)
+                                          price_60s_after_entry=p60_after,
+                                          market_price_at_exit=cur_side_price)
                     else:
                         exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
                         trade = engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)

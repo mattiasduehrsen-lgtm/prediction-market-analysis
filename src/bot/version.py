@@ -5,6 +5,6 @@ Bump PATCH and add a line to PATCH_NOTES whenever a meaningful change is deploye
 The dashboard reads this via /api/version.
 """
 
-PATCH       = "v1.13"
+PATCH       = "v1.14"
 PATCH_DATE  = "2026-04-16"
-PATCH_NOTES = "Record resolution_side and our_side_won in live trades — live engine now back-fills which side won at window close, matching paper engine. Fixes missing data for 'right direction, bad stop' analysis."
+PATCH_NOTES = "Fix FOK exit price fallback: use actual market price at exit time instead of AGGRESSIVE_EXIT_PRICE (0.01) when Polymarket doesn't return average_price — fixes dashboard entry/exit price inaccuracy and PnL understatement."

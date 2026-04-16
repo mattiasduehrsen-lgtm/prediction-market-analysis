@@ -768,11 +768,19 @@ def run_5m_loop(
                         # without filling in fast markets — causing live to miss entries
                         # that paper caught at book_ask. Taker pricing ensures consistent
                         # fill rates at the cost of a small fee difference.
+                        #
+                        # v1.9: Add 1¢ slippage buffer above the WS best-ask so the GTC
+                        # order aggressively crosses the spread even when the WS price is
+                        # slightly stale (e.g. 0.380 WS ask but real ask is 0.390). Without
+                        # slippage the GTC order sits as a resting maker, times out after
+                        # 45s, and is cancelled — the "entry placed but disappeared" bug.
+                        # Cap at 0.42 to stay inside the positive-EV gate.
+                        ENTRY_SLIPPAGE = 0.01
                         if ws_ok and book_ask > 0 and book_bid > 0:
                             if side == "UP":
-                                entry_price = book_ask
+                                entry_price = min(round(book_ask + ENTRY_SLIPPAGE, 3), 0.42)
                             else:
-                                entry_price = round(1.0 - book_bid, 6)
+                                entry_price = min(round(1.0 - book_bid + ENTRY_SLIPPAGE, 3), 0.42)
 
                         # ── Dynamic TP + negative-EV gate ────────────────────
                         tp = take_profit_price(entry_price)

@@ -2,6 +2,32 @@
 
 ---
 
+## v1.9 — 2026-04-15
+**Entry taker slippage: +1¢ buffer so GTC order crosses the spread**
+
+**Problem:** The live bot placed a GTC limit BUY at exactly `book_ask` from the
+WebSocket (e.g. 0.380). If the WS book was even slightly stale — the real market
+ask was already at 0.390 — the order rested as a maker rather than crossing as a
+taker. No counterparty was selling at ≤ 0.380, so it sat unfilled for 45s, hit
+`ENTRY_FILL_TIMEOUT`, was cancelled, and the position was removed from the CSV.
+The user saw the order appear in Polymarket as a pending buy (looked like a fill)
+and then disappear when it was cancelled. No TP limit sell ever appeared because
+the buy never actually filled.
+
+**Fix:**
+- `main.py`: Added `ENTRY_SLIPPAGE = 0.01` (1¢). Entry taker override is now
+  `min(book_ask + 0.01, 0.42)` for UP and `min(1 - book_bid + 0.01, 0.42)` for
+  DOWN. A GTC BUY at `best_ask + 1¢` immediately crosses the spread as a taker
+  even if the WS price is 1–2 cents stale. The 0.42 cap preserves the
+  positive-EV gate.
+- `live_engine_5m.py`: `check_pending_entries()` now detects `status=cancelled`
+  from the exchange API and cleans up the position immediately (previously it
+  waited the full 45s `ENTRY_FILL_TIMEOUT` before `cancel_entry()` ran).
+
+**Files:** `main.py`, `src/bot/live_engine_5m.py`
+
+---
+
 ## v1.8 — 2026-04-15
 **Signal mirroring: live bot follows paper entries when process histories diverge**
 

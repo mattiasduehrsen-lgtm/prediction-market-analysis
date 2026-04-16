@@ -725,9 +725,23 @@ class LiveEngine5m:
                 print(f"[LIVE5M] get_order failed for {pos_id}: {exc}")
                 continue
 
-            status       = order.get("status", "")
+            status       = order.get("status", "").lower()
             raw_matched  = order.get("size_matched", 0) or 0
             size_matched = float(raw_matched)
+
+            # v1.9: If the exchange already cancelled the order (e.g. FOK failed,
+            # or user cancelled manually), clean up immediately rather than waiting
+            # for the 45s ENTRY_FILL_TIMEOUT.
+            if status in ("cancelled", "canceled") and size_matched == 0:
+                print(
+                    f"[LIVE5M] {pos_id} — entry order cancelled by exchange "
+                    f"(did not fill), removing position"
+                )
+                self._cancelled_this_window.add(pos.condition_id)
+                pos.state = State.CANCELLED
+                self.positions.pop(pos_id, None)
+                _save_positions(self.positions, self._positions_file)
+                continue
 
             if status in ("matched", "filled") and size_matched > 0:
                 # Use actual fill price if available (Finding 3.C)

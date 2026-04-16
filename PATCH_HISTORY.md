@@ -2,6 +2,33 @@
 
 ---
 
+## v1.10 — 2026-04-15
+**Fix: Polymarket returns `"MATCHED"` (uppercase) — bot was checking `"matched"` (lowercase)**
+
+**Problem:** Every entry order was timing out after 45s and being cancelled, even when
+the buy actually filled and shares appeared in Polymarket. The user saw shares in their
+portfolio but the bot had no position record and placed no TP sell — happened 3 times.
+
+Root cause: Polymarket's CLOB API returns order status as uppercase strings
+(`"MATCHED"`, `"FILLED"`, `"CANCELED"`). Every status check in the live engine used
+lowercase strings (`"matched"`, `"filled"`). Python string comparison is case-sensitive,
+so `"MATCHED" in ("matched", "filled")` evaluates to `False`. The fill was never detected.
+
+Flow: GTC BUY fills → `check_pending_entries()` polls `get_order()` → status `"MATCHED"`
+doesn't match `"matched"` → no transition to OPEN → 45s timeout → `cancel_entry()` →
+CANCEL→OPEN check also misses due to same bug → position removed as CANCELLED while
+shares remain on Polymarket untracked.
+
+**Fix:** Added `.lower()` to `order.get("status", "")` in all four status check sites:
+- `check_pending_entries()` (partially fixed in v1.9)
+- `cancel_entry()` — CANCEL→OPEN path (this is the critical path for 45s timeouts)
+- `check_open_tp_fills()`
+- `check_pending_exits()`
+
+**Files:** `src/bot/live_engine_5m.py`
+
+---
+
 ## v1.9 — 2026-04-15
 **Entry taker slippage: +1¢ buffer so GTC order crosses the spread**
 

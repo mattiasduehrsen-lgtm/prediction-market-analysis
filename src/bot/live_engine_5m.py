@@ -487,7 +487,7 @@ class LiveEngine5m:
                 print(f"[LIVE5M] get_order (TP) failed for {pos_id}: {exc}")
                 continue
 
-            status = order.get("status", "")
+            status = order.get("status", "").lower()
             if status in ("matched", "filled"):
                 actual_exit = float(order.get("average_price") or pos.take_profit)
                 trade = self._settle_exit(pos_id, actual_exit, "take_profit", 0.0)
@@ -652,7 +652,7 @@ class LiveEngine5m:
         if pos.entry_order_id and pos.entry_order_id != "__pending__":
             try:
                 order        = self._client.get_order(pos.entry_order_id)
-                status       = order.get("status", "")
+                status       = order.get("status", "").lower()
                 raw_matched  = order.get("size_matched", 0) or 0
                 size_matched = float(raw_matched)
                 if status in ("matched", "filled") and size_matched > 0:
@@ -969,7 +969,7 @@ class LiveEngine5m:
                 print(f"[LIVE5M] get_order (exit) failed for {pos_id}: {exc}")
                 continue
 
-            status = order.get("status", "")
+            status = order.get("status", "").lower()
             if status in ("matched", "filled"):
                 actual_exit = float(order.get("average_price") or pos.take_profit)
                 trade = self._settle_exit(pos_id, actual_exit, pos.exit_reason or "take_profit", price_60s_after_entry)

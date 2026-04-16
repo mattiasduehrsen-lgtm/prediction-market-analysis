@@ -379,7 +379,7 @@ def run_5m_loop(
             # outcomePrices from Gamma is stale — only token IDs and slug are needed here.
             if market is None or market.is_expired():
                 # ── Resolution: fill prev window's outcome before resetting ──────
-                if market is not None and not live and prev_condition_id and prev_cl_start_price > 0:
+                if market is not None and prev_condition_id and prev_cl_start_price > 0:
                     cl_now = feed.get_state()
                     if cl_now.price > 0:
                         resolution_side = "UP" if cl_now.price >= prev_cl_start_price else "DOWN"

@@ -93,6 +93,7 @@ TRADE_FIELDS = POSITION_FIELDS + [
     "price_60s_after_entry",
     "exit_price", "exit_fee_usd",
     "closed_at", "hold_seconds", "pnl_usd", "return_pct",
+    "resolution_side", "our_side_won",   # filled after window resolves — did we pick the winner?
 ]
 
 
@@ -167,13 +168,15 @@ class ClosedLiveTrade5m:
     hold_seconds: float = 0.0
     pnl_usd: float = 0.0
     return_pct: float = 0.0
+    resolution_side: str = ""   # "UP" or "DOWN" — which side paid $1.00 (filled post-resolution)
+    our_side_won: str = ""      # "True" / "False" — did we pick the winner?
 
 
 # ── Persistence ────────────────────────────────────────────────────────────────
 
 STR_FIELDS_POS   = {"position_id","condition_id","slug","asset","side","state",
                     "entry_order_id","exit_order_id","token_id","exit_reason","tp_order_id"}
-STR_FIELDS_TRADE = STR_FIELDS_POS | {"exit_reason"}
+STR_FIELDS_TRADE = STR_FIELDS_POS | {"exit_reason", "resolution_side", "our_side_won"}
 
 
 def _save_positions(positions: dict[str, LivePosition5m], path: Path) -> None:
@@ -1145,6 +1148,36 @@ class LiveEngine5m:
         except Exception:
             pass   # keep stale value on error
         return self._wallet_usdc
+
+    # ── Resolution tracking ───────────────────────────────────────────────────
+
+    def update_resolution(self, condition_id: str, resolution_side: str) -> None:
+        """
+        Back-fill resolution_side and our_side_won on closed trades for this window.
+        Called when the next window opens so we know the Chainlink-confirmed outcome.
+        Mirrors the paper engine's update_resolution() — same data, same ML parity.
+        """
+        if not self._trades_file.exists():
+            return
+        updated = 0
+        rows = []
+        with open(self._trades_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or TRADE_FIELDS
+            for row in reader:
+                if row.get("condition_id") == condition_id and not row.get("resolution_side"):
+                    row["resolution_side"] = resolution_side
+                    row["our_side_won"]    = str(row.get("side") == resolution_side)
+                    updated += 1
+                rows.append(row)
+        if updated:
+            with open(self._trades_file, "w", newline="", encoding="utf-8") as f:
+                # Use TRADE_FIELDS so new columns appear even if the file predates this patch
+                writer = csv.DictWriter(f, fieldnames=TRADE_FIELDS)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({k: row.get(k, "") for k in TRADE_FIELDS})
+            print(f"[LIVE5M] Resolution: {resolution_side} won | {updated} trade(s) updated ({condition_id[:8]})")
 
     # ── Summary ───────────────────────────────────────────────────────────────
 

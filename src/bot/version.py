@@ -5,6 +5,6 @@ Bump PATCH and add a line to PATCH_NOTES whenever a meaningful change is deploye
 The dashboard reads this via /api/version.
 """
 
-PATCH       = "v1.12"
+PATCH       = "v1.13"
 PATCH_DATE  = "2026-04-16"
-PATCH_NOTES = "Cowork pre-live review: per-strategy paper summary JSON now filters by asset/window/strategy (was writing identical aggregate to every summary_*.json). Entry filters (min DOWN>=0.35, BTC-5m disabled) already in place. Live sizing cut to $3/trade and daily loss cap tightened to $25 via .env."
+PATCH_NOTES = "Record resolution_side and our_side_won in live trades — live engine now back-fills which side won at window close, matching paper engine. Fixes missing data for 'right direction, bad stop' analysis."

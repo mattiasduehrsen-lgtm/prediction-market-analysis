@@ -176,10 +176,11 @@ From `CLAUDE.md` — tested the hard way:
 As of 2026-04-16 20:30:
 - **PolyBot** scheduled task → `watch_bot.ps1` → runs `main.py multi-live` (LIVE)
 - **PolyDashboard** scheduled task → runs `main.py dashboard`
+- **PolyPaper** scheduled task → `watch_paper.ps1` → runs `main.py multi-loop` (PAPER, with watchdog/restart loop) ← **added 2026-04-16**
 - **PolyBotLive** scheduled task → `start_live.bat` (redundant, manual-only)
 - **RunBot** scheduled task → `run_bot.bat` → `main.py paper-loop` (LEGACY BTC strike bot — last run 2026-03-30)
 
-**⚠️ ISSUE:** There is NO scheduled task running `main.py multi-loop` for PAPER 15m mean reversion. If PAPER needs to run continuously, a new task needs to be added, or watch_bot.ps1 needs to launch both `multi-loop` AND `multi-live` as separate processes.
+**✅ FIXED (2026-04-16):** `PolyPaper` scheduled task now runs `watch_paper.ps1` → `main.py multi-loop` continuously with auto-restart on crash. Logs to `watchdog.log` with `[WATCHDOG-PAPER]` prefix.
 
 ---
 

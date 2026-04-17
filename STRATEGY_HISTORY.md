@@ -138,8 +138,8 @@ PAPER_MAX_HOLDING_SECONDS=28800
 PAPER_MAX_FALLBACK_SECONDS=60
 
 # LIVE bot (multi-live)
-LIVE_POSITION_SIZE_USD=5         # ← v1.12 says $3 but actual value is $5
-LIVE_MAX_DAILY_LOSS_USD=15.0     # circuit breaker
+LIVE_POSITION_SIZE_USD=8         # ← raised 2026-04-17: was $5
+LIVE_MAX_DAILY_LOSS_USD=30.0     # circuit breaker — raised 2026-04-17: was $15
 
 # Signal filters (apply to both paper and live)
 CROSS_WINDOW_MIN=-0.15           # v1.5

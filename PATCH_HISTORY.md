@@ -2,6 +2,30 @@
 
 ---
 
+## v1.15 — 2026-04-17
+**Remove signal mirroring — LIVE runs independent signals, same as PAPER**
+
+**Problem:** Signal mirroring (v1.8) made the LIVE bot copy PAPER entries via
+`signal_mirror_{ASSET}_{WINDOW}.json` files. LIVE would enter only after PAPER
+wrote the file, picking it up 1–2 poll cycles later. This introduced a
+systematic delay and risked stale entry prices (though the live book price
+was re-fetched at entry time, the timing lag could mean entering into a
+moved market).
+
+**Fix:** Removed both sides of the mirror:
+- LIVE side: no longer reads `signal_mirror_*.json` to override `should_enter()`
+- PAPER side: no longer writes `signal_mirror_*.json` after opening a position
+
+Both `multi-live` and `multi-loop` now evaluate `should_enter()` independently
+with their own price histories. They run the same strategy logic (BTC/ETH/SOL
+15m mean reversion) and will enter the same trades when their independent
+signals agree. Occasional divergence (different `btc_rate_per_min` due to
+separate process histories) is an accepted tradeoff for eliminating staleness.
+
+**Files:** `main.py`, `src/bot/version.py`
+
+---
+
 ## v1.12 — 2026-04-16
 **Cowork pre-live review: per-strategy summary JSON bug fixed; going live with tightened sizing**
 

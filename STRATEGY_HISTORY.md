@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-04-16
+**Last updated:** 2026-04-17
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -31,7 +31,7 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 | `main.py multi-live` | LIVE trading — real money on Polymarket | Yes |
 | `main.py multi-loop` | PAPER trading — simulated, for data collection | No |
 
-**Signal mirroring (v1.8):** The LIVE bot follows PAPER entries via `signal_mirror_*.json` files. PAPER is the "lead" signal generator; LIVE mirrors it when entries match the window.
+**Independent signals (v1.15):** LIVE and PAPER both evaluate `should_enter()` independently. No mirroring — LIVE enters on its own signal, not a copy of PAPER's.
 
 ### Pause control
 - **LIVE only:** `output/5m_live/paused.live.flag` — halts new LIVE entries, existing positions still managed. Set via dashboard button or manually.
@@ -42,6 +42,9 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.15 — 2026-04-17 (pending push)
+Remove signal mirroring: LIVE evaluates `should_enter()` independently. Both bots run the same strategy logic on their own price histories — no mirror lag, no stale entries.
 
 ### v1.14 — 2026-04-16 (`6035589`)
 Fix FOK exit price fallback: use actual market price at exit time instead of AGGRESSIVE_EXIT_PRICE (0.01) when Polymarket doesn't return average_price. Fixes dashboard entry/exit price inaccuracy and PnL understatement.

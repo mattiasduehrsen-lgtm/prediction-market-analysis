@@ -14,7 +14,7 @@ _PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
 
 OUT_5M      = Path(__file__).resolve().parents[2] / "output/5m_trading"
 OUT_5M_LIVE = Path(__file__).resolve().parents[2] / "output/5m_live"
-PAUSE_FLAG  = OUT_5M_LIVE / "paused.flag"
+PAUSE_FLAG  = OUT_5M_LIVE / "paused.live.flag"
 
 app = Flask(__name__)
 

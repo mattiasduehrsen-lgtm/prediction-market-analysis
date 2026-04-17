@@ -335,6 +335,7 @@ def api_live_trades():
     for f in sorted(OUT_5M_LIVE.glob("trades*.csv")):
         rows.extend(_read_csv(f))
     clean = [{k: v for k, v in row.items() if k is not None} for row in rows]
+    clean.sort(key=lambda r: float(r.get("opened_at") or 0))
     return jsonify(clean[-100:])
 
 

@@ -2,6 +2,49 @@
 
 ---
 
+## v1.16 — 2026-04-18
+**Cowork 2026-04-18 filter set — 6 targeted changes from analysis of 395 paper trades**
+
+### 🟢 1. Wire `hard_stop_max_remaining` for 15m windows (bug fix)
+The 15m hard-stop gate was documented but never implemented. `hard_stop_max_remaining`
+defaulted to `float("inf")`, so hard-stops were firing at median 45% through the
+window instead of only in the final 4 minutes as intended. Changed to 240s for
+15m windows. This delays ~67 hard-stop exits, giving positions more recovery time;
+they become `soft_exit_stalled` instead if the price hasn't recovered.
+
+### 🟢 2. Tighten `CROSS_WINDOW_MAX` 0.15 → 0.10
+The +0.10..+0.15 cross-window bucket had 40% WR / −$2.60 EV (10 modern trades) —
+the only band inside the current filter that consistently loses money. Changed both
+the `.env` default in `market_5m.py` and the `.env` on the laptop.
+
+### 🟢 3. BTC DOWN regime filter
+BTC DOWN entries in bullish April regime: 50% WR / −$0.93 EV (58 modern trades)
+vs BTC UP: 59% WR / +$1.22 EV. New filter: skip BTC DOWN when `btc_pct_chg_entry ≤ 0`
+(BTC is flat or falling from window start). Only take BTC DOWN when BTC has bounced
+up — giving the bet a genuine mean-reversion thesis (fading a bounce).
+
+### 🟡 4. `soft_exit_secs` 300s → 420s for 15m
+Winners resolve at median 256s (4m15s hold). Losers that hit soft_exit drag to
+median 571s. Moving the trigger from 300s remaining to 420s remaining (i.e., after
+~480–500s of holding with no TP hit) cuts 2 minutes off extended loser holds without
+touching winners who already exited via take_profit.
+
+### 🟡 5. Realized-volatility filter (new)
+Top-quintile realized vol (Binance spot, 15m pre-entry) → 33% hard-stop rate vs 24%
+baseline, 50% WR vs 60%+, EV flips to −$0.48. New filter: skip entries when the
+std of BTC log-returns over the last 900s exceeds RV_THRESHOLD (default 0.0029 per
+2s bar, configurable via `.env`). Requires btc_history maxlen extended 150→450.
+
+### 🟡 6. Loosen BTC/SOL CLOB trend threshold 0.10 → 0.15
+The −0.30..−0.15 CLOB bucket (n=23) had 65% WR / +$2.15 EV but was being blocked
+by the ±0.10 threshold. Loosening to ±0.15 admits this positive-EV bucket.
+ETH remains exempt from the filter (unchanged — ETH's edge comes from high opposing
+trend entries that the filter would block).
+
+**Files:** `main.py`, `src/bot/market_5m.py`, `src/bot/version.py`, `.env` (laptop)
+
+---
+
 ## v1.15 — 2026-04-17
 **Remove signal mirroring — LIVE runs independent signals, same as PAPER**
 

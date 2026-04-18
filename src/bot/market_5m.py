@@ -67,7 +67,7 @@ MOMENTUM_ENABLED = False   # disabled 2026-04-09: 80 trades at 30% WR — not pr
 # cross_window=0.0 means no Chainlink data — pass through.
 # Configurable via .env so the band can be widened without a code deploy.
 CROSS_WINDOW_MIN = float(os.environ.get("CROSS_WINDOW_MIN", "-0.15"))  # reject entries where prev window fell harder than this
-CROSS_WINDOW_MAX = float(os.environ.get("CROSS_WINDOW_MAX",  "0.15"))  # reject entries where prev window rose more than this
+CROSS_WINDOW_MAX = float(os.environ.get("CROSS_WINDOW_MAX",  "0.10"))  # reject entries where prev window rose more than this — tightened 0.15→0.10 (Cowork 2026-04-18: +0.10..+0.15 bucket = 40% WR / −$2.60 EV)
 
 
 @dataclass

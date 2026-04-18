@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-04-17
+**Last updated:** 2026-04-18
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -42,6 +42,9 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.16 — 2026-04-18 (pending push)
+Cowork filter set: hard_stop gate wired for 15m (240s), soft_exit 300→420s, BTC DOWN regime filter, realized-vol filter (RV_THRESHOLD=0.0029), CROSS_WINDOW_MAX 0.15→0.10, CLOB threshold 0.10→0.15.
 
 ### v1.15 — 2026-04-17 (pending push)
 Remove signal mirroring: LIVE evaluates `should_enter()` independently. Both bots run the same strategy logic on their own price histories — no mirror lag, no stale entries.
@@ -143,7 +146,8 @@ LIVE_MAX_DAILY_LOSS_USD=30.0     # circuit breaker — raised 2026-04-17: was $1
 
 # Signal filters (apply to both paper and live)
 CROSS_WINDOW_MIN=-0.15           # v1.5
-CROSS_WINDOW_MAX=0.02
+CROSS_WINDOW_MAX=0.10            # ← tightened 2026-04-18: was 0.15 (0.02 in old docs was wrong)
+RV_THRESHOLD=0.0029              # ← new 2026-04-18: skip if BTC realized vol > this
 BTC_SKIP_RATE=50.0               # v1.6
 
 # Polymarket credentials (same both machines)

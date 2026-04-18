@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import pathlib
 import sys
@@ -296,9 +297,16 @@ def run_5m_loop(
     window_seconds = WINDOW_SECONDS.get(window, 300)
     # Mean-reversion: enter in first 60s of window regardless of window size
     mr_min_seconds = window_seconds - 60
-    # Soft exit scales with window: 5m→115s, 15m→300s
-    soft_exit_secs        = 115 if window == "5m" else 300
-    hard_stop_max_remaining = float("inf")  # fire hard_stop any time price ≤ 0.08, regardless of window size
+    # Soft exit scales with window: 5m→115s, 15m→420s
+    # Cowork 2026-04-18: winners resolve at median 256s; losers that haven't
+    # reverted by minute 10 almost never do. 420s triggers soft-exit 2 min
+    # earlier than the old 300s setting, cutting extended loser hold time.
+    soft_exit_secs        = 115 if window == "5m" else 420
+    # Hard-stop gate: for 15m windows only fire in last 4 minutes (240s remaining).
+    # Cowork 2026-04-18: the gate was documented but never wired — hard-stops were
+    # firing at median 45% through the window (minute 7), same as the 5m bot.
+    # Gating it preserves recovery time for positions that are down early.
+    hard_stop_max_remaining = 240.0 if window == "15m" else float("inf")
 
     binance_symbol = BINANCE_SYMBOLS.get(asset.upper(), "BTCUSDT")
 
@@ -351,8 +359,9 @@ def run_5m_loop(
     # Rolling price history for the current window: deque of (timestamp, up_price)
     price_history: collections.deque = collections.deque(maxlen=300)
     # Continuous BTC price history — NOT reset on window change (independent of windows)
-    # maxlen=150 @ 2s poll = 5 minutes of continuous BTC price data
-    btc_history: collections.deque = collections.deque(maxlen=150)
+    # maxlen=450 @ 2s poll = 15 minutes of continuous BTC price data
+    # Extended from 150 (5m) to 450 (15m) for realized-vol filter (Cowork 2026-04-18)
+    btc_history: collections.deque = collections.deque(maxlen=450)
     btc_at_window_start: float = 0.0   # Binance BTC/USD when window opened
     up_price_at_window_start: float = 0.5  # first CLOB midpoint reading for window
     window_stopped: set = set()  # condition_ids that hit a stop this window (currently unused)
@@ -789,12 +798,47 @@ def run_5m_loop(
                             print(f"  [GBM] Skip — collapse_prob={c_prob:.3f} >= {COLLAPSE_THRESHOLD}")
                             continue
 
+                        # ── BTC DOWN regime filter (Cowork 2026-04-18) ───────
+                        # BTC DOWN bets in a bullish April regime: 50% WR / −$0.93 EV
+                        # vs BTC UP: 59% WR / +$1.22 EV (58 modern trades each).
+                        # Only take BTC DOWN when BTC has bounced up from window start —
+                        # gives the DOWN bet an actual mean-reversion thesis (fading
+                        # a bounce). Flat or falling BTC DOWN is a regime bet, not a fade.
+                        if asset == "BTC" and side == "DOWN" and btc_pct_chg_entry <= 0:
+                            print(f"  [REGIME] Skip BTC DOWN — BTC not bouncing (chg={btc_pct_chg_entry:+.4f}%)")
+                            continue
+
+                        # ── Realized volatility filter (Cowork 2026-04-18) ───
+                        # High-vol regimes (top quintile Binance spot) → 33% HS rate,
+                        # 50% WR, −$0.48 EV vs 24% HS rate / 61% WR / +$1.87 EV baseline.
+                        # Threshold: log-return std per 2s bar > 0.0029 (σ ≈ 0.29%).
+                        # Configurable via RV_THRESHOLD in .env.
+                        RV_THRESHOLD = float(os.environ.get("RV_THRESHOLD", "0.0029"))
+                        if window == "15m" and len(btc_history) >= 10:
+                            _now = time.time()
+                            _rv_prices = [px for ts, px in btc_history if _now - ts <= 900]
+                            if len(_rv_prices) >= 5:
+                                _log_rets = [
+                                    math.log(_rv_prices[i+1] / _rv_prices[i])
+                                    for i in range(len(_rv_prices) - 1)
+                                    if _rv_prices[i] > 0 and _rv_prices[i+1] > 0
+                                ]
+                                if _log_rets:
+                                    _mean = sum(_log_rets) / len(_log_rets)
+                                    _std  = (sum((r - _mean)**2 for r in _log_rets) / len(_log_rets)) ** 0.5
+                                    if _std > RV_THRESHOLD:
+                                        print(f"  [VOL] Skip — realized vol {_std:.4f} > {RV_THRESHOLD} (high-vol regime)")
+                                        continue
+
                         # ── CLOB midpoint trend filter ────────────────────────
                         # Cowork: strong upward trend → 29.4% WR (BTC), downward → 13.8% WR
                         # NOT predictive for ETH (confusing signal); skip for ETH.
                         # 0.0 = no history yet → pass through.
                         clob_trend = clob_feed.get_midpoint_trend(lookback_secs=60)
-                        CLOB_TREND_THRESHOLD = 0.10
+                        # Cowork 2026-04-18: loosened from 0.10 → 0.15 for BTC/SOL.
+                        # The −0.30..−0.15 CLOB bucket (n=23) has 65% WR / +$2.15 EV —
+                        # it was being blocked when it's a positive-EV region.
+                        CLOB_TREND_THRESHOLD = 0.15
                         if clob_trend != 0.0 and asset != "ETH":
                             if side == "UP" and clob_trend < -CLOB_TREND_THRESHOLD:
                                 print(f"  [CLOB] Skip UP — midpoint trending down {clob_trend:+.3f}")

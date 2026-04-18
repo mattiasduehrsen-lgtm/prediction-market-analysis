@@ -145,7 +145,7 @@ PAPER_MAX_FALLBACK_SECONDS=60
 
 # LIVE bot (multi-live)
 LIVE_POSITION_SIZE_USD=5         # ← reduced 2026-04-18: was $8 (caution while v1.16 filters bed in)
-LIVE_MAX_DAILY_LOSS_USD=30.0     # circuit breaker — raised 2026-04-17: was $15
+LIVE_MAX_DAILY_LOSS_USD=50.0     # circuit breaker — raised 2026-04-18: was $30 (raised after CB bug discovered; $36 in losses already today)
 
 # Signal filters (apply to both paper and live)
 CROSS_WINDOW_MIN=-0.15           # v1.5

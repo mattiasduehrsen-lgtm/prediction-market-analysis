@@ -2,6 +2,37 @@
 
 ---
 
+## v1.18 — 2026-04-18
+**Migrate to Polymarket CLOB V2 SDK (deadline: April 28 cutover)**
+
+Polymarket is upgrading its CLOB infrastructure on April 28, 2026 (~11:00 UTC). V1 SDK stops functioning after cutover. ~1 hour downtime; all open orders cancelled.
+
+### Changes
+- `pyproject.toml`: `py-clob-client>=0.18.0` → `py-clob-client-v2==1.0.0`
+- All import paths updated: `py_clob_client.*` → `py_clob_client_v2.*`
+  - `src/bot/clob_auth.py`: `from py_clob_client.client import ClobClient` etc → `from py_clob_client_v2 import ...`
+  - `src/bot/live_engine_5m.py`: top-level and 4 inline `BalanceAllowanceParams/AssetType` imports
+  - `src/dashboard/app.py`: inline balance import
+  - `test_order.py`: OrderArgs / BUY imports
+
+### Verified unchanged (no code changes needed beyond imports)
+- `ClobClient.__init__` signature: identical (`host`, `chain_id`, `key`, `funder`, etc — no dict-based change)
+- `OrderArgs`: `token_id`, `price`, `size`, `side`, `expiration` — same; `fee_rate_bps`/`nonce`/`taker` removed but bot never set these
+- `OrderType.GTC` / `OrderType.FOK`: same string constants
+- `BUY` / `SELL` from `order_builder.constants`: still `"BUY"` / `"SELL"` strings
+- `AssetType.COLLATERAL` / `AssetType.CONDITIONAL`: unchanged
+- `POLYGON = 137`: unchanged
+
+### pUSD collateral
+Polymarket is migrating from USDC.e to pUSD. Users who use the Polymarket web UI get auto-wrapped. API-only traders must call `wrap()` on the Collateral Onramp contract. Confirm on https://polymarket.com that wallet shows pUSD balance before April 28.
+
+### Deploy steps
+1. `git pull` on laptop
+2. `uv sync` (installs py-clob-client-v2, removes old py-clob-client + py-builder-signing-sdk)
+3. Restart LIVE + PAPER bots
+
+---
+
 ## v1.17 — 2026-04-18
 **Fix circuit breaker not recording stop-loss exits**
 

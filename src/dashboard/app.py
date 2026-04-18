@@ -372,7 +372,7 @@ def api_live_balance():
         from dotenv import load_dotenv
         load_dotenv()
         from src.bot.clob_auth import get_client
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         client = get_client()
         resp = client.get_balance_allowance(
             BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)

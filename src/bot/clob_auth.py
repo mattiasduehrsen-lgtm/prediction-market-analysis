@@ -31,9 +31,8 @@ from __future__ import annotations
 
 import os
 
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds
-from py_clob_client.constants import POLYGON
+from py_clob_client_v2 import ApiCreds, ClobClient
+from py_clob_client_v2.constants import POLYGON
 
 CLOB_HOST = "https://clob.polymarket.com"
 

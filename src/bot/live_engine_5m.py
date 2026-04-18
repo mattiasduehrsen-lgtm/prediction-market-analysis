@@ -36,8 +36,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from py_clob_client.clob_types import OrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY, SELL
+from py_clob_client_v2 import OrderArgs, OrderType
+from py_clob_client_v2.order_builder.constants import BUY, SELL
 
 import os
 
@@ -324,7 +324,7 @@ class LiveEngine5m:
         This catches the case where positions_*.csv was deleted or never written,
         leaving real holdings on Polymarket with no exit management.
         """
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
 
         for token_id, label in [(token_id_up, "UP"), (token_id_down, "DOWN")]:
             if not token_id:
@@ -409,7 +409,7 @@ class LiveEngine5m:
         pos.shares to match the true balance so _settle_exit accounting is correct.
         """
         import math
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
 
         pos = self.positions.get(position_id)
         if pos is None or pos.state != State.OPEN or not pos.token_id:
@@ -871,7 +871,7 @@ class LiveEngine5m:
         # Polymarket's size_matched over-reports vs. on-chain balance by ~4-5%,
         # so relying on pos.shares causes "not enough balance" rejections.
         import math
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         try:
             bal_resp = self._client.get_balance_allowance(
                 BalanceAllowanceParams(
@@ -1151,7 +1151,7 @@ class LiveEngine5m:
         Result is cached for _WALLET_TTL seconds so this is safe to call
         on every summary refresh (every 60s) without hammering the API.
         """
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         now = time.time()
         if now - self._wallet_fetched < self._WALLET_TTL and self._wallet_usdc > 0:
             return self._wallet_usdc

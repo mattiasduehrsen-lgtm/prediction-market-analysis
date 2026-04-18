@@ -10,8 +10,8 @@ load_dotenv()
 
 from src.bot.clob_auth import get_client
 from src.bot.market_5m import fetch_market
-from py_clob_client.clob_types import OrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client_v2 import OrderArgs, OrderType
+from py_clob_client_v2.order_builder.constants import BUY
 
 print("=" * 50)
 print("LIVE ORDER FLOW TEST")

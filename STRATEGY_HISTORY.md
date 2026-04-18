@@ -43,6 +43,9 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
 
+### v1.18 — 2026-04-18 (pending push)
+Migrate to Polymarket CLOB V2 SDK. Replace `py-clob-client` with `py-clob-client-v2==1.0.0` in `pyproject.toml`. Update all imports from `py_clob_client.*` → `py_clob_client_v2.*` in `clob_auth.py`, `live_engine_5m.py`, `dashboard/app.py`, `test_order.py`. ClobClient constructor and OrderArgs usage unchanged (V2 Python SDK kept same signature). Must be deployed before April 28 cutover.
+
 ### v1.17 — 2026-04-18 (pending push)
 Fix circuit breaker not recording FOK (stop-loss) exits. `place_exit()` was returning `None` even when it settled the position synchronously inline (FOK fills, wallet-empty, min-shares, market-resolved paths). main.py discarded the return value, so `cb.record_trade()` was never called for hard_stop_floor / force_exit / soft_exit_stalled / window_expired exits. Take-profit exits use GTC orders settled via `check_open_tp_fills()` which DID propagate to CB — so CB was tracking wins only. Fix: `place_exit()` now returns `ClosedLiveTrade5m | None`; main.py calls `cb.record_trade()` on non-None return.
 

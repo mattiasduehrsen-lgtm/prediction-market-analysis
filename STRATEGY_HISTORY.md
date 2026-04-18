@@ -43,6 +43,9 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
 
+### v1.17 — 2026-04-18 (pending push)
+Fix circuit breaker not recording FOK (stop-loss) exits. `place_exit()` was returning `None` even when it settled the position synchronously inline (FOK fills, wallet-empty, min-shares, market-resolved paths). main.py discarded the return value, so `cb.record_trade()` was never called for hard_stop_floor / force_exit / soft_exit_stalled / window_expired exits. Take-profit exits use GTC orders settled via `check_open_tp_fills()` which DID propagate to CB — so CB was tracking wins only. Fix: `place_exit()` now returns `ClosedLiveTrade5m | None`; main.py calls `cb.record_trade()` on non-None return.
+
 ### v1.16 — 2026-04-18 (pending push)
 Cowork filter set: hard_stop gate wired for 15m (240s), soft_exit 300→420s, BTC DOWN regime filter, realized-vol filter (RV_THRESHOLD=0.0029), CROSS_WINDOW_MAX 0.15→0.10, CLOB threshold 0.10→0.15.
 

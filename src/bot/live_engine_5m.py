@@ -812,7 +812,7 @@ class LiveEngine5m:
         exit_reason: str,
         price_60s_after_entry: float = 0.0,
         market_price_at_exit: float = 0.0,
-    ) -> None:
+    ) -> "ClosedLiveTrade5m | None":
         """
         Place an exit (SELL) order.
         market_price_at_exit: current CLOB mid for our side at the moment this is called.
@@ -821,10 +821,14 @@ class LiveEngine5m:
         - take_profit: GTC limit at take_profit price (sits on book)
         - hard_stop / force_exit_time / window_expired / etc: aggressive FOK at 0.01
           (immediately matches best available bid — effective market order)
+
+        Returns the ClosedLiveTrade5m if the position settled synchronously (FOK fills
+        inline), or None if it transitioned to PENDING_EXIT for async settlement.
+        Callers should call cb.record_trade() on any non-None return value.
         """
         pos = self.positions.get(position_id)
         if pos is None or pos.state != State.OPEN:
-            return
+            return None
 
         # All stop/floor/stalled reasons must exit immediately via FOK.
         # hard_stop_floor and soft_exit_stalled are the paper engine names for
@@ -892,8 +896,7 @@ class LiveEngine5m:
                 f"[LIVE5M] {position_id} wallet empty (balance={exit_size:.4f}) — "
                 f"shares already redeemed or never received. Settling as {exit_reason}."
             )
-            self._settle_exit(position_id, 0.0, exit_reason, price_60s_after_entry)
-            return
+            return self._settle_exit(position_id, 0.0, exit_reason, price_60s_after_entry)
 
         if exit_size < MIN_SHARES:
             # Below Polymarket's minimum order — can't sell, just close out.
@@ -902,8 +905,7 @@ class LiveEngine5m:
                 f"[LIVE5M] {position_id} balance {exit_size:.2f} below minimum {MIN_SHARES} — "
                 f"settling without SELL order"
             )
-            self._settle_exit(position_id, exit_price, exit_reason, price_60s_after_entry)
-            return
+            return self._settle_exit(position_id, exit_price, exit_reason, price_60s_after_entry)
 
         # Reconcile pos.shares with true balance for accurate PnL
         if abs(exit_size - pos.shares) > 0.01:
@@ -940,8 +942,7 @@ class LiveEngine5m:
                     f"[LIVE5M] {position_id} orderbook gone — market resolved. "
                     f"Settling as market_resolved (manual redemption may be needed on Polymarket)."
                 )
-                self._settle_exit(position_id, 0.0, "market_resolved", price_60s_after_entry)
-                return
+                return self._settle_exit(position_id, 0.0, "market_resolved", price_60s_after_entry)
             if "401" in exc_str or "Unauthorized" in exc_str:
                 self._auth_failed = True
                 print(f"[LIVE5M] AUTH FAILURE during exit for {position_id}: {exc}")
@@ -1017,7 +1018,9 @@ class LiveEngine5m:
                 pos.exit_reason    = ""
                 _save_positions(self.positions, self._positions_file)
                 return
-            self._settle_exit(position_id, actual_exit, exit_reason, price_60s_after_entry)
+            return self._settle_exit(position_id, actual_exit, exit_reason, price_60s_after_entry)
+
+        return None   # position is now PENDING_EXIT; caller must await check_pending_exits()
 
     def check_pending_exits(self, price_60s_after_entry: float = 0.0) -> list[ClosedLiveTrade5m]:
         """

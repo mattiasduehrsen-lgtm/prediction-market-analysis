@@ -2,6 +2,42 @@
 
 ---
 
+## v1.17 — 2026-04-18
+**Fix circuit breaker not recording stop-loss exits**
+
+### Root cause
+`place_exit()` in `live_engine_5m.py` returned `None` in all cases. For FOK exits
+(hard_stop_floor, soft_exit_stalled, force_exit_time, window_expired), the position
+was settled synchronously *inside* `place_exit()` via `_settle_exit()` — trade written
+to CSV, position removed — but the returned `ClosedLiveTrade5m` was discarded.
+
+`main.py` only called `cb.record_trade()` in the `for closed_trade in engine.check_pending_exits()`
+and `for closed_trade in engine.check_open_tp_fills()` loops. Take-profit exits use GTC
+orders polled by `check_open_tp_fills()` so they were correctly recorded. All FOK exits
+bypassed CB entirely.
+
+Net effect: CB tracked every winning trade but zero stop-loss losses. After today's
+run, CB showed +$43.28 (10 take-profit wins recorded) while actual today's PnL was
+-$36.02 (13 unrecorded FOK losses totalling -$79.30).
+
+### Fix
+- `place_exit()` signature changed to `-> ClosedLiveTrade5m | None`
+- All four inline `_settle_exit()` call sites inside `place_exit()` now `return` the result:
+  - wallet empty path (line ~895)
+  - below MIN_SHARES path (line ~905)
+  - orderbook-gone / market_resolved path (line ~943)
+  - FOK fill inline settle (line ~1021)
+- Added `return None` at end of `place_exit()` for the GTC/take-profit path (position
+  transitions to PENDING_EXIT, settled async via `check_pending_exits()`)
+- `main.py`: both `engine.place_exit()` call sites now capture the return value and
+  call `cb.record_trade(_settled.pnl_usd)` if not None
+
+### Files changed
+- `src/bot/live_engine_5m.py` — `place_exit()` return type + 4 `return self._settle_exit(...)` + `return None`
+- `main.py` — 2 call sites: `_settled = engine.place_exit(...)` + CB record
+
+---
+
 ## v1.16 — 2026-04-18
 **Cowork 2026-04-18 filter set — 6 targeted changes from analysis of 395 paper trades**
 

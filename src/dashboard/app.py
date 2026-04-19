@@ -65,35 +65,39 @@ def index():
 
 @app.route("/api/summary")
 def api_summary():
-    # Aggregate per-thread summary files
-    totals = {"equity": 0.0, "closed_trades": 0, "wins": 0, "losses": 0,
-              "total_pnl": 0.0, "open_positions": 0, "win_pnl": 0.0, "loss_pnl": 0.0}
-    found = False
-    for f in OUT_5M.glob("summary*.json"):
-        d = _read_json(f)
-        if not d:
-            continue
-        found = True
-        totals["closed_trades"] += int(d.get("closed_trades", 0))
-        totals["wins"]          += int(d.get("wins", 0))
-        totals["losses"]        += int(d.get("losses", 0))
-        totals["total_pnl"]     += float(d.get("total_pnl", 0))
-        totals["open_positions"]+= int(d.get("open_positions", 0))
-        # avg_win/avg_loss require raw sums — recompute from trades below
-    if not found:
-        return jsonify({})
-    ct = totals["closed_trades"]
-    wins, losses = totals["wins"], totals["losses"]
-    totals["equity"]   = round(totals["total_pnl"], 2)
-    totals["total_pnl"]= round(totals["total_pnl"], 2)
-    totals["win_rate"] = round(wins / ct * 100, 1) if ct else 0.0
-    # Recompute avg_win / avg_loss from trades since reset for accuracy
+    # Compute all stats from trades.csv directly so this always matches the
+    # equity graph (which also reads trades.csv). Previously read summary*.json
+    # files which included stale files from disabled strategies (BTC-5m, momentum)
+    # and an old untagged summary.json, causing the overview equity to diverge
+    # from the equity graph.
     rows = _trades_since_reset()
-    win_pnls  = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) > 0]
-    loss_pnls = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) <= 0]
-    totals["avg_win"]  = round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0
-    totals["avg_loss"] = round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0
-    return jsonify(totals)
+    if not rows:
+        return jsonify({})
+
+    pnls      = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd")]
+    win_pnls  = [p for p in pnls if p > 0]
+    loss_pnls = [p for p in pnls if p <= 0]
+    ct        = len(pnls)
+    total_pnl = round(sum(pnls), 2)
+
+    # open_positions: count rows in all positions CSVs (reflects live engine state)
+    open_pos = 0
+    for f in OUT_5M.glob("positions*.csv"):
+        for r in _read_csv(f):
+            if r.get("state", "").lower() == "open":
+                open_pos += 1
+
+    return jsonify({
+        "equity":        total_pnl,
+        "total_pnl":     total_pnl,
+        "closed_trades": ct,
+        "wins":          len(win_pnls),
+        "losses":        len(loss_pnls),
+        "win_rate":      round(len(win_pnls) / ct * 100, 1) if ct else 0.0,
+        "avg_win":       round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0,
+        "avg_loss":      round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0,
+        "open_positions": open_pos,
+    })
 
 
 @app.route("/api/positions")

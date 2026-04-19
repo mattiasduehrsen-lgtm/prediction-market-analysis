@@ -139,6 +139,21 @@ class CircuitBreaker:
                 self._load()   # new day → auto-reset
             return not self._tripped
 
+    def is_soft_stop(self, threshold_usd: float) -> bool:
+        """
+        Soft daily-loss gate (Cowork 2026-04-19 Strategy #8).
+        Returns True when today's realised P&L is at or below ``-abs(threshold_usd)``
+        **without** tripping the hard circuit breaker. Callers should block new
+        entries when this returns True; the bot continues to manage open positions.
+
+        threshold_usd: e.g. 10.0 → gate at -$10. Auto-resets at UTC midnight via
+        the existing _load() path.
+        """
+        with self._lock:
+            if _today_utc() != self._date:
+                self._load()
+            return self._daily_pnl <= -abs(float(threshold_usd))
+
     def status(self) -> str:
         with self._lock:
             tripped = self._tripped

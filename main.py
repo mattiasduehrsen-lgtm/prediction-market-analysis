@@ -650,9 +650,24 @@ def run_5m_loop(
                         )
 
             # ── Check entries ──────────────────────────────────────────────────
+            # Hard CB (tripped at -$LIVE_MAX_DAILY_LOSS_USD) + soft daily stop
+            # (v1.19 Cowork Strategy #8): block new entries at -$LIVE_DAILY_SOFT_STOP_USD
+            # without tripping the hard breaker. Default $10. Set <=0 to disable.
+            LIVE_DAILY_SOFT_STOP_USD = float(os.environ.get("LIVE_DAILY_SOFT_STOP_USD", "10.0"))
             cb_open = (cb is None or cb.is_open())
+            soft_stopped = (
+                cb is not None
+                and LIVE_DAILY_SOFT_STOP_USD > 0
+                and cb.is_soft_stop(LIVE_DAILY_SOFT_STOP_USD)
+            )
             if cb and not cb_open and iteration % 30 == 0:
                 print(cb.status())
+            if soft_stopped and iteration % 30 == 0:
+                print(
+                    f"[SOFT STOP] today P&L ≤ -${LIVE_DAILY_SOFT_STOP_USD:.2f} — "
+                    f"skipping new entries until UTC midnight (open positions still managed)"
+                )
+            cb_open = cb_open and not soft_stopped
 
             if not engine.already_in(market.condition_id) and cb_open:
                 # Rolling asset rates from btc_history deque (works for any asset)
@@ -815,12 +830,19 @@ def run_5m_loop(
                             print(f"  [REGIME] Skip BTC DOWN — BTC not bouncing (chg={btc_pct_chg_entry:+.4f}%)")
                             continue
 
-                        # ── Realized volatility filter (Cowork 2026-04-18) ───
-                        # High-vol regimes (top quintile Binance spot) → 33% HS rate,
-                        # 50% WR, −$0.48 EV vs 24% HS rate / 61% WR / +$1.87 EV baseline.
-                        # Threshold: log-return std per 2s bar > 0.0029 (σ ≈ 0.29%).
-                        # Configurable via RV_THRESHOLD in .env.
-                        RV_THRESHOLD = float(os.environ.get("RV_THRESHOLD", "0.0029"))
+                        # ── Realized volatility + fair-value edge (Cowork 2026-04-18 / 19) ───
+                        # Vol filter (v1.13): high-vol regimes (top quintile Binance spot)
+                        # have 33% HS rate, 50% WR, −$0.48 EV vs 24% / 61% / +$1.87 baseline.
+                        # Threshold: log-return std per 2s bar > RV_THRESHOLD (default 0.0029).
+                        #
+                        # Fair-value edge gate (v1.19, Cowork 2026-04-19 Strategy #1):
+                        # Compute Binance-spot GBM implied P(our side wins), compare to
+                        # entry_price. Skip when our side is over-priced
+                        # (edge = implied_p − entry_price  <  EDGE_GATE_MIN, default 0.0).
+                        # Backtest on 448 paper trades: lifts +$0.11 → +$0.42 avg @ $5/trade,
+                        # Sharpe 0.55 → 1.74, 95% CI excludes 0 at edge ≥ −0.02.
+                        RV_THRESHOLD  = float(os.environ.get("RV_THRESHOLD", "0.0029"))
+                        EDGE_GATE_MIN = float(os.environ.get("EDGE_GATE_MIN", "0.0"))
                         if window == "15m" and len(btc_history) >= 10:
                             _now = time.time()
                             _rv_prices = [px for ts, px in btc_history if _now - ts <= 900]
@@ -836,6 +858,32 @@ def run_5m_loop(
                                     if _std > RV_THRESHOLD:
                                         print(f"  [VOL] Skip — realized vol {_std:.4f} > {RV_THRESHOLD} (high-vol regime)")
                                         continue
+
+                                    # Binance fair-value edge gate
+                                    # Per-bar σ (2s spacing) → per-second σ → σ over remaining τ.
+                                    # implied_p_up = Φ( ln(btc_now / btc_wstart) / (σ·√τ) )
+                                    tau = max(1.0, float(market.seconds_remaining))
+                                    sig_sec = _std / math.sqrt(2.0)
+                                    sig_tau = sig_sec * math.sqrt(tau)
+                                    if btc_at_window_start > 0 and btc_at_entry > 0 and sig_tau > 0:
+                                        try:
+                                            z = math.log(btc_at_entry / btc_at_window_start) / sig_tau
+                                            implied_p_up  = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+                                            our_implied_p = implied_p_up if side == "UP" else (1.0 - implied_p_up)
+                                            edge = our_implied_p - entry_price
+                                            if edge < EDGE_GATE_MIN:
+                                                print(
+                                                    f"  [EDGE] Skip — implied_p={our_implied_p:.3f} "
+                                                    f"entry={entry_price:.3f} edge={edge:+.3f} "
+                                                    f"< {EDGE_GATE_MIN:+.2f}"
+                                                )
+                                                continue
+                                            print(
+                                                f"  [EDGE] implied_p={our_implied_p:.3f} "
+                                                f"entry={entry_price:.3f} edge={edge:+.3f} OK"
+                                            )
+                                        except (ValueError, ZeroDivisionError):
+                                            pass  # numerical issue → pass-through, don't block
 
                         # ── CLOB midpoint trend filter ────────────────────────
                         # Cowork: strong upward trend → 29.4% WR (BTC), downward → 13.8% WR

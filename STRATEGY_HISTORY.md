@@ -43,6 +43,13 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
 
+### v1.19 — 2026-04-19 (pending push)
+Cowork 2026-04-19 Phase 1 deploy (report: `PolyData/cowork_new_strategies_2026-04-19.md`).
+- **Strategy #1 (fair-value edge gate)**: inside `run_5m_loop` MR branch, compute Binance-spot GBM implied P(our side wins) using trailing 15-min realized σ and τ=seconds remaining; skip entry when `implied_p − entry_price < EDGE_GATE_MIN` (default 0.0). Reuses the existing realized-vol `_std`. Backtest (N=448, Apr 8–19, rescaled $5): lifts +$0.11 → +$0.42 avg, Sharpe 0.55 → 1.74.
+- **Strategy #8 (soft daily loss stop)**: `CircuitBreaker.is_soft_stop(threshold)` + new env `LIVE_DAILY_SOFT_STOP_USD` (default 10.0). Blocks new LIVE entries at ≤-$10/day realised P&L without tripping the hard $50 CB. Open positions still managed.
+
+Phase 2 (Strategy #4 resolution-edge scalp, 79% WR synthetic backtest) deferred until Phase 1 validates on ≥100 OOS trades. Phase 3 (Strategy #5 edge-proportional sizing) deferred until Phase 1 has ≥200 OOS trades.
+
 ### v1.18 — 2026-04-18 (pending push)
 Migrate to Polymarket CLOB V2 SDK. Replace `py-clob-client` with `py-clob-client-v2==1.0.0` in `pyproject.toml`. Update all imports from `py_clob_client.*` → `py_clob_client_v2.*` in `clob_auth.py`, `live_engine_5m.py`, `dashboard/app.py`, `test_order.py`. ClobClient constructor and OrderArgs usage unchanged (V2 Python SDK kept same signature). Must be deployed before April 28 cutover.
 

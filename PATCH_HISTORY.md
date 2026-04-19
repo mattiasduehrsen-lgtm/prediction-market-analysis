@@ -2,6 +2,41 @@
 
 ---
 
+## v1.19 — 2026-04-19
+**Cowork 2026-04-19 analysis deploy — Strategies #1 (fair-value edge gate) and #8 (soft daily loss stop)**
+
+Phase 1 of the `cowork_new_strategies_2026-04-19.md` deployment plan. Phase 2 (Strategy #4 resolution-edge scalp) deferred until Phase 1 has ≥100 out-of-sample trades; Phase 3 (Strategy #5 edge-proportional sizing) deferred until Phase 1 has ≥200 trades.
+
+### Strategy #1 — Binance fair-value edge gate (15m MR entries)
+- `main.py` (`run_5m_loop`, inside the MR branch): compute GBM implied P(our side wins) from Binance spot + trailing 15-min realized σ + seconds remaining; skip entry when `implied_p − entry_price < EDGE_GATE_MIN`.
+  - Reuses the `_std` already computed for the realized-vol filter (no extra Binance load).
+  - Per-2s-bar σ converted to per-second via `σ/√2`, then scaled to τ via `σ·√τ`.
+  - Pass-through on insufficient data (short history, missing btc prices, numerical issue).
+- Env: `EDGE_GATE_MIN` (default `0.0`). Set to a negative number to loosen, positive to tighten.
+- Backtest (448 paper trades Apr 8–19, rescaled to $5/trade): +$0.11 → +$0.42 avg, Sharpe 0.55 → 1.74, N dropped ~50%.
+
+### Strategy #8 — Soft daily loss stop (LIVE only)
+- `src/bot/circuit_breaker.py`: add `is_soft_stop(threshold_usd)` — non-tripping check against today's realised P&L.
+- `main.py` (entry gate at `cb_open` computation): block new LIVE entries when `cb.is_soft_stop($10)` while still managing open positions. Hard $50 circuit breaker unchanged.
+- Env: `LIVE_DAILY_SOFT_STOP_USD` (default `10.0`). Set `<=0` to disable.
+
+### Files touched
+- `main.py` (2 blocks: vol+edge gate, entry-gate soft-stop)
+- `src/bot/circuit_breaker.py` (+`is_soft_stop`)
+- `src/bot/version.py` (v1.19)
+
+### Risks / things to watch
+- Edge gate relies on Binance spot + `btc_at_window_start` being populated; if the Binance feed lags or restarts mid-window, the gate passes through rather than blocking — no worse than today.
+- Backtest is re-labeling on training data; true OOS edge likely 0.5–0.7× headline.
+- Soft stop is LIVE-only (PAPER has no `cb`); PAPER continues data collection unchanged.
+
+### Deploy steps
+1. `git pull` on laptop
+2. Ask user before restarting `PolyBot` + `PolyDashboard`
+3. Verify first LIVE entry in logs shows `[EDGE] ... OK` line
+
+---
+
 ## v1.18 — 2026-04-18
 **Migrate to Polymarket CLOB V2 SDK (deadline: April 28 cutover)**
 

@@ -45,7 +45,15 @@ def _read_csv(path: Path) -> list[dict]:
 def _reset_epoch() -> float:
     p = OUT_5M / "equity_reset.json"
     try:
-        return float(json.loads(p.read_text(encoding="utf-8")).get("reset_at", 0))
+        raw = p.read_text(encoding="utf-8").strip()
+        # Handle the historical invalid-JSON format {reset_at: VALUE} (unquoted key)
+        # that was written before the file format was standardised.
+        if raw.startswith("{reset_at:") or raw.startswith("{ reset_at:"):
+            import re as _re
+            m = _re.search(r"reset_at\s*:\s*(\d+)", raw)
+            if m:
+                return float(m.group(1))
+        return float(json.loads(raw).get("reset_at", 0))
     except Exception:
         return 0.0
 

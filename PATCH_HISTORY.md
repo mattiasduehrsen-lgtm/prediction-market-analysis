@@ -2,6 +2,41 @@
 
 ---
 
+## v1.20 — 2026-04-20
+**Resolution-edge scalp — Cowork Phase 2 (Strategy #4)**
+
+New parallel strategy running alongside 15m mean-reversion. PAPER only until validated.
+
+### What it does
+Fires in the **last 10–90s** of a 15m window. At that point Binance has near-determined the outcome but Polymarket pricing still lags. Entry when:
+- `GBM implied_p_up > 0.75` AND `up_price < implied_p_up − 0.05` → BUY UP
+- `GBM implied_p_up < 0.25` AND `down_price < (1 − implied_p_up) − 0.05` → BUY DOWN
+
+Holds to `force_exit_time` (~5s remaining). No TP, no SL, no soft exit.
+
+Synthetic backtest (Cowork, 3,212 windows): 79% WR, +$0.72/trade @$5, ~8 trades/day/asset.
+
+### Files changed
+- `src/bot/signal_5m.py` — `should_enter_resolution_scalp()` + `import math, os`
+- `main.py` — resolution_scalp branch in `run_5m_loop`; soft_exit_secs=0 + hard_stop_max=0 override; 6-strategy default config for multi-loop
+- `src/bot/version.py` — v1.20
+
+### Env overrides
+- `RESSCALP_IMPLIED_MIN` (default `0.75`) — lower to capture more trades
+- `RESSCALP_GAP_MIN` (default `0.05`) — minimum price gap to entry
+
+### Deploy notes
+- PAPER (`multi-loop`) picks up automatically on next restart — adds 3 new threads
+- `multi-live` unchanged — resolution scalp NOT added to live until PAPER shows WR ≥ 70% on 100 trades
+- Success criterion: WR ≥ 70%, avg PnL ≥ +$0.40 @$5 after 100 PAPER trades
+
+### Phase 1 (edge gate) status at deploy
+- 90 OOS trades, 40% WR — below 55% target
+- Diagnosis: strong trending DOWN market Apr 19-20 (DOWN bets 33% WR vs UP 44%)
+- Decision: regime-driven, not code bug — continue collecting data
+
+---
+
 ## v1.19 — 2026-04-19
 **Cowork 2026-04-19 analysis deploy — Strategies #1 (fair-value edge gate) and #8 (soft daily loss stop)**
 

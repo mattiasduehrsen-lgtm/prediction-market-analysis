@@ -283,7 +283,7 @@ def run_5m_loop(
         FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE,
         MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE,
     )
-    from src.bot.signal_5m import should_enter, should_enter_momentum, should_exit, take_profit_price
+    from src.bot.signal_5m import should_enter, should_enter_momentum, should_enter_resolution_scalp, should_exit, take_profit_price
     from src.bot.claude_advisor import advise_entry
     from src.bot.chainlink_feed import ChainlinkFeed
 
@@ -307,6 +307,12 @@ def run_5m_loop(
     # firing at median 45% through the window (minute 7), same as the 5m bot.
     # Gating it preserves recovery time for positions that are down early.
     hard_stop_max_remaining = 240.0 if window == "15m" else float("inf")
+
+    # Resolution scalp: hold to force_exit_time (~5s remaining) only.
+    # Disable soft-exit and hard-stop — the position resolves within 60s by design.
+    if strategy == "resolution_scalp":
+        soft_exit_secs          = 0
+        hard_stop_max_remaining = 0.0
 
     binance_symbol = BINANCE_SYMBOLS.get(asset.upper(), "BTCUSDT")
 
@@ -709,7 +715,50 @@ def run_5m_loop(
                         / cl.prev_window_start_price * 100, 4
                     )
 
-                if strategy == "momentum":
+                if strategy == "resolution_scalp":
+                    # ── Resolution scalp: enter last 60s when Binance has decided ────────
+                    # Compute rv_std from btc_history for GBM model (same as edge gate).
+                    _rs_std = 0.0
+                    if len(btc_history) >= 10:
+                        _now_rs   = time.time()
+                        _rs_px    = [px for ts, px in btc_history if _now_rs - ts <= 900]
+                        if len(_rs_px) >= 5:
+                            _rs_lr = [
+                                math.log(_rs_px[i+1] / _rs_px[i])
+                                for i in range(len(_rs_px) - 1)
+                                if _rs_px[i] > 0 and _rs_px[i+1] > 0
+                            ]
+                            if _rs_lr:
+                                _rs_mean = sum(_rs_lr) / len(_rs_lr)
+                                _rs_std  = (sum((r - _rs_mean)**2 for r in _rs_lr) / len(_rs_lr)) ** 0.5
+
+                    btc_at_entry_rs = btc_history[-1][1] if btc_history else 0.0
+                    do_enter, side, entry_price = should_enter_resolution_scalp(
+                        market,
+                        btc_at_window_start=btc_at_window_start,
+                        btc_now=btc_at_entry_rs,
+                        rv_std=_rs_std,
+                    )
+                    if do_enter:
+                        # TP=0.99 (unreachable) — exit via force_exit_time at 5s remaining.
+                        # No SL, no soft exit: soft_exit_secs=0 and hard_stop_max=0 above.
+                        engine.open(
+                            condition_id=market.condition_id,
+                            slug=market.slug,
+                            asset=asset,
+                            side=side,
+                            entry_price=entry_price,
+                            take_profit=0.99,
+                            window_end_ts=market.window_end_ts,
+                            window=window,
+                            strategy=strategy,
+                            btc_price_at_window_start=btc_at_window_start,
+                            btc_price_at_entry=btc_at_entry_rs,
+                            up_price_at_window_start=up_price_at_window_start,
+                            liquidity=market.liquidity,
+                        )
+
+                elif strategy == "momentum":
                     # ── Momentum: enter at window open, bet continuation of prev window ──
                     do_enter, side, entry_price = should_enter_momentum(
                         market,
@@ -1102,13 +1151,17 @@ if __name__ == "__main__":
                     print(f"Bad config '{_arg}' — expected ASSET:WINDOW:STRATEGY")
                     sys.exit(1)
         else:
-            # Default: BTC 5m mean-reversion + BTC 5m momentum + 15m markets
+            # Default: 15m mean-reversion + resolution scalp (Cowork 2026-04-19 Phase 2)
             _configs = [
                 # BTC 5m mean_reversion removed: 55 trades, 16% WR, -$217 — negative EV
                 # BTC 5m momentum removed: 102 trades, 31% WR, -$168 (MOMENTUM_ENABLED=False anyway)
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),
+                # Resolution scalp: PAPER only until 100 OOS trades validate WR >= 70%
+                ("BTC", "15m", "resolution_scalp"),
+                ("ETH", "15m", "resolution_scalp"),
+                ("SOL", "15m", "resolution_scalp"),
             ]
         _setup_logging()
         run_multi_loop(_configs)

@@ -7,6 +7,9 @@ Two strategies:
 """
 from __future__ import annotations
 
+import math
+import os
+
 from src.bot.market_5m import (
     Market5m,
     ENTRY_MIN, ENTRY_MAX, TAKE_PROFIT,
@@ -125,6 +128,86 @@ def should_enter(
         return False, "", 0.0
 
     return True, side, price
+
+
+def should_enter_resolution_scalp(
+    market: "Market5m",
+    btc_at_window_start: float,
+    btc_now: float,
+    rv_std: float,
+) -> tuple[bool, str, float]:
+    """
+    Resolution-edge scalp (Cowork 2026-04-19 Strategy #4, 79% WR synthetic backtest).
+
+    Enters in the last 10–90s of a 15m window when Binance has mathematically
+    near-determined the outcome but Polymarket hasn't fully priced it in yet.
+
+    Logic:
+      - Compute GBM implied P(UP wins) from Binance path + remaining vol + τ.
+      - BUY UP  if implied_p_up > RESSCALP_IMPLIED_MIN  and
+                   up_price < implied_p_up - RESSCALP_GAP_MIN
+      - BUY DOWN if implied_p_up < (1 - RESSCALP_IMPLIED_MIN) and
+                   down_price < (1 - implied_p_up) - RESSCALP_GAP_MIN
+
+    No TP or SL — position holds to force_exit_time (~5s before window end).
+
+    Args:
+        market:              current market snapshot
+        btc_at_window_start: Binance price at window open
+        btc_now:             current Binance price
+        rv_std:              per-2s-bar log-return std (from 15-min history)
+
+    Env overrides:
+        RESSCALP_IMPLIED_MIN  (default 0.75)
+        RESSCALP_GAP_MIN      (default 0.05)
+    """
+    secs = market.seconds_remaining
+
+    # Entry window: last 10–90s of the 15m window
+    if not (10.0 < secs < 90.0):
+        return False, "", 0.0
+
+    if btc_at_window_start <= 0 or btc_now <= 0 or rv_std <= 0:
+        return False, "", 0.0
+
+    if market.liquidity < MIN_LIQUIDITY:
+        return False, "", 0.0
+
+    # GBM implied P(UP wins): Φ( ln(btc_now / btc_wstart) / (σ·√τ) )
+    tau     = max(1.0, float(secs))
+    sig_tau = (rv_std / math.sqrt(2.0)) * math.sqrt(tau)
+    if sig_tau <= 0:
+        return False, "", 0.0
+
+    try:
+        z            = math.log(btc_now / btc_at_window_start) / sig_tau
+        implied_p_up = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+    except (ValueError, ZeroDivisionError):
+        return False, "", 0.0
+
+    IMPLIED_MIN = float(os.environ.get("RESSCALP_IMPLIED_MIN", "0.75"))
+    GAP_MIN     = float(os.environ.get("RESSCALP_GAP_MIN",     "0.05"))
+
+    if implied_p_up > IMPLIED_MIN:
+        gap = implied_p_up - market.up_price
+        if gap >= GAP_MIN and market.up_price < 0.95:
+            print(
+                f"[RESSCALP] UP @ {market.up_price:.3f} | "
+                f"implied_p={implied_p_up:.3f} gap={gap:+.3f} secs={secs:.0f}s"
+            )
+            return True, "UP", market.up_price
+
+    if implied_p_up < (1.0 - IMPLIED_MIN):
+        p_down = 1.0 - implied_p_up
+        gap    = p_down - market.down_price
+        if gap >= GAP_MIN and market.down_price < 0.95:
+            print(
+                f"[RESSCALP] DOWN @ {market.down_price:.3f} | "
+                f"implied_p_down={p_down:.3f} gap={gap:+.3f} secs={secs:.0f}s"
+            )
+            return True, "DOWN", market.down_price
+
+    return False, "", 0.0
 
 
 def should_enter_momentum(

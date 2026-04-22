@@ -200,7 +200,7 @@ As of 2026-04-16 20:30:
 - **PolyBotLive** scheduled task → `start_live.bat` (redundant, manual-only)
 - **RunBot** scheduled task → `run_bot.bat` → `main.py paper-loop` (LEGACY BTC strike bot — last run 2026-03-30)
 
-**✅ FIXED (2026-04-16):** `PolyPaper` scheduled task now runs `watch_paper.ps1` → `main.py multi-loop` continuously with auto-restart on crash. Logs to `watchdog.log` with `[WATCHDOG-PAPER]` prefix.
+**✅ FIXED (2026-04-16):** `PolyPaper` scheduled task now runs `watch_paper.ps1` → `main.py multi-loop` continuously with auto-restart on crash. Logs to `watchdog_paper.log` (renamed from `watchdog.log` 2026-04-22 — `watchdog.log` is now LIVE-only via `watch_bot.ps1`).
 
 ---
 

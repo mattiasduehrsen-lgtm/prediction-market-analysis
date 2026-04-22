@@ -71,10 +71,21 @@ def should_enter(
     asset = market.asset
     window = market.window
 
-    # SOL-15m: DOWN trades are losing (-$73); UP only (+$88)
+    # BTC DOWN: negative EV across all price bands (t-test p=0.028, 95% CI entirely negative).
+    # Loses even in ranging weeks (W16: 48.8% WR, -$85) — structural, not regime-dependent.
+    # Cowork 582-trade analysis 2026-04-22. Reconsider monthly.
+    if asset == "BTC" and side == "DOWN":
+        print(f"[SIGNAL] Skip BTC DOWN — negative EV (37% WR, -$327 on 161 trades, p=0.028)")
+        return False, "", 0.0
+
+    # SOL-15m: DOWN trades are losing (-$73); UP only (+$88). Floor at 0.33 (0.28-0.32 band
+    # too thin, n=5; 0.32-0.35 is the main SOL bucket). Cowork 2026-04-22.
     if asset == "SOL" and window == "15m":
         if side == "DOWN":
             print(f"[SIGNAL] Skip SOL DOWN — only UP side is profitable (+$88 vs -$73)")
+            return False, "", 0.0
+        if price < 0.33:
+            print(f"[SIGNAL] Skip SOL — entry {price:.3f} < 0.33 (below profitable band)")
             return False, "", 0.0
         if price > 0.35:
             print(f"[SIGNAL] Skip SOL — entry {price:.3f} > 0.35 (loses money in high band)")
@@ -106,10 +117,11 @@ def should_enter(
             print(f"[SIGNAL] Skip BTC-5m — liquidity ${market.liquidity:,.0f} >= $17k (overcrowded)")
             return False, "", 0.0
 
-    # BTC-15m: only 0.35-0.40 zone is profitable (+$14 on 17 trades)
+    # BTC-15m: floor raised to 0.38 (0.35-0.38 dead zone: 22.4% WR, -$199 on 49 trades).
+    # BTC UP 0.38-0.41 is the profitable bucket (56% WR). Cowork 2026-04-22.
     if asset == "BTC" and window == "15m":
-        if not (0.35 <= price <= 0.40):
-            print(f"[SIGNAL] Skip BTC-15m — entry {price:.3f} outside 0.35–0.40")
+        if not (0.38 <= price <= 0.40):
+            print(f"[SIGNAL] Skip BTC-15m — entry {price:.3f} outside 0.38–0.40")
             return False, "", 0.0
 
     # Magnitude filter: only applies to BTC 5m — threshold was calibrated for BTC.

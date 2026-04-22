@@ -2,6 +2,31 @@
 
 ---
 
+## v1.21 — 2026-04-22
+**Cowork Scenario B filters — 582-trade analysis**
+
+Three changes to `signal_5m.py` derived from 582 PAPER mean-reversion trades (2026-04-04 to 2026-04-22). Backtest delta: +$419, expected WR 52.6% on 312 trades vs 43.3% on 582 baseline.
+
+### Changes
+1. **Hard-disable BTC DOWN** — negative EV across all price bands (t-test p=0.028, 95% bootstrap CI entirely negative). Lost −$327 on 161 trades. Loses even in ranging weeks (W16: 48.8% WR, −$85) — structural, not regime-dependent. BTC's upward drift makes cheap DOWN tokens a value trap.
+2. **BTC-15m floor raised 0.35→0.38** — the 0.35–0.38 band is a dead zone: 22.4% WR, −$199 on 49 trades. BTC UP 0.38–0.41 is the profitable bucket (56% WR, +$50 on 78 trades).
+3. **SOL-15m floor added at 0.33** — 0.28–0.32 SOL band has n=5 trades (too thin to trust). 0.32–0.35 is the main profitable SOL bucket.
+
+### What did NOT change
+- ETH floor stays at 0.35 — ETH's 0.35–0.38 band is its *best* (63.6% WR, +$131). A uniform 0.38 floor would destroy +$131 of ETH edge.
+- Resolution scalp (v1.20) unchanged.
+- Cross-window, spread, CLOB, and all other existing filters unchanged.
+
+### Next step (v1.22)
+Regime skip rule after 100 trades under v1.21: `recent_soft_rate_last5 ≥ 0.6 OR daily_pnl_prior ≤ −$10`. AUC 0.705 walk-forward validated. Deferred: needs state tracking + at least 100 OOS trades to re-calibrate threshold.
+
+### Files changed
+- `src/bot/signal_5m.py`
+- `src/bot/version.py`
+- `PATCH_HISTORY.md`
+
+---
+
 ## v1.20 — 2026-04-20
 **Resolution-edge scalp — Cowork Phase 2 (Strategy #4)**
 

@@ -2,6 +2,48 @@
 
 ---
 
+## v1.22 — 2026-04-24
+**Cowork ETH deep dive — BTC→ETH momentum continuation reframing**
+
+Cowork analysis of 214 ETH mean-reversion trades (2026-04-24) revealed that ETH's profitable pattern is not symmetric mean-reversion — it's **BTC→ETH momentum continuation**. Two non-contiguous cross-window zones drive all the edge, with a "dead zone" in the middle where there's no BTC impulse to ride.
+
+### The finding
+- `cw ∈ [-0.10, -0.02]`: BTC just fell ~0.05% → ETH DOWN on Polymarket wins **77%**
+- `cw ∈ [+0.05, +0.10]`: BTC just rallied ~0.05–0.10% → ETH UP wins **79%**
+- `|cw| < 0.02`: no BTC impulse → WR collapses to ~40%, -$86 on 20 trades
+
+The global cross-window filter `[-0.15, +0.02]` (BTC-tuned) was blocking 34 profitable positive-side ETH trades while allowing the dead zone. Replacing it for ETH with the union `[-0.10, -0.02] ∪ [+0.03, +0.10]` is the big win.
+
+### Changes (ETH-15m only)
+1. **Cross-window filter**: union `[-0.10, -0.02] ∪ [+0.03, +0.10]` (skips global filter for ETH). Scenario C backtest: n=98→75, WR 53.1%→72.0%, PnL +$23→+$306, Welch p=0.012.
+2. **Dead-zone skip `[0.38, 0.39)`**: 42 trades, 38% WR, -$68. ETH UP in this specific band is 25% WR, -$92 on 20 trades.
+3. **Spread cap 0.03**: eliminates the 0.03–0.05 spread tail (25% WR, -$36 on 8 trades). Free removal, no downside.
+
+### Rejected from Cowork's options (with reasoning)
+- **Tighten to 10s**: Welch p=0.68 once Scenario C is applied — timing edge was a proxy for "BTC impulse still fresh," which C already captures.
+- **Floor to 0.39**: drops below 5 trades/day constraint.
+- **ETH DOWN restriction**: UP/DOWN asymmetry is noise (p=0.82) once price band controlled.
+- **`pnl_today ≤ -$10` skip**: would skip +$116 of ETH late-day recovery trades — counterproductive for ETH specifically.
+- **ETH-only `soft_last5` regime skip**: deferred. Add only if W15-style regimes recur post-v1.22.
+
+### BTC and SOL filters unchanged
+BTC and SOL continue to use the global `CROSS_WINDOW_MIN / MAX` envelope. This change is ETH-only.
+
+### 30-day projection
++$612 (v1.22) vs +$47 (v1.21 baseline), holding per-day trade rates constant.
+
+### Caveats
+- Cowork saw 207 trades, live dataset has 214 — 7-trade gap. Distributions match.
+- n=34 for `[+0.05, +0.10]` band is thin — individually p=0.126. The union is what's significant.
+- Sample covers one W15 (trending) + one W16 (ranging) cycle. Two more weeks of live data before declaring final victory.
+
+### Files changed
+- `src/bot/signal_5m.py`
+- `src/bot/version.py`
+- `PATCH_HISTORY.md`
+
+---
+
 ## v1.21 — 2026-04-22
 **Cowork Scenario B filters — 582-trade analysis**
 

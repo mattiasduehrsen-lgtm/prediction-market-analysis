@@ -53,7 +53,8 @@ def should_enter(
     # Cross-window filter: only enter on small prior-window dips.
     # cross_window=0.0 means no Chainlink data yet — pass through.
     # Data: [-0.05,0] = 40.5% WR; all other bands ≤27% WR and negative EV.
-    if cross_window_pct != 0.0:
+    # NOTE: ETH uses its own non-contiguous range (see ETH-15m block below) — skip global check for ETH.
+    if cross_window_pct != 0.0 and market.asset != "ETH":
         if cross_window_pct < CROSS_WINDOW_MIN or cross_window_pct > CROSS_WINDOW_MAX:
             print(f"[SIGNAL] Skip — cross_window {cross_window_pct:+.3f}% outside [{CROSS_WINDOW_MIN},{CROSS_WINDOW_MAX}]")
             return False, "", 0.0
@@ -94,9 +95,32 @@ def should_enter(
     # ETH-15m: 0.30-0.35 band loses $165; 0.35-0.40 zone wins +$40 on 21 trades
     # Cowork (133 trades, Apr 10-13): first 30s hits 54.5% WR vs 24.0% after (p=0.040)
     # Crowded book (>5 CLOB trades/60s) → 28.6% WR vs 66.7% (p=0.037)
+    # v1.22 — Cowork ETH deep dive (214 trades, 2026-04-24):
+    #   - Cross-window filter: ETH-specific union [-0.10,-0.02] ∪ [+0.03,+0.10]
+    #     Mechanism: BTC→ETH momentum continuation, not symmetric mean-reversion.
+    #     Scenario C alone: 98 → 75 trades, WR 53% → 72%, PnL +$23 → +$306 (Welch p=0.012).
+    #   - Dead zone [0.38, 0.39): 42 trades, 38% WR, -$68 — surgical skip.
+    #   - Spread cap 0.03: eliminates 8-trade negative tail (spread 0.03-0.05: 25% WR, -$36).
     if asset == "ETH" and window == "15m":
         if price < 0.35:
             print(f"[SIGNAL] Skip ETH — entry {price:.3f} < 0.35 (loss zone)")
+            return False, "", 0.0
+        # Dead zone: [0.38, 0.39) is a confirmed loss pocket. ETH UP in this band: 25% WR, -$92.
+        if 0.38 <= price < 0.39:
+            print(f"[SIGNAL] Skip ETH — entry {price:.3f} in dead zone [0.38, 0.39) (38% WR, -$68 on 42 trades)")
+            return False, "", 0.0
+        # ETH-specific cross-window: non-contiguous BTC-impulse zones.
+        # Dead zone |cw| < 0.02: no BTC impulse → no ETH edge (WR drops to ~40%).
+        # cw > +0.10 or cw < -0.10: extreme moves → outside continuation regime.
+        if cross_window_pct != 0.0:
+            in_neg = -0.10 <= cross_window_pct <= -0.02
+            in_pos = +0.03 <= cross_window_pct <= +0.10
+            if not (in_neg or in_pos):
+                print(f"[SIGNAL] Skip ETH — cw {cross_window_pct:+.3f}% outside [-0.10,-0.02]∪[+0.03,+0.10]")
+                return False, "", 0.0
+        # ETH spread cap: 0.03-0.05 spread band has 25% WR, -$36 on 8 trades. Free removal.
+        if spread > 0 and spread > 0.03:
+            print(f"[SIGNAL] Skip ETH — spread {spread:.4f} > 0.03 (wide book: 25% WR in 0.03-0.05 band)")
             return False, "", 0.0
         if secs_into_window > 30:
             print(f"[SIGNAL] Skip ETH-15m — {secs_into_window:.0f}s into window (>30s cutoff, WR drops to 24%)")

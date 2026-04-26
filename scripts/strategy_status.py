@@ -1,5 +1,5 @@
 """
-Strategy status diagnostic — per-strategy WR / PnL / EV breakdown.
+Strategy status diagnostic - per-strategy WR / PnL / EV breakdown.
 
 Reads trades.csv from PAPER (and optionally LIVE) and prints a per-(asset,
 strategy, side) table including breakeven WR and a status flag against the
@@ -15,7 +15,7 @@ Usage (dev PC, via SSH):
   ssh matti@192.168.2.212 "cd C:\\Users\\matti\\Desktop\\prediction-market-analysis && \\
     .venv\\Scripts\\python.exe scripts/strategy_status.py"
 
-No external deps — stdlib only. Safe to run any time.
+No external deps - stdlib only. Safe to run any time.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
-# v1.23 LIVE filter — keep in sync with src/bot/signal_5m.py:should_enter_resolution_scalp
+# v1.23 LIVE filter - keep in sync with src/bot/signal_5m.py:should_enter_resolution_scalp
 LIVE_RS_ALLOWED = {("ETH", "DOWN"), ("SOL", "DOWN")}
 
 # v1.21 MR disablements
@@ -84,9 +84,9 @@ def _aggregate(rows: Iterable[dict], strategy: str) -> dict[tuple[str, str], dic
 
 def _status_mr(asset: str, side: str, stats: dict) -> str:
     if (asset, side) in MR_DISABLED:
-        return "✗ disabled v1.21"
+        return "[X] disabled v1.21"
     if stats["wr"] >= stats["be_wr"]:
-        return "✓ above BE"
+        return "[OK] above BE"
     delta = (stats["be_wr"] - stats["wr"]) * 100
     return f"~ {delta:.1f}pp below BE"
 
@@ -97,8 +97,8 @@ def _status_rs(asset: str, side: str, stats: dict) -> str:
     else:
         live = "LIVE-disabled v1.23"
     if stats["wr"] >= stats["be_wr"]:
-        return f"✓ above BE | {live}"
-    return f"✗ below BE | {live}"
+        return f"[OK] above BE | {live}"
+    return f"[X] below BE | {live}"
 
 
 def _print_table(title: str, agg: dict[tuple[str, str], dict], status_fn) -> None:
@@ -139,32 +139,32 @@ def _print_live_gates(rs_agg: dict[tuple[str, str], dict]) -> None:
     eth_down = rs_agg.get(("ETH", "DOWN"))
     sol_down = rs_agg.get(("SOL", "DOWN"))
 
-    print("\n  ETH DOWN RS — first to enable on LIVE:")
+    print("\n  ETH DOWN RS - first to enable on LIVE:")
     if eth_down:
         for window in (20, 50):
             n, wr, pnl = _rolling_wr(eth_down["pnls"], window)
-            gate = "WR ≥ 70%" if window == 20 else "WR ≥ 70% AND PnL > 0"
+            gate = "WR >= 70%" if window == 20 else "WR >= 70% AND PnL > 0"
             wr_pass = wr >= 0.70
             pnl_pass = pnl > 0 if window == 50 else True
-            ok = "✓ PASS" if (wr_pass and pnl_pass) else "✗ fail"
+            ok = "[OK] PASS" if (wr_pass and pnl_pass) else "[X] fail"
             print(
                 f"    Last {window:>2} trades (have {n:>2}): "
-                f"WR={wr*100:>5.1f}%, PnL=${pnl:>+7.2f}  | gate: {gate}  → {ok}"
+                f"WR={wr*100:>5.1f}%, PnL=${pnl:>+7.2f}  | gate: {gate}  --> {ok}"
             )
     else:
         print("    No ETH DOWN RS trades found.")
 
-    print("\n  SOL DOWN RS — second (after ETH DOWN clears 50-trade gate):")
+    print("\n  SOL DOWN RS - second (after ETH DOWN clears 50-trade gate):")
     if sol_down:
         for window in (20, 50):
             n, wr, pnl = _rolling_wr(sol_down["pnls"], window)
-            gate = "WR ≥ 70%" if window == 20 else "WR ≥ 70% AND PnL > 0"
+            gate = "WR >= 70%" if window == 20 else "WR >= 70% AND PnL > 0"
             wr_pass = wr >= 0.70
             pnl_pass = pnl > 0 if window == 50 else True
-            ok = "✓ PASS" if (wr_pass and pnl_pass) else "✗ fail"
+            ok = "[OK] PASS" if (wr_pass and pnl_pass) else "[X] fail"
             print(
                 f"    Last {window:>2} trades (have {n:>2}): "
-                f"WR={wr*100:>5.1f}%, PnL=${pnl:>+7.2f}  | gate: {gate}  → {ok}"
+                f"WR={wr*100:>5.1f}%, PnL=${pnl:>+7.2f}  | gate: {gate}  --> {ok}"
             )
     else:
         print("    No SOL DOWN RS trades found.")
@@ -191,7 +191,7 @@ def main() -> int:
         print(f"[strategy_status] No trades found at {args.paper}", file=sys.stderr)
         return 1
 
-    print(f"Strategy Status — {args.paper} ({len(paper_rows)} rows)")
+    print(f"Strategy Status - {args.paper} ({len(paper_rows)} rows)")
 
     mr_agg = _aggregate(paper_rows, "mean_reversion")
     rs_agg = _aggregate(paper_rows, "resolution_scalp")

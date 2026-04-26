@@ -10,28 +10,54 @@
 
 ---
 
-## Current active strategy (as of v1.14 — 2026-04-16)
+## Current active strategy (as of v1.23 — 2026-04-25)
 
 ### What it trades
-- **Platform:** Polymarket only (no Kalshi)
+- **Platform:** Polymarket only (no Kalshi, no cross-market arbitrage)
 - **Markets:** 15-minute "Up/Down" prediction markets
 - **Assets:** BTC, ETH, SOL (5m markets disabled — negative EV)
-- **Strategy:** `mean_reversion` (momentum strategy disabled — negative EV)
+- **Strategies:** Two run in parallel as separate threads:
+  - `mean_reversion` (MR) — buy cheap side near window start, bet on reversion
+  - `resolution_scalp` (RS) — buy expensive side in last 10–90s when GBM model says outcome is near-determined (PAPER only at present)
 
-### How it works
-Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 minutes?" market. The bot:
+### How MR works
+Every 15 minutes Polymarket creates a "Will [ASSET] be UP or DOWN?" market. The MR thread:
 1. Watches the UP/DOWN prices during each window
-2. Enters when price hits a mean-reversion threshold (contrarian bet)
-3. Places a GTC limit SELL at take-profit
-4. Exits via TP, stop-loss, or window expiration
+2. Enters when the cheaper side price hits a mean-reversion threshold within the configured entry band (contrarian bet)
+3. Applies asset/side-specific filters (v1.21 + v1.22) — see version history
+4. Places a GTC limit SELL at take-profit; exits via TP, hard-stop floor, soft-exit-stalled, or window force-exit
+
+### How RS works
+The RS thread runs alongside MR. In the last 10–90s of a window:
+1. Computes Binance-spot GBM implied probability of UP from window-start path + remaining vol + τ
+2. If `implied_p > 0.75` AND the corresponding token is ≥ 0.05 below that probability, BUY that side
+3. Holds to `force_exit_time` (~5s before window end) — no TP, no SL
+4. Wins resolve close to $1.00; losses close to $0.00 (binary)
+
+### v1.23 LIVE filter on RS
+`should_enter_resolution_scalp` takes `is_live: bool`. When True, the function rejects:
+- BTC RS on both UP and DOWN branches (structural payoff: avg_win $3 vs avg_loss $9)
+- ETH UP and SOL UP RS (below their breakeven WRs)
+
+When False (PAPER), no filtering — all 6 sub-strategies continue running for monitoring.
 
 ### The two processes
-| Command | Purpose | Money at risk |
-|---------|---------|---------------|
-| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes |
-| `main.py multi-loop` | PAPER trading — simulated, for data collection | No |
+| Command | Purpose | Money at risk | RS active? |
+|---------|---------|---------------|------------|
+| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **No (default argv = MR only)** |
+| `main.py multi-loop` | PAPER trading — simulated, for data collection | No | Yes (all 6 sub-strategies) |
 
-**Independent signals (v1.15):** LIVE and PAPER both evaluate `should_enter()` independently. No mirroring — LIVE enters on its own signal, not a copy of PAPER's.
+**Independent signals (v1.15):** LIVE and PAPER are fully independent processes. Each evaluates `should_enter()` and `should_enter_resolution_scalp()` on its own price history. There are no signal-mirror files. Selection of which strategies run on each side is purely an orchestration decision (the argv passed to multi-live vs multi-loop).
+
+### When LIVE re-enables (currently paused; user has no LIVE capital ~2 weeks)
+The v1.23 LIVE filter is dormant today because `multi-live` default argv has only MR threads. To enable ETH DOWN RS on LIVE in the future:
+1. Modify the multi-live invocation (in `watch_bot.ps1` / scheduled task / argv) to add `("ETH","15m","resolution_scalp")`.
+2. The signal-level filter will ensure only DOWN trades fire on LIVE; PAPER continues recording all 6.
+3. Validate against the v1.23 rollout gates (see PATCH_HISTORY.md v1.23):
+   - First 20 LIVE ETH DOWN RS trades: WR ≥ 70%
+   - First 50 LIVE ETH DOWN RS trades: WR ≥ 70% AND PnL > $0
+4. Then add `("SOL","15m","resolution_scalp")` and apply the same gates.
+5. Use `python scripts/strategy_status.py` on the laptop to monitor gate status at any time.
 
 ### Pause control
 - **LIVE only:** `output/5m_live/paused.live.flag` — halts new LIVE entries, existing positions still managed. Set via dashboard button or manually.

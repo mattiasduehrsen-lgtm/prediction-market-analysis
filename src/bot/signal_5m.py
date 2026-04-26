@@ -171,6 +171,7 @@ def should_enter_resolution_scalp(
     btc_at_window_start: float,
     btc_now: float,
     rv_std: float,
+    is_live: bool = False,
 ) -> tuple[bool, str, float]:
     """
     Resolution-edge scalp (Cowork 2026-04-19 Strategy #4, 79% WR synthetic backtest).
@@ -192,6 +193,36 @@ def should_enter_resolution_scalp(
         btc_at_window_start: Binance price at window open
         btc_now:             current Binance price
         rv_std:              per-2s-bar log-return std (from 15-min history)
+        is_live:             True when running in LIVE mode. v1.23 LIVE-only filters
+                             gate out structurally negative-EV sub-strategies
+                             (BTC RS entirely; UP-side RS for ETH/SOL). PAPER keeps
+                             running all 6 sub-strategies for ongoing monitoring.
+
+    LIVE filters (v1.23, Cowork 2026-04-25 — 167-trade analysis):
+        Active on LIVE only — PAPER continues unfiltered for data collection.
+
+        Disabled on LIVE:
+          - BTC RS (UP and DOWN): structural payoff problem. avg_win $2-3,
+            avg_loss $9. Needs 73-80% WR to break even, achieves only 67%.
+            EV/trade -$0.86 across 69 trades. Cannot be fixed at any threshold
+            because at high implied_p the market has already priced the move
+            (entry near 0.85 → wins capped at $0.15, losses at -$0.85).
+          - ETH UP RS: 65% WR vs 71% breakeven, -$13 / 23 trades.
+          - SOL UP RS: 50% WR vs 73% breakeven, -$49 / 20 trades.
+
+        Allowed on LIVE:
+          - ETH DOWN RS: 81% WR vs 67% breakeven, +$48 / 32 trades. Wilson 95%
+            CI [0.65, 0.91] does not overlap breakeven.
+          - SOL DOWN RS: 83% WR vs 62% breakeven, +$52 / 23 trades. Underpowered
+            (CI overlaps BE) but consistent with ETH DOWN.
+
+        Significance: combined DOWN vs UP-side RS, two-proportion z = 2.43,
+        p = 0.0151. Walk-forward consistent across both halves of the 3-day window.
+
+        Mechanism (Cowork hypothesis): BTC drives ETH/SOL during 15m windows.
+        When BTC falls in-window, the directional persistence propagates to
+        ETH/SOL resolution. BTC RS itself fails because BTC is the source of
+        the signal — by the time it's confident, the market has fully priced it.
 
     Env overrides:
         RESSCALP_IMPLIED_MIN  (default 0.75)
@@ -227,6 +258,14 @@ def should_enter_resolution_scalp(
     if implied_p_up > IMPLIED_MIN:
         gap = implied_p_up - market.up_price
         if gap >= GAP_MIN and market.up_price < 0.95:
+            # v1.23 LIVE filter — see function docstring for evidence.
+            if is_live:
+                if market.asset == "BTC":
+                    print(f"[RESSCALP] LIVE skip — BTC RS disabled (avg_loss/avg_win = 9/3, structural)")
+                    return False, "", 0.0
+                if market.asset in ("ETH", "SOL"):
+                    print(f"[RESSCALP] LIVE skip — {market.asset} UP RS disabled (below breakeven WR)")
+                    return False, "", 0.0
             print(
                 f"[RESSCALP] UP @ {market.up_price:.3f} | "
                 f"implied_p={implied_p_up:.3f} gap={gap:+.3f} secs={secs:.0f}s"
@@ -237,6 +276,10 @@ def should_enter_resolution_scalp(
         p_down = 1.0 - implied_p_up
         gap    = p_down - market.down_price
         if gap >= GAP_MIN and market.down_price < 0.95:
+            # v1.23 LIVE filter — only ETH/SOL DOWN RS allowed on LIVE.
+            if is_live and market.asset == "BTC":
+                print(f"[RESSCALP] LIVE skip — BTC RS disabled (avg_loss/avg_win = 9/3, structural)")
+                return False, "", 0.0
             print(
                 f"[RESSCALP] DOWN @ {market.down_price:.3f} | "
                 f"implied_p_down={p_down:.3f} gap={gap:+.3f} secs={secs:.0f}s"

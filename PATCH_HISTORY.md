@@ -2,6 +2,86 @@
 
 ---
 
+## v1.23 — 2026-04-25
+**Cowork comprehensive analysis — Resolution-scalp UP/DOWN asymmetry → LIVE-only RS filter**
+
+Cowork analysis of 785 active-strategy trades (618 MR + 167 RS, 2026-04-04 to 2026-04-25) surfaced a sharp UP/DOWN asymmetry within the resolution-scalp strategy that wasn't visible at the per-asset level. Root cause: BTC drives ETH/SOL during 15m windows; in-window BTC falls propagate cleanly to ETH/SOL DOWN resolution, while in-window BTC rises do not produce a comparable UP edge. BTC RS itself is structurally negative because BTC is the *source* of the signal — by the time GBM is confident, the market has already priced the move.
+
+### The finding (per asset × side, 167 RS trades total)
+
+| Sub-strategy | n  | WR    | PnL      | avg_win | avg_loss | Breakeven WR |
+|--------------|----|-------|----------|---------|----------|--------------|
+| ETH DOWN RS  | 32 | 81.2% | +$47.59  | +$3.42  | -$6.88   | 66.8%        |
+| SOL DOWN RS  | 23 | 82.6% | +$52.08  | +$4.17  | -$9.04   | 61.9%        |
+| ETH UP RS    | 23 | 65.2% | -$13.11  | +$3.10  | -$7.46   | 70.6%        |
+| SOL UP RS    | 20 | 50.0% | -$49.26  | +$2.98  | -$7.91   | 72.6%        |
+| BTC UP RS    | 43 | 65.1% | -$28.92  | +$3.79  | -$9.01   | 70.4%        |
+| BTC DOWN RS  | 26 | 69.2% | -$30.75  | +$2.13  | -$8.63   | 80.2%        |
+
+- Combined ETH+SOL DOWN: 55 trades, **81.8% WR, +$99.67**.
+- Combined UP-side + all BTC RS: 112 trades, **63.4% WR, -$122.03**.
+- Two-proportion z-test on WR: **z = 2.43, p = 0.0151**.
+- Walk-forward (H1 vs H2 across 3-day window): UP-side EV is consistently negative in both halves; DOWN-side is consistently positive.
+
+### Why BTC RS is structurally bad (Cowork Section 2)
+At entry price `p` and exit at force_exit_time, the realised payoff is roughly `±(1−p)` for a win and `−p` for a loss. For BTC RS the GBM signal pushes entries toward `p ≥ 0.85`, so wins pay ≤ $0.15/share while losses are -$0.85+/share. The breakeven WR is approximately `p` itself. Empirical 67% can never clear that bar at any threshold.
+
+### Changes (signal_5m.py — LIVE only)
+1. **`should_enter_resolution_scalp` gains `is_live: bool = False` argument.**
+2. **When `is_live=True`:**
+   - BTC RS rejected on both UP and DOWN branches.
+   - ETH UP / SOL UP branches rejected.
+   - ETH DOWN / SOL DOWN branches preserved.
+3. **When `is_live=False` (PAPER):** no change. All 6 sub-strategies continue running for ongoing monitoring (Cowork's explicit recommendation — we want to know if UP-side recovers in a different regime).
+4. **`main.py` passes `is_live=live`** to the call site (line ~736).
+
+### What did NOT change
+- **MR filters** (BTC, ETH, SOL): all v1.21 + v1.22 filters preserved. Cowork validated v1.22 ETH cw filter against the same dataset.
+- **`multi-live` default** still MR-only — there is no RS thread on LIVE today, so the v1.23 filter is *dormant* until the user explicitly adds e.g. `("ETH", "15m", "resolution_scalp")` to the multi-live argv. The filter is wired now so that whenever LIVE re-activates, only the validated sub-strategies fire.
+- **Position sizing**: PAPER stays at $15/trade (engine_5m.py:37), LIVE stays at $5/trade (.env). Cowork explored Kelly sizing and recommended *not* sizing up ETH DOWN RS until n ≥ 100 (currently n=32).
+
+### Rejected from Cowork's options (with reasoning)
+- **ETH-MR regime skip on top of v1.22**: Cowork backtested `soft_last5 ≥ 0.6` skip and found it *net-negative* once the v1.22 cw filter is in place — the cw filter and regime counter solve the same problem (avoid trending regimes), so they cancel rather than compound. Defer until v1.22 cw filter degrades in production.
+- **Size up ETH DOWN RS to $30/trade on PAPER**: Cowork Monte Carlo at 70% WR regression scenario gave median +$13 / 95% CI [-$90, +$116]. Wait for n ≥ 100.
+- **BTC RS entry-price bucket filter** (e.g. keep only entries in `[0.70, 0.80) ∪ [0.90, 1.00)`): bucket sizes are n ≤ 17, too thin to trust. Clean cut is safer.
+- **Disable UP-side RS on PAPER too**: would lose monitoring data. Reconsider after 100 more PAPER UP-RS trades.
+
+### LIVE rollout plan (deferred ~2 weeks per user)
+When LIVE capital is available, follow Cowork's gated rollout:
+1. Add `("ETH", "15m", "resolution_scalp")` to multi-live argv.
+2. Watch for 20 LIVE trades. Pass: WR ≥ 70% (≥14 wins of 20).
+3. Continue to 50 LIVE trades. Pass: WR ≥ 70% AND cumulative PnL > $0.
+4. Then add `("SOL", "15m", "resolution_scalp")` to multi-live argv. Same gates.
+5. Throughout, never enable BTC RS or UP-side RS on LIVE.
+
+### Architecture clarifications discovered during investigation
+- **CLAUDE.md's claim "LIVE follows PAPER entries via signal-mirror files (v1.8)" is stale.** No signal-mirror files exist in the codebase. PAPER and LIVE are fully independent processes; each runs its own per-(asset, window, strategy) thread and makes its own decisions via the same `signal_5m.py` functions. The selection of *which* strategies run on LIVE vs PAPER is purely an orchestration decision (multi-live argv vs multi-loop argv).
+- **Position size discrepancy**: PAPER trades.csv shows `size_usd = 15.0` because `engine_5m.py:37` hardcodes `POSITION_SIZE = 15.0`. Cowork's $15-not-$5 correction was right. All PnL projections in Cowork's report are at $15 — divide by 3 for LIVE-equivalent.
+- **`LIVE_MAX_DAILY_LOSS_USD` drift**: laptop `.env` has 50.0; CLAUDE.md says 15.0. Not a v1.23 issue but worth flagging.
+
+### 30-day projection (Cowork Scenario B, "current PAPER + drop all BTC RS + drop UP-side RS")
+At PAPER $15/trade: **+$649/30d**, EV/trade +$1.41, bootstrap 95% CI [+$0.22, +$2.58].
+At LIVE-equivalent $5/trade: **+$216/30d**.
+*Caveat: Cowork explicitly notes the lower CI bound straddles zero — even after the cuts, the bot is not provably profitable. Point estimate is positive.*
+
+### Caveats (do not skip — verbatim from Cowork)
+- 3-day RS window. The "DOWN edge persists across both halves" finding is across 2 days, not 2 weeks.
+- Bootstrap CIs straddle zero on the low end. Point estimate is positive.
+- No multiple-comparison correction. ~30 sub-strategy tests run; Bonferroni at section level (α=0.01) only marginally clears for the headline z=2.43 result.
+- v1.22 ETH filter is in-sample on this dataset.
+
+### Files changed
+- `src/bot/signal_5m.py`
+- `src/bot/version.py`
+- `main.py`
+- `PATCH_HISTORY.md`
+
+### Reference documents
+- Prompt: `PolyData/COWORK_COMPREHENSIVE_2026-04-25.txt`
+- Reply: `COWORK_REPLY_2026-04-25.md`
+
+---
+
 ## v1.22 — 2026-04-24
 **Cowork ETH deep dive — BTC→ETH momentum continuation reframing**
 

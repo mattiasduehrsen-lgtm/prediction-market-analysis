@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-25 (v1.23)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -42,6 +42,18 @@ Every 15 minutes Polymarket creates a new "Will [ASSET] be UP or DOWN after 15 m
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.23 — 2026-04-25 (pending push)
+Cowork comprehensive analysis (785 trades). RS UP/DOWN asymmetry: combined ETH+SOL DOWN RS = 82% WR, +$100 / 55 trades; combined UP-side + BTC RS = 65% WR, -$122 / 112 trades (z=2.43, p=0.015). Added `is_live: bool = False` arg to `should_enter_resolution_scalp` in `signal_5m.py`; on LIVE, BTC RS rejected on both branches and ETH/SOL UP rejected. PAPER unchanged (continues running all 6 sub-strategies for monitoring). `main.py` passes `is_live=live` at the call site. Filter is dormant today because `multi-live` default has no RS thread; activates whenever `("ETH", "15m", "resolution_scalp")` is added to multi-live argv. No MR changes. Regime skip rejected as net-negative on top of v1.22. Reference: `COWORK_REPLY_2026-04-25.md`.
+
+### v1.22 — 2026-04-24 (pending push)
+Cowork ETH deep dive (214 trades). ETH-specific cross-window union `[-0.10,-0.02] ∪ [+0.03,+0.10]` replaces global filter for ETH (Welch p=0.012, WR 53→72%). Dead-zone skip `[0.38, 0.39)` (-$68 / 42 trades). ETH spread cap 0.03 (eliminates 25% WR wide-book tail). BTC/SOL filters unchanged.
+
+### v1.21 — 2026-04-22 (pending push)
+Cowork 582-trade analysis. Hard-disable BTC DOWN MR (t-test p=0.028, -$327 / 161 trades, structural — loses even in ranging weeks). BTC-15m floor raised 0.35→0.38 (0.35-0.38 dead zone: 22% WR, -$199 / 49 trades). SOL-15m floor added at 0.33; SOL DOWN disabled (-$73 historical). ETH floor unchanged (its 0.35-0.38 band is its best at 64% WR).
+
+### v1.20 — 2026-04-20 (pending push)
+Resolution-edge scalp added as second PAPER strategy (Cowork Phase 2, Strategy #4). Fires in last 10–90s of a 15m window when GBM implied_p > 0.75 and the token is ≥0.05 below that. Holds to force_exit_time (~5s before window end). PAPER only — not added to multi-live. Validation gate: 100 OOS trades at WR ≥ 70% before LIVE consideration.
 
 ### v1.19 — 2026-04-19 (pending push)
 Cowork 2026-04-19 Phase 1 deploy (report: `PolyData/cowork_new_strategies_2026-04-19.md`).

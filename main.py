@@ -738,6 +738,7 @@ def run_5m_loop(
                         btc_at_window_start=btc_at_window_start,
                         btc_now=btc_at_entry_rs,
                         rv_std=_rs_std,
+                        is_live=live,
                     )
                     if do_enter:
                         # TP=0.99 (unreachable) — exit via force_exit_time at 5s remaining.

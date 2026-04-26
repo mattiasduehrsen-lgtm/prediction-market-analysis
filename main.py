@@ -1132,10 +1132,14 @@ if __name__ == "__main__":
                     print(f"Bad config '{_arg}' — expected ASSET:WINDOW:STRATEGY")
                     sys.exit(1)
         else:
+            # v1.24: added ETH+SOL RS threads; v1.23 is_live filter blocks BTC RS and UP-side RS
+            # so only ETH DOWN RS and SOL DOWN RS will actually fire on LIVE
             _configs = [
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),
+                ("ETH", "15m", "resolution_scalp"),
+                ("SOL", "15m", "resolution_scalp"),
             ]
         _setup_logging()
         run_multi_loop(_configs, live=True)

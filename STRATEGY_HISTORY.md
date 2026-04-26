@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-04-25 (v1.23)
+**Last updated:** 2026-04-25 (v1.24)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -10,7 +10,7 @@
 
 ---
 
-## Current active strategy (as of v1.23 — 2026-04-25)
+## Current active strategy (as of v1.24 — 2026-04-25)
 
 ### What it trades
 - **Platform:** Polymarket only (no Kalshi, no cross-market arbitrage)
@@ -44,20 +44,15 @@ When False (PAPER), no filtering — all 6 sub-strategies continue running for m
 ### The two processes
 | Command | Purpose | Money at risk | RS active? |
 |---------|---------|---------------|------------|
-| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **No (default argv = MR only)** |
+| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **Yes — ETH DOWN RS + SOL DOWN RS (v1.24)** |
 | `main.py multi-loop` | PAPER trading — simulated, for data collection | No | Yes (all 6 sub-strategies) |
 
 **Independent signals (v1.15):** LIVE and PAPER are fully independent processes. Each evaluates `should_enter()` and `should_enter_resolution_scalp()` on its own price history. There are no signal-mirror files. Selection of which strategies run on each side is purely an orchestration decision (the argv passed to multi-live vs multi-loop).
 
-### When LIVE re-enables (currently paused; user has no LIVE capital ~2 weeks)
-The v1.23 LIVE filter is dormant today because `multi-live` default argv has only MR threads. To enable ETH DOWN RS on LIVE in the future:
-1. Modify the multi-live invocation (in `watch_bot.ps1` / scheduled task / argv) to add `("ETH","15m","resolution_scalp")`.
-2. The signal-level filter will ensure only DOWN trades fire on LIVE; PAPER continues recording all 6.
-3. Validate against the v1.23 rollout gates (see PATCH_HISTORY.md v1.23):
-   - First 20 LIVE ETH DOWN RS trades: WR ≥ 70%
-   - First 50 LIVE ETH DOWN RS trades: WR ≥ 70% AND PnL > $0
-4. Then add `("SOL","15m","resolution_scalp")` and apply the same gates.
-5. Use `python scripts/strategy_status.py` on the laptop to monitor gate status at any time.
+### v1.24 LIVE RS status (active as of 2026-04-25)
+Both ETH DOWN RS and SOL DOWN RS are now active on LIVE. `multi-live` default argv includes `("ETH","15m","resolution_scalp")` and `("SOL","15m","resolution_scalp")`. The v1.23 `is_live` filter ensures only DOWN-side RS fires (UP-side and BTC RS are blocked at signal level).
+
+Ongoing monitoring: run `python scripts/strategy_status.py` on the laptop to check rolling WR gates at any time. If ETH DOWN RS or SOL DOWN RS LIVE WR drops below 60% over 20+ trades, revisit.
 
 ### Pause control
 - **LIVE only:** `output/5m_live/paused.live.flag` — halts new LIVE entries, existing positions still managed. Set via dashboard button or manually.
@@ -69,7 +64,10 @@ The v1.23 LIVE filter is dormant today because `multi-live` default argv has onl
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
 
-### v1.23 — 2026-04-25 (pending push)
+### v1.24 — 2026-04-25
+RS rollout to LIVE. Both ETH DOWN RS and SOL DOWN RS cleared all rollout gates (last-50: ETH 75% WR +$16.27, SOL 79% WR +$46.00). Added `("ETH","15m","resolution_scalp")` and `("SOL","15m","resolution_scalp")` to `multi-live` default argv in `main.py`. v1.23 `is_live` filter (already deployed) blocks BTC RS and UP-side RS automatically — only DOWN-side fires on LIVE.
+
+### v1.23 — 2026-04-25 (deployed)
 Cowork comprehensive analysis (785 trades). RS UP/DOWN asymmetry: combined ETH+SOL DOWN RS = 82% WR, +$100 / 55 trades; combined UP-side + BTC RS = 65% WR, -$122 / 112 trades (z=2.43, p=0.015). Added `is_live: bool = False` arg to `should_enter_resolution_scalp` in `signal_5m.py`; on LIVE, BTC RS rejected on both branches and ETH/SOL UP rejected. PAPER unchanged (continues running all 6 sub-strategies for monitoring). `main.py` passes `is_live=live` at the call site. Filter is dormant today because `multi-live` default has no RS thread; activates whenever `("ETH", "15m", "resolution_scalp")` is added to multi-live argv. No MR changes. Regime skip rejected as net-negative on top of v1.22. Reference: `COWORK_REPLY_2026-04-25.md`.
 
 ### v1.22 — 2026-04-24 (pending push)

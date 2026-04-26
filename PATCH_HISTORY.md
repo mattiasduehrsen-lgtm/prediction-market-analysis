@@ -2,6 +2,24 @@
 
 ---
 
+## v1.24 — 2026-04-25
+**RS rollout to LIVE — ETH DOWN RS + SOL DOWN RS added to multi-live**
+
+Both ETH DOWN RS and SOL DOWN RS cleared all rollout gates set in v1.23:
+
+| Strategy | Last 20 WR | Last 50 WR | Last 50 PnL | Gate |
+|---|---|---|---|---|
+| ETH DOWN RS | >= 70% PASS | 75.0% PASS | +$16.27 PASS | [OK] |
+| SOL DOWN RS | >= 70% PASS | 79.2% PASS | +$46.00 PASS | [OK] |
+
+**Change:** Added `("ETH", "15m", "resolution_scalp")` and `("SOL", "15m", "resolution_scalp")` to the `multi-live` default argv in `main.py` (lines ~1135-1141). No signal logic changes — v1.23 `is_live` filter already in place blocks BTC RS (both sides) and ETH/SOL UP RS automatically. Only ETH DOWN RS and SOL DOWN RS will actually enter on LIVE.
+
+**Files changed:**
+- `main.py` — multi-live default configs (2 lines added)
+- `src/bot/version.py` — bumped to v1.24
+
+---
+
 ## v1.23 — 2026-04-25
 **Cowork comprehensive analysis — Resolution-scalp UP/DOWN asymmetry → LIVE-only RS filter**
 

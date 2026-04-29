@@ -5,6 +5,6 @@ Bump PATCH and add a line to PATCH_NOTES whenever a meaningful change is deploye
 The dashboard reads this via /api/version.
 """
 
-PATCH       = "v1.24"
-PATCH_DATE  = "2026-04-25"
-PATCH_NOTES = "RS rollout to LIVE. Both ETH DOWN RS and SOL DOWN RS cleared all rollout gates (last-50: ETH 75% WR +$16.27, SOL 79% WR +$46.00; gate = WR>=70% AND PnL>0). Added ETH:15m:resolution_scalp and SOL:15m:resolution_scalp to multi-live default argv. v1.23 is_live filter (already deployed) automatically blocks BTC RS (structural loser) and ETH/SOL UP RS (below breakeven) — only DOWN-side RS fires on LIVE. No changes to signal logic or MR."
+PATCH       = "v1.25"
+PATCH_DATE  = "2026-04-28"
+PATCH_NOTES = "HOTFIX: revert v1.24 RS-on-LIVE rollout. v1.24 added ETH/SOL RS threads to multi-live default argv, but LiveEngine5m has no `open()` method (only place_entry/place_exit, used by MR). Every RS-LIVE entry attempt has been crashing with AttributeError every second since v1.24 deployed (~24h of error spam in bot.log). Even with the AttributeError fixed, LiveEngine5m's hard_stop_floor and soft_exit_stalled exits would mishandle RS positions which need TP=0.99-unreachable + force_exit_at_window_end. Proper LIVE RS requires engine refactor — out of scope here. v1.25: (1) remove RS threads from multi-live default argv, (2) add defensive `if live: continue` guard at RS call site in main.py. PAPER unchanged (still runs all 6 sub-strategies). MR on LIVE unchanged. Coincides with Polymarket V2 cutover (April 28 11:00 UTC); v1.18 SDK migration to py-clob-client-v2 already complete."

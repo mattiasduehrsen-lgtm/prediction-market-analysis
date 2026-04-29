@@ -2,6 +2,29 @@
 
 ---
 
+## v1.25 — 2026-04-28
+**HOTFIX: revert v1.24 RS-on-LIVE rollout — `LiveEngine5m` has no `open()` method**
+
+v1.24 added `("ETH","15m","resolution_scalp")` and `("SOL","15m","resolution_scalp")` to the `multi-live` default argv. Discovery on 2026-04-28 (Polymarket V2 cutover day): bot.log was full of `'LiveEngine5m' object has no attribute 'open'` errors firing every second. Root cause:
+
+- The MR call site (line ~962) has a proper `if live: engine.place_entry(...) else: engine.open(...)` branch.
+- The RS call site (line ~743) has **no `if live:` branch** — it calls `engine.open(...)` unconditionally.
+- `Engine5m` (PAPER) has `def open(...)`. `LiveEngine5m` has only `place_entry` / `place_exit`.
+- Therefore every RS entry attempt on LIVE since v1.24 deployed has thrown AttributeError silently in bot.log.
+- Beyond the missing method: `LiveEngine5m`'s exit logic (`hard_stop_floor`, `soft_exit_stalled`) is MR-style and would mishandle RS positions, which need `TP=0.99 (unreachable)` + `force_exit_at_window_end`. Even fixing the missing method would not give correct LIVE RS behavior without further engine work.
+
+**Changes:**
+1. Removed RS threads from `multi-live` default argv. Default is back to MR-only (3 threads) as in v1.23.
+2. Added defensive `if live: print(...); continue` guard at the RS call site in `main.py` so this can't recur if RS is re-added to LIVE argv without proper engine support.
+
+**Impact:** RS continues to run on PAPER (all 6 sub-strategies). LIVE returns to MR-only. The Cowork-validated 75–82% WR ETH DOWN RS / SOL DOWN RS strategies remain available — they just need a proper `LiveEngine5m` RS code path before they can deploy. Tracked as future work.
+
+**Coincidental timing:** Today is also the Polymarket V2 CLOB migration cutover (April 28 11:00 UTC). v1.18 already migrated to `py-clob-client-v2` ahead of the deadline. The V2 SDK is functioning (`py_clob_client_v2 import` succeeds at runtime; balance reads work via `BalanceAllowanceParams`). The error storm we found was unrelated to V2 — it was the v1.24 RS bug.
+
+**Files changed:** `main.py` (argv revert + guard), `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
+
+---
+
 ## v1.24 — 2026-04-25
 **RS rollout to LIVE — ETH DOWN RS + SOL DOWN RS added to multi-live**
 

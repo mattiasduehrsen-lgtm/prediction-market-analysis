@@ -741,6 +741,13 @@ def run_5m_loop(
                         is_live=live,
                     )
                     if do_enter:
+                        # v1.25 safety guard — RS uses PAPER-only Engine5m.open(); LiveEngine5m
+                        # has no `open()` method and no RS-specific exit logic. Skip RS on LIVE
+                        # until the engine is refactored. (multi-live default argv excludes RS
+                        # threads, but this is defense-in-depth in case RS is added via argv.)
+                        if live:
+                            print(f"[RESSCALP] LIVE skip — RS not yet supported on LiveEngine5m (v1.25 guard)")
+                            continue
                         # TP=0.99 (unreachable) — exit via force_exit_time at 5s remaining.
                         # No SL, no soft exit: soft_exit_secs=0 and hard_stop_max=0 above.
                         engine.open(
@@ -1132,14 +1139,16 @@ if __name__ == "__main__":
                     print(f"Bad config '{_arg}' — expected ASSET:WINDOW:STRATEGY")
                     sys.exit(1)
         else:
-            # v1.24: added ETH+SOL RS threads; v1.23 is_live filter blocks BTC RS and UP-side RS
-            # so only ETH DOWN RS and SOL DOWN RS will actually fire on LIVE
+            # v1.25: REVERTED v1.24's RS-on-LIVE rollout. LiveEngine5m has no `open()` method
+            # (only `place_entry`/`place_exit`) AND no RS-specific exit logic (TP=0.99 +
+            # force_exit_at_window_end). The RS code path at line ~743 calls `engine.open(...)`
+            # unconditionally, which crashes with AttributeError on LIVE. Even after fixing the
+            # call, LiveEngine5m's hard_stop_floor / soft_exit_stalled would mishandle RS exits.
+            # Proper LIVE RS support requires engine refactor — tracked separately.
             _configs = [
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),
-                ("ETH", "15m", "resolution_scalp"),
-                ("SOL", "15m", "resolution_scalp"),
             ]
         _setup_logging()
         run_multi_loop(_configs, live=True)

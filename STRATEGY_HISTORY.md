@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-04-25 (v1.24)
+**Last updated:** 2026-04-28 (v1.25)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -44,7 +44,7 @@ When False (PAPER), no filtering — all 6 sub-strategies continue running for m
 ### The two processes
 | Command | Purpose | Money at risk | RS active? |
 |---------|---------|---------------|------------|
-| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **Yes — ETH DOWN RS + SOL DOWN RS (v1.24)** |
+| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **No — reverted v1.25 (LiveEngine5m has no RS support)** |
 | `main.py multi-loop` | PAPER trading — simulated, for data collection | No | Yes (all 6 sub-strategies) |
 
 **Independent signals (v1.15):** LIVE and PAPER are fully independent processes. Each evaluates `should_enter()` and `should_enter_resolution_scalp()` on its own price history. There are no signal-mirror files. Selection of which strategies run on each side is purely an orchestration decision (the argv passed to multi-live vs multi-loop).
@@ -63,6 +63,9 @@ Ongoing monitoring: run `python scripts/strategy_status.py` on the laptop to che
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.25 — 2026-04-28
+HOTFIX. Reverted v1.24's RS-on-LIVE rollout. `LiveEngine5m` has no `open()` method (only `place_entry`/`place_exit`); RS code path in `main.py` calls `engine.open()` unconditionally → AttributeError every second on LIVE since v1.24 deployed. Even after fixing the call, `LiveEngine5m` lacks RS-specific exit logic. Removed RS threads from `multi-live` default argv; added defensive `if live: continue` guard at RS call site. PAPER unchanged (6 sub-strategies). MR on LIVE unchanged. Coincides with Polymarket V2 cutover (v1.18 SDK already migrated).
 
 ### v1.24 — 2026-04-25
 RS rollout to LIVE. Both ETH DOWN RS and SOL DOWN RS cleared all rollout gates (last-50: ETH 75% WR +$16.27, SOL 79% WR +$46.00). Added `("ETH","15m","resolution_scalp")` and `("SOL","15m","resolution_scalp")` to `multi-live` default argv in `main.py`. v1.23 `is_live` filter (already deployed) blocks BTC RS and UP-side RS automatically — only DOWN-side fires on LIVE.

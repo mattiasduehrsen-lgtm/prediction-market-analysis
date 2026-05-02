@@ -1165,17 +1165,16 @@ if __name__ == "__main__":
                     print(f"Bad config '{_arg}' — expected ASSET:WINDOW:STRATEGY")
                     sys.exit(1)
         else:
-            # Default: 15m mean-reversion + resolution scalp (Cowork 2026-04-19 Phase 2)
+            # Default: 15m mean-reversion only (v1.26a killed RS; Cowork May 1 analysis found it was false positive)
             _configs = [
                 # BTC 5m mean_reversion removed: 55 trades, 16% WR, -$217 — negative EV
                 # BTC 5m momentum removed: 102 trades, 31% WR, -$168 (MOMENTUM_ENABLED=False anyway)
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),
-                # Resolution scalp: PAPER only until 100 OOS trades validate WR >= 70%
-                ("BTC", "15m", "resolution_scalp"),
-                ("ETH", "15m", "resolution_scalp"),
-                ("SOL", "15m", "resolution_scalp"),
+                # Resolution scalp: KILLED v1.26a. April 25 finding was false positive at n=55.
+                # With 3x data: all sub-strategies net-negative. Structural payoff asymmetry unsalvageable
+                # (avg_loss/avg_win = 7.7/3.5 → needs 69% WR, actual max 61%). See COWORK_REVIEW_2026-05-01.md.
             ]
         _setup_logging()
         run_multi_loop(_configs)

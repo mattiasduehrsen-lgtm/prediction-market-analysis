@@ -50,13 +50,16 @@ def should_enter(
         print(f"[SIGNAL] Skip — spread {spread:.4f} > {MAX_SPREAD} (illiquid)")
         return False, "", 0.0
 
-    # Cross-window filter: only enter on small prior-window dips.
+    # Cross-window filter (v1.26a — generalized from v1.22 ETH filter):
+    # Only enter on momentum-continuation regimes: BTC-sourced impulses at certain phase offsets.
+    # Union filter: [-0.10, -0.02] ∪ [+0.03, +0.10] applies to all assets (BTC, ETH, SOL).
+    # Cowork analysis found BTC → ETH/SOL directional persistence in these windows.
     # cross_window=0.0 means no Chainlink data yet — pass through.
-    # Data: [-0.05,0] = 40.5% WR; all other bands ≤27% WR and negative EV.
-    # NOTE: ETH uses its own non-contiguous range (see ETH-15m block below) — skip global check for ETH.
-    if cross_window_pct != 0.0 and market.asset != "ETH":
-        if cross_window_pct < CROSS_WINDOW_MIN or cross_window_pct > CROSS_WINDOW_MAX:
-            print(f"[SIGNAL] Skip — cross_window {cross_window_pct:+.3f}% outside [{CROSS_WINDOW_MIN},{CROSS_WINDOW_MAX}]")
+    if cross_window_pct != 0.0:
+        in_neg_range = -0.10 <= cross_window_pct <= -0.02
+        in_pos_range = +0.03 <= cross_window_pct <= +0.10
+        if not (in_neg_range or in_pos_range):
+            print(f"[SIGNAL] Skip {market.asset} — cw {cross_window_pct:+.3f}% outside [-0.10,-0.02]∪[+0.03,+0.10]")
             return False, "", 0.0
 
     # Cheaper side is our mean-reversion candidate
@@ -109,15 +112,7 @@ def should_enter(
         if 0.38 <= price < 0.39:
             print(f"[SIGNAL] Skip ETH — entry {price:.3f} in dead zone [0.38, 0.39) (38% WR, -$68 on 42 trades)")
             return False, "", 0.0
-        # ETH-specific cross-window: non-contiguous BTC-impulse zones.
-        # Dead zone |cw| < 0.02: no BTC impulse → no ETH edge (WR drops to ~40%).
-        # cw > +0.10 or cw < -0.10: extreme moves → outside continuation regime.
-        if cross_window_pct != 0.0:
-            in_neg = -0.10 <= cross_window_pct <= -0.02
-            in_pos = +0.03 <= cross_window_pct <= +0.10
-            if not (in_neg or in_pos):
-                print(f"[SIGNAL] Skip ETH — cw {cross_window_pct:+.3f}% outside [-0.10,-0.02]∪[+0.03,+0.10]")
-                return False, "", 0.0
+        # Cross-window filter now generalized to all assets at top of should_enter() (v1.26a).
         # ETH spread cap: 0.03-0.05 spread band has 25% WR, -$36 on 8 trades. Free removal.
         if spread > 0 and spread > 0.03:
             print(f"[SIGNAL] Skip ETH — spread {spread:.4f} > 0.03 (wide book: 25% WR in 0.03-0.05 band)")
@@ -171,9 +166,10 @@ def should_enter_resolution_scalp(
     btc_at_window_start: float,
     btc_now: float,
     rv_std: float,
-    is_live: bool = False,
 ) -> tuple[bool, str, float]:
     """
+    [DEAD CODE — RS KILLED v1.26a]
+
     Resolution-edge scalp (Cowork 2026-04-19 Strategy #4, 79% WR synthetic backtest).
 
     Enters in the last 10–90s of a 15m window when Binance has mathematically
@@ -193,36 +189,18 @@ def should_enter_resolution_scalp(
         btc_at_window_start: Binance price at window open
         btc_now:             current Binance price
         rv_std:              per-2s-bar log-return std (from 15-min history)
-        is_live:             True when running in LIVE mode. v1.23 LIVE-only filters
-                             gate out structurally negative-EV sub-strategies
-                             (BTC RS entirely; UP-side RS for ETH/SOL). PAPER keeps
-                             running all 6 sub-strategies for ongoing monitoring.
 
-    LIVE filters (v1.23, Cowork 2026-04-25 — 167-trade analysis):
-        Active on LIVE only — PAPER continues unfiltered for data collection.
+    DEAD as of v1.26a (Cowork May 1 deep dive):
+        April 25 RS findings (z=2.43, p=0.0151) were false positive at n=55.
+        Reanalysis with 3x data shows all RS sub-strategies are net-negative.
+        Structural payoff asymmetry unsalvageable: avg_loss/avg_win = 7.7/3.5
+        requires 69% WR to break even; actual max achieved is 61%.
 
-        Disabled on LIVE:
-          - BTC RS (UP and DOWN): structural payoff problem. avg_win $2-3,
-            avg_loss $9. Needs 73-80% WR to break even, achieves only 67%.
-            EV/trade -$0.86 across 69 trades. Cannot be fixed at any threshold
-            because at high implied_p the market has already priced the move
-            (entry near 0.85 → wins capped at $0.15, losses at -$0.85).
-          - ETH UP RS: 65% WR vs 71% breakeven, -$13 / 23 trades.
-          - SOL UP RS: 50% WR vs 73% breakeven, -$49 / 20 trades.
+        - BTC RS: -$21 (7d), all sub-slices negative
+        - ETH DOWN RS: 56% WR, -$86 (from 75% WR, +$16 on 50-trade rolling window April 25)
+        - SOL DOWN RS: 60% WR, +$6 (from 79% WR, +$46)
 
-        Allowed on LIVE:
-          - ETH DOWN RS: 81% WR vs 67% breakeven, +$48 / 32 trades. Wilson 95%
-            CI [0.65, 0.91] does not overlap breakeven.
-          - SOL DOWN RS: 83% WR vs 62% breakeven, +$52 / 23 trades. Underpowered
-            (CI overlaps BE) but consistent with ETH DOWN.
-
-        Significance: combined DOWN vs UP-side RS, two-proportion z = 2.43,
-        p = 0.0151. Walk-forward consistent across both halves of the 3-day window.
-
-        Mechanism (Cowork hypothesis): BTC drives ETH/SOL during 15m windows.
-        When BTC falls in-window, the directional persistence propagates to
-        ETH/SOL resolution. BTC RS itself fails because BTC is the source of
-        the signal — by the time it's confident, the market has fully priced it.
+        See COWORK_REVIEW_2026-05-01.md for full analysis.
 
     Env overrides:
         RESSCALP_IMPLIED_MIN  (default 0.75)
@@ -258,14 +236,7 @@ def should_enter_resolution_scalp(
     if implied_p_up > IMPLIED_MIN:
         gap = implied_p_up - market.up_price
         if gap >= GAP_MIN and market.up_price < 0.95:
-            # v1.23 LIVE filter — see function docstring for evidence.
-            if is_live:
-                if market.asset == "BTC":
-                    print(f"[RESSCALP] LIVE skip — BTC RS disabled (avg_loss/avg_win = 9/3, structural)")
-                    return False, "", 0.0
-                if market.asset in ("ETH", "SOL"):
-                    print(f"[RESSCALP] LIVE skip — {market.asset} UP RS disabled (below breakeven WR)")
-                    return False, "", 0.0
+            # [DEAD CODE — v1.26a removed RS entirely]
             print(
                 f"[RESSCALP] UP @ {market.up_price:.3f} | "
                 f"implied_p={implied_p_up:.3f} gap={gap:+.3f} secs={secs:.0f}s"
@@ -276,10 +247,7 @@ def should_enter_resolution_scalp(
         p_down = 1.0 - implied_p_up
         gap    = p_down - market.down_price
         if gap >= GAP_MIN and market.down_price < 0.95:
-            # v1.23 LIVE filter — only ETH/SOL DOWN RS allowed on LIVE.
-            if is_live and market.asset == "BTC":
-                print(f"[RESSCALP] LIVE skip — BTC RS disabled (avg_loss/avg_win = 9/3, structural)")
-                return False, "", 0.0
+            # [DEAD CODE — v1.26a removed RS entirely]
             print(
                 f"[RESSCALP] DOWN @ {market.down_price:.3f} | "
                 f"implied_p_down={p_down:.3f} gap={gap:+.3f} secs={secs:.0f}s"

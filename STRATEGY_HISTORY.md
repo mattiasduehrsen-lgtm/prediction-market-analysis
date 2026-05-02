@@ -1,24 +1,25 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-04-28 (v1.25)
+**Last updated:** 2026-05-02 (v1.26a)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
 > The bot does **NOT** use Kalshi. It does **NOT** do cross-market arbitrage.
 > Old memory files reference a Kalshi-arbitrage strategy that was retired around April 5, 2026.
 > The current strategy is **15-minute Up/Down mean reversion on Polymarket only**.
+> **Resolution-scalp (RS) was killed in v1.26a** — April 25 finding was false positive at small N.
 
 ---
 
-## Current active strategy (as of v1.24 — 2026-04-25)
+## Current active strategy (as of v1.26a — 2026-05-02)
 
 ### What it trades
 - **Platform:** Polymarket only (no Kalshi, no cross-market arbitrage)
 - **Markets:** 15-minute "Up/Down" prediction markets
 - **Assets:** BTC, ETH, SOL (5m markets disabled — negative EV)
-- **Strategies:** Two run in parallel as separate threads:
-  - `mean_reversion` (MR) — buy cheap side near window start, bet on reversion
-  - `resolution_scalp` (RS) — buy expensive side in last 10–90s when GBM model says outcome is near-determined (PAPER only at present)
+- **Strategies:** One active strategy (v1.26a killed RS):
+  - `mean_reversion` (MR) — buy cheap side near window start, bet on reversion within the window
+  - ~~`resolution_scalp` (RS)~~ — **KILLED v1.26a** (April 25 finding was false positive at n=55; with 3x data all RS sub-strategies net-negative and structurally unsalvageable)
 
 ### How MR works
 Every 15 minutes Polymarket creates a "Will [ASSET] be UP or DOWN?" market. The MR thread:
@@ -27,32 +28,22 @@ Every 15 minutes Polymarket creates a "Will [ASSET] be UP or DOWN?" market. The 
 3. Applies asset/side-specific filters (v1.21 + v1.22) — see version history
 4. Places a GTC limit SELL at take-profit; exits via TP, hard-stop floor, soft-exit-stalled, or window force-exit
 
-### How RS works
-The RS thread runs alongside MR. In the last 10–90s of a window:
-1. Computes Binance-spot GBM implied probability of UP from window-start path + remaining vol + τ
-2. If `implied_p > 0.75` AND the corresponding token is ≥ 0.05 below that probability, BUY that side
-3. Holds to `force_exit_time` (~5s before window end) — no TP, no SL
-4. Wins resolve close to $1.00; losses close to $0.00 (binary)
+### How RS works [DEAD CODE — v1.26a]
+The RS thread was removed entirely in v1.26a. Previously, in the last 10–90s of a window:
+1. Computed Binance-spot GBM implied probability of UP from window-start path + remaining vol + τ
+2. If `implied_p > 0.75` AND the corresponding token was ≥ 0.05 below that probability, would BUY that side
+3. Held to `force_exit_time` (~5s before window end) — no TP, no SL
+4. Wins resolved close to $1.00; losses close to $0.00 (binary)
 
-### v1.23 LIVE filter on RS
-`should_enter_resolution_scalp` takes `is_live: bool`. When True, the function rejects:
-- BTC RS on both UP and DOWN branches (structural payoff: avg_win $3 vs avg_loss $9)
-- ETH UP and SOL UP RS (below their breakeven WRs)
-
-When False (PAPER), no filtering — all 6 sub-strategies continue running for monitoring.
+**Why killed (v1.26a):** April 25 Cowork finding (z=2.43, p=0.0151 on ETH+SOL DOWN RS, n=55) was a **false positive at small N**. Reanalysis with 3x data revealed all RS sub-strategies are net-negative (even 60%+ WR insufficient due to asymmetric payoff: avg_loss/avg_win = 7.7/3.5 requires ~69% WR to break even, max achieved 61%). See `COWORK_REVIEW_2026-05-01.md`.
 
 ### The two processes
-| Command | Purpose | Money at risk | RS active? |
+| Command | Purpose | Money at risk | Strategies |
 |---------|---------|---------------|------------|
-| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **No — reverted v1.25 (LiveEngine5m has no RS support)** |
-| `main.py multi-loop` | PAPER trading — simulated, for data collection | No | Yes (all 6 sub-strategies) |
+| `main.py multi-live` | LIVE trading — real money on Polymarket | Yes | **MR only (3 threads: BTC/ETH/SOL)** |
+| `main.py multi-loop` | PAPER trading — simulated, for data collection | No | **MR only (3 threads: BTC/ETH/SOL)** |
 
-**Independent signals (v1.15):** LIVE and PAPER are fully independent processes. Each evaluates `should_enter()` and `should_enter_resolution_scalp()` on its own price history. There are no signal-mirror files. Selection of which strategies run on each side is purely an orchestration decision (the argv passed to multi-live vs multi-loop).
-
-### v1.24 LIVE RS status (active as of 2026-04-25)
-Both ETH DOWN RS and SOL DOWN RS are now active on LIVE. `multi-live` default argv includes `("ETH","15m","resolution_scalp")` and `("SOL","15m","resolution_scalp")`. The v1.23 `is_live` filter ensures only DOWN-side RS fires (UP-side and BTC RS are blocked at signal level).
-
-Ongoing monitoring: run `python scripts/strategy_status.py` on the laptop to check rolling WR gates at any time. If ETH DOWN RS or SOL DOWN RS LIVE WR drops below 60% over 20+ trades, revisit.
+**Independent signals (v1.15):** LIVE and PAPER are fully independent processes. Each evaluates `should_enter()` on its own price history. There are no signal-mirror files. Selection of which strategies run on each side is purely an orchestration decision (the argv passed to multi-live vs multi-loop).
 
 ### Pause control
 - **LIVE only:** `output/5m_live/paused.live.flag` — halts new LIVE entries, existing positions still managed. Set via dashboard button or manually.
@@ -63,6 +54,18 @@ Ongoing monitoring: run `python scripts/strategy_status.py` on the laptop to che
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.26a — 2026-05-02
+Cowork May 1 deep dive: RS killed entirely. April 25 finding (z=2.43, p=0.015) was false positive at small N (n=55); reanalysis with 3x data shows all RS sub-strategies net-negative. Structural payoff asymmetry unsalvageable (avg_loss/avg_win = 7.7/3.5 → needs 69% WR to break even, max 61%). 
+
+Changes:
+1. **Removed all RS threads from `multi-loop` default argv.** 3 MR configs remain (BTC/ETH/SOL 15m mean_reversion).
+2. **Removed `is_live` parameter from `should_enter_resolution_scalp()`.** Function marked [DEAD CODE] in `signal_5m.py`.
+3. **Generalized v1.22 ETH cross-window filter to all assets.** All BTC/ETH/SOL now use union filter `[-0.10,-0.02] ∪ [+0.03,+0.10]` (BTC-momentum-continuation regimes). Replaced per-asset logic with single generalized check.
+
+Impact: PAPER and LIVE both now run 3 MR threads only (no RS). Expected improvement: cleaner data collection and higher MR WR without RS drag.
+
+**Files changed:** `main.py`, `src/bot/signal_5m.py`, `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
 
 ### v1.25 — 2026-04-28
 HOTFIX. Reverted v1.24's RS-on-LIVE rollout. `LiveEngine5m` has no `open()` method (only `place_entry`/`place_exit`); RS code path in `main.py` calls `engine.open()` unconditionally → AttributeError every second on LIVE since v1.24 deployed. Even after fixing the call, `LiveEngine5m` lacks RS-specific exit logic. Removed RS threads from `multi-live` default argv; added defensive `if live: continue` guard at RS call site. PAPER unchanged (6 sub-strategies). MR on LIVE unchanged. Coincides with Polymarket V2 cutover (v1.18 SDK already migrated).

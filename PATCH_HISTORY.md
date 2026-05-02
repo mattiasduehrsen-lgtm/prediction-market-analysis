@@ -2,6 +2,48 @@
 
 ---
 
+## v1.26a — 2026-05-02
+**Cowork May 1 deep dive: kill RS entirely + generalize cross-window filter**
+
+Cowork reanalysis of 1633 PAPER trades (2026-04-04 to 2026-05-01, 3x since April 25 analysis) found that the April 25 RS findings were a **false positive at small N**. With current data:
+
+- All RS sub-strategies are net-negative over the last 7 days
+- April 25 finding: ETH+SOL DOWN RS: z=2.43, p=0.0151 (n=55)
+- Recompute at 3x data: t≈1.98, p≈0.05 (exactly Bonferroni noise floor, no correction applied)
+- Structural payoff asymmetry unsalvageable: avg_loss/avg_win = 7.7/3.5 requires ~69% WR to break even; actual max achieved is 61%
+
+Specifically:
+- ETH DOWN RS: 56% WR, -$86 (down from 75% WR, +$16 on rolling 50-trade window April 25)
+- SOL DOWN RS: 60% WR, +$6 (down from 79% WR, +$46)
+- BTC RS (all sides): uniformly unprofitable
+
+**Changes:**
+1. **Removed all RS threads from `multi-loop` default argv** (lines 1176-1178 deleted, replaced with comment explaining the kill decision).
+2. **Removed `is_live` parameter from `should_enter_resolution_scalp()`** in `signal_5m.py`. Function now marked [DEAD CODE] in docstring with Cowork reference.
+3. **Generalized v1.22 ETH cross-window filter to all assets (BTC, ETH, SOL)**. Changed from:
+   - Global filter (non-ETH only): `CROSS_WINDOW_MIN to CROSS_WINDOW_MAX` (approx -0.15 to 0.02)
+   - ETH-only union: `[-0.10,-0.02] ∪ [+0.03,+0.10]`
+   
+   To:
+   - All assets: `[-0.10,-0.02] ∪ [+0.03,+0.10]` (BTC-momentum-continuation regimes)
+
+   Mechanism per Cowork analysis: BTC → ETH/SOL momentum is directional, not symmetric; outside these windows, MR edge disappears.
+
+**Impact:**
+- PAPER: 6 sub-strategies → 3 (MR only). No RS running. Data collection cleaner.
+- LIVE: Unchanged (still 3 MR threads, no RS).
+- Expected PAPER WR improvement: MR alone should run cleaner without RS drag.
+
+**Files changed:**
+- `main.py` — removed RS configs from multi-loop argv (3 lines)
+- `src/bot/signal_5m.py` — removed `is_live` param, generalized cw filter, marked RS dead code
+- `src/bot/version.py` — bumped to v1.26a
+- `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md` — documentation
+
+**Next:** v1.26b will implement crash regime filter (`|btc_pct_change_at_entry| ≤ 0.10`) to avoid entries during extreme-volatility windows. See Cowork rec (c).
+
+---
+
 ## v1.25 — 2026-04-28
 **HOTFIX: revert v1.24 RS-on-LIVE rollout — `LiveEngine5m` has no `open()` method**
 

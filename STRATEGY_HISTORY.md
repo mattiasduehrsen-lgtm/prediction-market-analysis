@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-02 (v1.26a)
+**Last updated:** 2026-05-02 (v1.26b)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -54,6 +54,13 @@ The RS thread was removed entirely in v1.26a. Previously, in the last 10–90s o
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.26b — 2026-05-02
+Crash regime filter. Avoids entries during extreme-volatility windows (BTC >10% move from window start). 
+Cowork analysis of April 27 & May 1 crashes: both RS and MR edge vanish in >10% volatility swings 
+(cascading liquidations, thin markets, slippage). New constant `BTC_CRASH_PCT_THRESHOLD` (default 0.10, 
+env configurable). Filter gate added to MR entry logic: skip if `|btc_pct_change_at_entry| > 0.10`. 
+Projected impact: +$200 PnL on 1633-trade backtest (loss avoidance).
 
 ### v1.26a — 2026-05-02
 Cowork May 1 deep dive: RS killed entirely. April 25 finding (z=2.43, p=0.015) was false positive at small N (n=55); reanalysis with 3x data shows all RS sub-strategies net-negative. Structural payoff asymmetry unsalvageable (avg_loss/avg_win = 7.7/3.5 → needs 69% WR to break even, max 61%). 

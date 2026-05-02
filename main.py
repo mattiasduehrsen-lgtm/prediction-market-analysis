@@ -282,6 +282,7 @@ def run_5m_loop(
         fetch_market, fetch_live_prices, WINDOW_SECONDS,
         FORCE_EXIT, ENTRY_MIN, ENTRY_MAX, MIN_SECONDS, BTC_SKIP_RATE,
         MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE,
+        BTC_CRASH_PCT_THRESHOLD,
     )
     from src.bot.signal_5m import should_enter, should_enter_momentum, should_enter_resolution_scalp, should_exit, take_profit_price
     from src.bot.claude_advisor import advise_entry
@@ -875,6 +876,15 @@ def run_5m_loop(
                         )
                         if should_skip(c_prob):
                             print(f"  [GBM] Skip — collapse_prob={c_prob:.3f} >= {COLLAPSE_THRESHOLD}")
+                            continue
+
+                        # ── Crash regime filter (v1.26b, Cowork May 1) ───────
+                        # Skip entries during extreme volatility (BTC >10% move from window start).
+                        # April 27 & May 1 crashes: RS got crushed in volatility extremes.
+                        # MR should sit out when BTC moves >10% in-window (systematic risk, thin markets).
+                        btc_pct_chg_abs = abs(btc_pct_chg_entry)
+                        if btc_pct_chg_abs > BTC_CRASH_PCT_THRESHOLD:
+                            print(f"  [CRASH] Skip — BTC move {btc_pct_chg_entry:+.4f}% exceeds crash threshold {BTC_CRASH_PCT_THRESHOLD:.2%}")
                             continue
 
                         # ── BTC DOWN regime filter (Cowork 2026-04-18) ───────

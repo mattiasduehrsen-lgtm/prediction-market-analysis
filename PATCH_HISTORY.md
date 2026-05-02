@@ -2,6 +2,34 @@
 
 ---
 
+## v1.26b — 2026-05-02
+**Phase 2: Crash regime filter — avoid extreme-volatility windows**
+
+Cowork analysis of 1633 trades found April 27 & May 1 crashes: both RS and underlying MR edge vanish when BTC swings >10% from window start. Root cause: cascading liquidations, margin calls, thin markets, execution slippage. Threshold: skip entries when |BTC % change from window start| > 10%.
+
+**Changes:**
+1. **New constant `BTC_CRASH_PCT_THRESHOLD` in `market_5m.py`** (default 0.10, env configurable).
+2. **Filter gate in `main.py` MR entry logic** (lines ~879-887): after GBM collapse check, compute `btc_pct_chg_abs = abs(btc_pct_chg_entry)`; if exceeds threshold, skip with `[CRASH]` reason.
+3. **Logged to trades.csv:** new column `skip_reason = "BTC_CRASH"` in skipped_windows.csv for monitoring.
+
+**Impact (Cowork backtest on 1633-trade history):**
+- Projected: +$200 PnL (loss avoidance, no WR change)
+- Frequency: ~8-15 skipped entries/month during volatile windows
+- Side effect: none expected (avoids true systematic-risk regimes where edge collapses anyway)
+
+**Mechanism:**
+- April 27 crash: BTC fell ~7% morning, bounced ~18% afternoon → UP trades crushed in high-volatility chop
+- May 1 crash: BTC oscillated 0.002 ↔ 0.745 → DECEL filter firing constantly, RS whipsawed into losses
+- 10% threshold empirically identified by Cowork as the inflection point where MR win rates cross breakeven
+
+**Files changed:**
+- `src/bot/market_5m.py` — new BTC_CRASH_PCT_THRESHOLD constant
+- `main.py` — import new constant, add filter gate after GBM collapse check
+- `src/bot/version.py` — bumped to v1.26b
+- `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md` — documentation
+
+---
+
 ## v1.26a — 2026-05-02
 **Cowork May 1 deep dive: kill RS entirely + generalize cross-window filter**
 

@@ -69,6 +69,13 @@ MOMENTUM_ENABLED = False   # disabled 2026-04-09: 80 trades at 30% WR — not pr
 CROSS_WINDOW_MIN = float(os.environ.get("CROSS_WINDOW_MIN", "-0.15"))  # reject entries where prev window fell harder than this
 CROSS_WINDOW_MAX = float(os.environ.get("CROSS_WINDOW_MAX",  "0.10"))  # reject entries where prev window rose more than this — tightened 0.15→0.10 (Cowork 2026-04-18: +0.10..+0.15 bucket = 40% WR / −$2.60 EV)
 
+# ── Crash regime filter (v1.26b, Cowork May 1 recommendation) ──────────────
+# Avoid entries during extreme-volatility windows (market crashes/rallies >10% from window start).
+# Cowork analysis of April 27 & May 1 crash events: RS got blown out in volatility extremes.
+# MR should also sit out when BTC moves >10% in-window (implies elevated systematic risk,
+# thin markets, cascading liquidations). Threshold: |btc_pct_change_at_entry| <= 0.10 to enter.
+BTC_CRASH_PCT_THRESHOLD = float(os.environ.get("BTC_CRASH_PCT_THRESHOLD", "0.10"))  # max % move from window start to allow entry
+
 
 @dataclass
 class Market5m:

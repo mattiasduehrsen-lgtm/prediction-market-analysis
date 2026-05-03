@@ -5,6 +5,6 @@ Bump PATCH and add a line to PATCH_NOTES whenever a meaningful change is deploye
 The dashboard reads this via /api/version.
 """
 
-PATCH       = "v1.26b"
-PATCH_DATE  = "2026-05-02"
-PATCH_NOTES = "Phase 2 of Cowork May 1 deep-dive v1.26 implementation: crash regime filter. Adds circuit breaker for extreme-volatility windows where systematic risk spikes. Cowork analysis of April 27 & May 1 crashes found both RS and underlying MR edge vanish when BTC moves >10% from window start (cascading liquidations, thin markets). Filter: skip entries when |btc_pct_change_at_entry| > 0.10 (10% move threshold). New const BTC_CRASH_PCT_THRESHOLD (env configurable, default 0.10) in market_5m.py. Integrated at main.py lines ~879-887 after GBM collapse gate, before BTC DOWN regime filter. Projected impact from Cowork backtest on 1633-trade history: +$200 PnL (loss avoidance, no WR change). Expected to prevent ~8-15 trades/month during volatile windows. Files changed: main.py (imports + filter logic), src/bot/market_5m.py (new constant), src/bot/version.py, PATCH_HISTORY.md, STRATEGY_HISTORY.md."
+PATCH       = "v1.26c"
+PATCH_DATE  = "2026-05-03"
+PATCH_NOTES = "HOTFIX: Corrected v1.26a cw filter bands. v1.26a mistakenly used +0.03 (copied from old ETH-only v1.22 filter) and -0.10 instead of Cowork's validated spec: CW_BAND_POS=(+0.02,+0.10), CW_BAND_NEG=(-0.15,-0.02). This blocked all windows where cw in (+0.02,+0.03) — BTC was reading cw=+0.022% every window → zero PAPER trades for 24h. Fix: signal_5m.py global filter now uses -0.15/+0.02 as the band edges. Also includes v1.26b crash regime filter (BTC_CRASH_PCT_THRESHOLD=0.10) from the prior commit."

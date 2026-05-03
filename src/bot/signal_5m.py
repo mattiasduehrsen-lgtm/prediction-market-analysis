@@ -50,16 +50,20 @@ def should_enter(
         print(f"[SIGNAL] Skip — spread {spread:.4f} > {MAX_SPREAD} (illiquid)")
         return False, "", 0.0
 
-    # Cross-window filter (v1.26a — generalized from v1.22 ETH filter):
-    # Only enter on momentum-continuation regimes: BTC-sourced impulses at certain phase offsets.
-    # Union filter: [-0.10, -0.02] ∪ [+0.03, +0.10] applies to all assets (BTC, ETH, SOL).
-    # Cowork analysis found BTC → ETH/SOL directional persistence in these windows.
+    # Cross-window filter (v1.26c — corrected from v1.26a implementation error):
+    # Cowork May 1 recommendation (§7 "numbers ready to drop"):
+    #   CW_BAND_NEG = (-0.15, -0.02)   — allow
+    #   CW_BAND_POS = (+0.02, +0.10)   — allow
+    #   CW_DEADZONE = (-0.02, +0.02)   — block (no BTC impulse → no edge)
+    # v1.26a mistakenly used +0.03 (from old ETH-only v1.22 filter) and -0.10 instead of
+    # the Cowork-validated +0.02 and -0.15. That blocked all windows with cw in (+0.02,+0.03)
+    # (BTC cw was reading +0.022% → zero trades for 24h).
     # cross_window=0.0 means no Chainlink data yet — pass through.
     if cross_window_pct != 0.0:
-        in_neg_range = -0.10 <= cross_window_pct <= -0.02
-        in_pos_range = +0.03 <= cross_window_pct <= +0.10
+        in_neg_range = -0.15 <= cross_window_pct <= -0.02
+        in_pos_range = +0.02 <= cross_window_pct <= +0.10
         if not (in_neg_range or in_pos_range):
-            print(f"[SIGNAL] Skip {market.asset} — cw {cross_window_pct:+.3f}% outside [-0.10,-0.02]∪[+0.03,+0.10]")
+            print(f"[SIGNAL] Skip {market.asset} — cw {cross_window_pct:+.3f}% outside [-0.15,-0.02]∪[+0.02,+0.10]")
             return False, "", 0.0
 
     # Cheaper side is our mean-reversion candidate

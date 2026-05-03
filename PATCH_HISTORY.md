@@ -2,6 +2,28 @@
 
 ---
 
+## v1.26c — 2026-05-03
+**HOTFIX: Corrected v1.26a cross-window filter band edges**
+
+v1.26a generalized the ETH v1.22 cw filter to all assets but mistakenly copied the ETH-specific band edges (`+0.03` lower bound on positive side, `-0.10` lower bound on negative side) instead of using Cowork's validated specification:
+
+```
+Cowork §7 spec:
+  CW_BAND_NEG = (-0.15, -0.02)   # allow
+  CW_BAND_POS = (+0.02, +0.10)   # allow
+  CW_DEADZONE = (-0.02, +0.02)   # block
+```
+
+**Effect of the bug:** BTC's cross-window was reading `+0.022%` — which falls in `(+0.02, +0.03)`. Under v1.26a this was blocked (needed `>=+0.03`). Under the correct spec it passes (needs `>=+0.02`). Zero PAPER trades were placed for 24h.
+
+**Fix:** Changed `signal_5m.py` global filter from `[-0.10,-0.02]∪[+0.03,+0.10]` to `[-0.15,-0.02]∪[+0.02,+0.10]`. This is exactly what Cowork specified, matches the validated filter cascade Step 2, and unblocks the windows that were incorrectly skipped.
+
+**Verified:** Bot.log was showing `[SIGNAL] Skip BTC — cw +0.022% outside [-0.10,-0.02]∪[+0.03,+0.10]` continuously. After this fix, BTC `+0.022%` now correctly passes as in-range.
+
+**Files changed:** `src/bot/signal_5m.py`, `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
+
+---
+
 ## v1.26b — 2026-05-02
 **Phase 2: Crash regime filter — avoid extreme-volatility windows**
 

@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-02 (v1.26b)
+**Last updated:** 2026-05-03 (v1.26c)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -54,6 +54,9 @@ The RS thread was removed entirely in v1.26a. Previously, in the last 10–90s o
 ## Version history — what was added when
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
+
+### v1.26c — 2026-05-03
+HOTFIX: Corrected v1.26a cw filter. v1.26a copied ETH v1.22 band edges (+0.03, -0.10) instead of Cowork's validated spec (+0.02, -0.15). BTC cw was reading +0.022% which landed in the (+0.02,+0.03) gap → zero trades for 24h. Fix: `signal_5m.py` global filter now uses `[-0.15,-0.02]∪[+0.02,+0.10]`.
 
 ### v1.26b — 2026-05-02
 Crash regime filter. Avoids entries during extreme-volatility windows (BTC >10% move from window start). 

@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-03 (v1.26c)
+**Last updated:** 2026-05-06 (v1.27)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,7 +11,13 @@
 
 ---
 
-## Current active strategy (as of v1.26a — 2026-05-02)
+## Current active strategy (as of v1.27 — 2026-05-06)
+
+**LIVE configuration changed v1.27:** BTC fully disabled on LIVE (BTC DOWN was already off v1.21; BTC UP added to disable list). LIVE now runs ETH and SOL only. PAPER continues to run all three.
+
+LIVE remains paused via `paused.live.flag` pending root-cause investigation of execution drag (matched-pairs LIVE-vs-PAPER drag of -$0.36 to -$0.55/trade across BTC/ETH, t<-2.5).
+
+
 
 ### What it trades
 - **Platform:** Polymarket only (no Kalshi, no cross-market arbitrage)

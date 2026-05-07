@@ -1155,8 +1155,17 @@ if __name__ == "__main__":
             # unconditionally, which crashes with AttributeError on LIVE. Even after fixing the
             # call, LiveEngine5m's hard_stop_floor / soft_exit_stalled would mishandle RS exits.
             # Proper LIVE RS support requires engine refactor — tracked separately.
+            # v1.27 (Cowork May 5 Opus reanalysis):
+            #   - BTC fully disabled on LIVE. BTC DOWN was already off (v1.21).
+            #     BTC UP LIVE: 13 trades, WR=23%, EV=-$2.80, total=-$36.38.
+            #     Matched-pairs LIVE-vs-PAPER drag for BTC: -$0.36/trade (t=-3.76).
+            #     Half the LIVE BTC UP loss is execution drag, not strategy.
+            #   - SOL kept LIVE-eligible but n=7 LIVE so far is meaningless.
+            #     Filter band still [0.33, 0.35] (NOT widened — Opus disagreed).
+            #   - ETH kept on LIVE; PAPER edge marginally clears slippage at $5 size.
+            #     Increase to $15-20 only after execution-drag root cause is identified.
             _configs = [
-                ("BTC", "15m", "mean_reversion"),
+                # ("BTC", "15m", "mean_reversion"),  # v1.27: disabled on LIVE
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),
             ]

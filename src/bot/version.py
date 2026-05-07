@@ -5,6 +5,6 @@ Bump PATCH and add a line to PATCH_NOTES whenever a meaningful change is deploye
 The dashboard reads this via /api/version.
 """
 
-PATCH       = "v1.26c"
-PATCH_DATE  = "2026-05-03"
-PATCH_NOTES = "HOTFIX: Corrected v1.26a cw filter bands. v1.26a mistakenly used +0.03 (copied from old ETH-only v1.22 filter) and -0.10 instead of Cowork's validated spec: CW_BAND_POS=(+0.02,+0.10), CW_BAND_NEG=(-0.15,-0.02). This blocked all windows where cw in (+0.02,+0.03) — BTC was reading cw=+0.022% every window → zero PAPER trades for 24h. Fix: signal_5m.py global filter now uses -0.15/+0.02 as the band edges. Also includes v1.26b crash regime filter (BTC_CRASH_PCT_THRESHOLD=0.10) from the prior commit."
+PATCH       = "v1.27"
+PATCH_DATE  = "2026-05-06"
+PATCH_NOTES = "BTC fully disabled on LIVE (BTC DOWN was already off v1.21; BTC UP now off too). Cowork May 5 Opus reanalysis: LIVE BTC UP n=13, WR=23%, EV=-$2.80, total=-$36.38. Matched-pairs LIVE-vs-PAPER execution drag: BTC -$0.36/trade (t=-3.76), ETH -$0.55/trade (t=-2.52). Half the LIVE damage is execution drag, not strategy. LIVE remains paused via paused.live.flag pending root-cause investigation of execution drag (TP fills below 0.60, stop_loss fills past 0.10, fee leakage). NO new filters added: UTC blackout failed multiple-testing correction (only hr 16 survives Bonferroni and that's a +EV hour); SOL band widening was bin-hunting on n=50. ETH and SOL kept LIVE-eligible; BTC kept on PAPER for continued data collection."

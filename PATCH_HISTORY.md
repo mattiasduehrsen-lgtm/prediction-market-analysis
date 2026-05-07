@@ -2,6 +2,37 @@
 
 ---
 
+## v1.27 — 2026-05-06
+**Disable BTC on LIVE — execution-drag-driven decision**
+
+Cowork May 5 Opus reanalysis surfaced two findings the original May 5 review missed:
+
+1. **Population confound.** The "strategy is net-negative -$1,150" framing pooled 4 retired sub-strategies with the live MR-15m one. Filtering to MR-15m only (n=693): EV=+$0.12/trade, total=+$86. Current strategy is statistically flat, not broken.
+
+2. **Execution drag is the dominant LIVE signal.** Matched-pairs LIVE-vs-PAPER on the same `(asset, side, window_end_ts)` shows:
+   - BTC: LIVE−PAPER = -$0.36/trade (t=-3.76, n=22)
+   - ETH: LIVE−PAPER = -$0.55/trade (t=-2.52, n=15)
+   - On $5 positions this is 7–11% per trade in pure execution cost
+   - This is the most statistically significant result in the dataset
+
+**Decision: BTC fully off LIVE.**
+- BTC DOWN: already disabled v1.21
+- BTC UP: now disabled (this commit). LIVE n=13, WR=23%, EV=-$2.80, total=-$36.38
+- BTC stays on PAPER for continued data collection
+
+**LIVE remains paused** (`paused.live.flag` retained) until execution-drag root cause is identified. Suspected sources:
+- TP SELL fills below 0.60 (sample: trade 5 entered 0.39 × 12.24 shares; theoretical $2.57 gain at 0.60; actual pnl $2.34 → $0.23 slippage)
+- `hard_stop_floor` exits show -80% to -97% losses (stop placed at price 0.10 → fills below 0.10 in fast moves)
+- Possible fee leakage (`entry_fee_usd=0.0` recorded but actual fees absorbed in fills)
+
+**Recommendations explicitly NOT acted on (Opus disagreed with prior review):**
+- UTC 17–20 blackout: zero hours survive Bonferroni or BH-FDR on MR-15m. Walk-forward shows 5/8 H1-bad hours reverse in H2. ETH-only p=0.38. This was bin-hunting.
+- SOL band widening to [0.33, 0.38): bin-hunting on n=50 in [0.35,0.38). Collect more data first.
+
+**Files changed:** `main.py`, `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`. Reference docs: `COWORK_REVIEW_2026-05-05.md`, `COWORK_REVIEW_2026-05-05_OPUS.md`.
+
+---
+
 ## v1.26c — 2026-05-03
 **HOTFIX: Corrected v1.26a cross-window filter band edges**
 

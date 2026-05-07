@@ -607,7 +607,15 @@ def run_5m_loop(
                         if cb and _settled:
                             cb.record_trade(_settled.pnl_usd)
                     else:
-                        exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
+                        # v1.28: PAPER must price TP exits at exactly pos.take_profit (matching
+                        # LIVE's GTC SELL fill semantics). Previously PAPER booked at cur_up,
+                        # which by definition is >= take_profit when the TP condition fires —
+                        # over-stating PAPER pnl by ~$0.20-$0.30/winning trade. This was the
+                        # primary source of the measured "execution drag" (Cowork May 5 audit).
+                        if reason == "take_profit":
+                            exit_price = pos.take_profit
+                        else:
+                            exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
                         trade = engine.close(pos_id, exit_price, reason, price_60s_after_entry=p60_after)
                         if cb and trade:
                             cb.record_trade(trade.pnl_usd)

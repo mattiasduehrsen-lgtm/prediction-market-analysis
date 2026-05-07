@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-06 (v1.27)
+**Last updated:** 2026-05-06 (v1.28)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,11 +11,13 @@
 
 ---
 
-## Current active strategy (as of v1.27 — 2026-05-06)
+## Current active strategy (as of v1.28 — 2026-05-06)
 
-**LIVE configuration changed v1.27:** BTC fully disabled on LIVE (BTC DOWN was already off v1.21; BTC UP added to disable list). LIVE now runs ETH and SOL only. PAPER continues to run all three.
+**v1.28 — Execution-drag root cause:** Code audit revealed the measured -$0.45/trade LIVE-vs-PAPER drag was primarily PAPER over-reporting wins, not LIVE underperforming. Three fixes applied: PAPER TP exit price → `pos.take_profit` (was `cur_up`); PAPER share count → 95.5% of naive (was 100%); LIVE wallet-empty → `market_resolved` (was preserving original reason). After fixes: historical PAPER MR-15m EV +$0.12 becomes retroactively ~-$0.20 — **strategy was never positive-EV at $5 LIVE size**. Going forward, PAPER and LIVE should converge.
 
-LIVE remains paused via `paused.live.flag` pending root-cause investigation of execution drag (matched-pairs LIVE-vs-PAPER drag of -$0.36 to -$0.55/trade across BTC/ETH, t<-2.5).
+**v1.27 — BTC off LIVE:** BTC DOWN already disabled v1.21; BTC UP disabled this version. LIVE = ETH + SOL only. PAPER unchanged (all three).
+
+**LIVE remains paused** via `paused.live.flag`. Resume threshold: re-measure matched-pairs drag on n=20+ post-v1.28 trades; if ≤$0.10/trade, the strategy economics are honest and sizing/scope can be reassessed.
 
 
 

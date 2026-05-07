@@ -406,7 +406,13 @@ class Engine5m:
         # Limit (maker) order — no entry fee, full size goes to work
         entry_fee = POSITION_SIZE * MAKER_FEE   # = 0
         net_investment = POSITION_SIZE - entry_fee
-        shares = net_investment / entry_price
+        # v1.28: model the ~4.5% wallet-fill discount LIVE actually experiences.
+        # Polymarket's API `size_matched` over-reports by ~4-5% vs actual wallet
+        # balance — see live_engine_5m.py:406-409 (v1.11 reconciliation logic).
+        # PAPER previously assumed full POSITION_SIZE/entry_price, over-stating
+        # share count and pnl by ~$0.10/trade vs what LIVE realizes.
+        PAPER_FILL_DISCOUNT = 0.955
+        shares = round((net_investment / entry_price) * PAPER_FILL_DISCOUNT, 2)
 
         pos = Position5m(
             position_id=str(uuid.uuid4())[:8],

@@ -891,12 +891,16 @@ class LiveEngine5m:
 
         # If wallet is essentially empty, the market likely resolved and shares
         # were redeemed (or we never had them). Close out without trying to SELL.
+        # v1.28: rewrite exit_reason to "market_resolved" — preserving the original
+        # `hard_stop_floor`/`soft_exit_stalled`/etc. was misleading data analysis.
+        # The actual economic event here is market resolution, not a stop-loss fill.
         if exit_size < 0.01:
             print(
                 f"[LIVE5M] {position_id} wallet empty (balance={exit_size:.4f}) — "
-                f"shares already redeemed or never received. Settling as {exit_reason}."
+                f"shares already redeemed or never received. Was {exit_reason}, "
+                f"reclassifying as market_resolved."
             )
-            return self._settle_exit(position_id, 0.0, exit_reason, price_60s_after_entry)
+            return self._settle_exit(position_id, 0.0, "market_resolved", price_60s_after_entry)
 
         if exit_size < MIN_SHARES:
             # Below Polymarket's minimum order — can't sell, just close out.

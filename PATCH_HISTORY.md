@@ -2,6 +2,52 @@
 
 ---
 
+## v1.28 — 2026-05-06
+**Execution-drag root cause: PAPER over-reporting, NOT LIVE underperforming**
+
+Code audit of `live_engine_5m.py` and `engine_5m.py` (v1.27 left LIVE paused pending this investigation) found the measured -$0.36 to -$0.55/trade LIVE-vs-PAPER drag is mostly a PAPER pnl over-statement, not a LIVE execution problem. Three fixes:
+
+### Fix 1 — TP exit price: PAPER → `pos.take_profit` (was `cur_up`)
+**File:** `main.py` close-position branch (PAPER path)
+
+PAPER booked TP exits at `cur_up` (the just-crossed observed price), which is by definition `>= take_profit` when the TP condition fires. With 1-2s poll cadence and price crossing 0.60, PAPER often recorded 0.61-0.63. LIVE's GTC SELL rests at exactly `pos.take_profit` (0.60) and fills there. On a 12.24-share trade, that's $0.25-$0.37 over-stated per winning trade — explaining the bulk of measured drag.
+
+```python
+# v1.28
+if reason == "take_profit":
+    exit_price = pos.take_profit         # match LIVE's GTC limit fill
+else:
+    exit_price = cur_up if pos.side == "UP" else (1.0 - cur_up)
+```
+
+### Fix 2 — Share count: PAPER models 4.5% wallet-fill discount
+**File:** `src/bot/engine_5m.py` `open()` method
+
+LIVE actually receives ~4.5% fewer shares than `POSITION_SIZE / entry_price` because Polymarket's API `size_matched` over-reports vs wallet balance (documented in `live_engine_5m.py:406-409`, v1.11 reconciliation). PAPER didn't model this. ~$0.10/trade over-statement.
+
+```python
+PAPER_FILL_DISCOUNT = 0.955   # observed wallet/expected ratio (v1.11)
+shares = round((net_investment / entry_price) * PAPER_FILL_DISCOUNT, 2)
+```
+
+### Fix 3 — LIVE wallet-empty path: rewrite `exit_reason` to `market_resolved`
+**File:** `src/bot/live_engine_5m.py` `place_exit()` wallet-empty branch
+
+When position resolves against us (token redeemed for $0 by the exchange) before the FOK can fill, the wallet is empty. The code settled at exit_price=0.0 but preserved the original exit_reason (`hard_stop_floor`, `soft_exit_stalled`, etc.) — distorting exit-reason analytics. The orderbook-gone branch correctly rewrote to `market_resolved`; this branch did not. Now both do.
+
+### Implications
+
+The "LIVE EV is worse than PAPER EV" framing was largely an artifact. With these fixes:
+- Historical PAPER MR-15m EV +$0.12/trade becomes retroactively ~-$0.20/trade once the TP/share corrections are accounted for. **The strategy was never positive-EV at $5 LIVE size.**
+- Going forward, PAPER and LIVE should converge to within ~$0.10/trade.
+- BTC remains off LIVE (v1.27 decision is unchanged).
+- LIVE remains paused. Resume threshold: re-measure matched-pairs drag on n=20+ post-v1.28 trades; if ≤$0.10/trade, the strategy economics are honest and we can reassess sizing.
+
+### Files changed
+`main.py`, `src/bot/engine_5m.py`, `src/bot/live_engine_5m.py`, `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`. Reference: `EXECUTION_DRAG_FINDINGS.md`.
+
+---
+
 ## v1.27 — 2026-05-06
 **Disable BTC on LIVE — execution-drag-driven decision**
 

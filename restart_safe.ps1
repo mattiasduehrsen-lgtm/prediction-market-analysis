@@ -11,7 +11,7 @@
 $ErrorActionPreference = "Continue"
 $pauseFlag = "C:\Users\matti\Desktop\prediction-market-analysis\output\5m_live\paused.live.flag"
 
-Write-Host "=== restart_safe.ps1 — $(Get-Date) ===" -ForegroundColor Cyan
+Write-Host "=== restart_safe.ps1 - $(Get-Date) ===" -ForegroundColor Cyan
 
 # 1. Capture LIVE pause state so we can verify it's preserved
 $wasPaused = Test-Path $pauseFlag

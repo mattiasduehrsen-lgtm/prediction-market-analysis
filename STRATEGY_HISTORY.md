@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-06 (v1.28)
+**Last updated:** 2026-05-07 (v1.29)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,13 +11,15 @@
 
 ---
 
-## Current active strategy (as of v1.28 — 2026-05-06)
+## Current active strategy (as of v1.29 — 2026-05-07)
 
-**v1.28 — Execution-drag root cause:** Code audit revealed the measured -$0.45/trade LIVE-vs-PAPER drag was primarily PAPER over-reporting wins, not LIVE underperforming. Three fixes applied: PAPER TP exit price → `pos.take_profit` (was `cur_up`); PAPER share count → 95.5% of naive (was 100%); LIVE wallet-empty → `market_resolved` (was preserving original reason). After fixes: historical PAPER MR-15m EV +$0.12 becomes retroactively ~-$0.20 — **strategy was never positive-EV at $5 LIVE size**. Going forward, PAPER and LIVE should converge.
+**v1.29 — ETH off LIVE.** Retroactive application of v1.28's corrections to n=693 historical MR-15m PAPER trades reveals the "+$0.12 PAPER EV" baseline was entirely an artifact. Corrected EV: ETH UP -$0.43 (n=145), ETH DOWN -$0.49 (n=123), SOL UP +$0.53 (n=74, only +EV segment), BTC UP -$1.05. Same risk-management logic as v1.27 BTC disable. **LIVE now runs SOL only.** ETH continues on PAPER for data collection. See `V1_28_RETROACTIVE_FINDINGS.md`.
 
-**v1.27 — BTC off LIVE:** BTC DOWN already disabled v1.21; BTC UP disabled this version. LIVE = ETH + SOL only. PAPER unchanged (all three).
+**v1.28 — Execution-drag root cause:** Code audit revealed the measured -$0.45/trade LIVE-vs-PAPER drag was primarily PAPER over-reporting wins. Three fixes: PAPER TP exit price → `pos.take_profit` (was `cur_up`); PAPER share count → 95.5% of naive (was 100%); LIVE wallet-empty → `market_resolved` (was preserving original reason).
 
-**LIVE remains paused** via `paused.live.flag`. Resume threshold: re-measure matched-pairs drag on n=20+ post-v1.28 trades; if ≤$0.10/trade, the strategy economics are honest and sizing/scope can be reassessed.
+**v1.27 — BTC off LIVE:** BTC DOWN already disabled v1.21; BTC UP disabled this version.
+
+**LIVE remains paused.** No positive-EV configuration confirmed at meaningful sample size. SOL UP's +$0.53/trade is the only +EV segment but n=74 is borderline. Next session should consider strategy pivot vs continuing data collection.
 
 
 

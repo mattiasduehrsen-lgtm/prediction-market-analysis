@@ -1172,9 +1172,20 @@ if __name__ == "__main__":
             #     Filter band still [0.33, 0.35] (NOT widened — Opus disagreed).
             #   - ETH kept on LIVE; PAPER edge marginally clears slippage at $5 size.
             #     Increase to $15-20 only after execution-drag root cause is identified.
+            # v1.29 (retroactive v1.28-corrected analysis on n=693 MR-15m PAPER trades):
+            #   The "+$0.12/trade PAPER edge" was entirely PAPER over-statement of TP wins
+            #   (~$2.07/winning trade). Corrected EV by segment:
+            #     ETH UP   n=145, EV=-$0.43/trade  (was +$0.87)
+            #     ETH DOWN n=123, EV=-$0.49/trade  (was +$0.61)
+            #     SOL UP   n= 74, EV=+$0.53/trade  (was +$1.72)  ← only +EV segment
+            #     BTC UP   n=194, EV=-$1.05/trade  (already off LIVE)
+            #   ETH t-stat vs zero: -0.71 (not significant, but point estimate firmly negative).
+            #   Same risk-management logic as v1.27 BTC disable: negative point estimate at
+            #   meaningful n is sufficient to take a market off LIVE while paused.
+            #   LIVE now runs SOL only (SOL UP). Continue ETH on PAPER for data collection.
             _configs = [
                 # ("BTC", "15m", "mean_reversion"),  # v1.27: disabled on LIVE
-                ("ETH", "15m", "mean_reversion"),
+                # ("ETH", "15m", "mean_reversion"),  # v1.29: disabled on LIVE
                 ("SOL", "15m", "mean_reversion"),
             ]
         _setup_logging()

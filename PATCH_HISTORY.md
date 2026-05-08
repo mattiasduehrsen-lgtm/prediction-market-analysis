@@ -2,6 +2,50 @@
 
 ---
 
+## v1.29 — 2026-05-07
+**ETH disabled on LIVE — corrected baseline shows no positive-EV configuration except SOL UP**
+
+Retroactive application of v1.28's accounting corrections (TP exit at exact `take_profit`, share count × 0.955) to all n=693 historical MR-15m PAPER trades. Method: `analyze_v1_28_retro.py`.
+
+### The headline finding
+
+The "+$0.12/trade PAPER EV" baseline that drove the entire v1.27 + v1.28 decision tree was entirely an artifact of PAPER over-stating TP wins. Corrected EV by segment:
+
+| Segment | n | Old EV | v1.28 corrected EV |
+|---|---|---|---|
+| MR-15m all | 693 | +$0.12 | **-$0.98** |
+| ETH UP | 145 | +$0.87 | **-$0.43** |
+| ETH DOWN | 123 | +$0.61 | **-$0.49** |
+| **SOL UP** | **74** | **+$1.72** | **+$0.53** |
+| BTC UP | 194 | +$0.05 | -$1.05 |
+
+TP-win detail: avg recorded `exit_price` 0.668 vs avg `take_profit` 0.644 → ~2.4¢ gap → **$2.07/winning-trade overstatement**. This single correction explains the bulk of the apparent LIVE-vs-PAPER drag.
+
+### Decision
+
+LIVE configuration:
+- BTC: off (v1.21 + v1.27)
+- ETH: **off this version** — same risk-management logic as v1.27 BTC disable (negative point estimate at meaningful n)
+- SOL: stays eligible — only segment with corrected positive EV (+$0.53/trade, n=74, marginal)
+
+ETH stays on PAPER for data collection. ETH t-stat=-0.71 — not statistically negative, just point-estimate negative. Could be noise. Decision is reversible.
+
+### Implications for next steps
+
+The plan was: wait for ~50-100 post-v1.28 PAPER trades to confirm corrections worked, then resume LIVE if PAPER ETH still showed edge. **This is short-circuited:** PAPER ETH was never +EV under honest accounting; new ETH PAPER trades won't change that.
+
+Next session should consider:
+1. Continue PAPER on all assets to grow SOL UP's n
+2. Pivot the strategy hypothesis (different markets, time horizons, ML)
+3. Accept the bot as a data-collection / learning exercise
+
+The bot does not currently have confirmed positive edge at meaningful sample size. The honest framing matters.
+
+### Files changed
+`main.py` (multi-live config), `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`. New: `V1_28_RETROACTIVE_FINDINGS.md`, `analyze_v1_28_retro.py`.
+
+---
+
 ## v1.28 — 2026-05-06
 **Execution-drag root cause: PAPER over-reporting, NOT LIVE underperforming**
 

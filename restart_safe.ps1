@@ -1,4 +1,4 @@
-# restart_safe.ps1 — clean restart of all three bot tasks on the laptop
+# restart_safe.ps1 - clean restart of all three bot tasks on the laptop
 #
 # Run on the laptop (or via SSH) to restart PolyBotPaper + PolyBot + PolyDashboard
 # WITHOUT orphaning cmd.exe watchdogs (the bug that caused PAPER to die silently

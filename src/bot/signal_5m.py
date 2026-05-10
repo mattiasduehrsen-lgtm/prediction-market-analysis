@@ -17,6 +17,7 @@ from src.bot.market_5m import (
     BTC_SKIP_RATE, BTC_MAGNITUDE_MAX, MAX_SPREAD, MIN_LIQUIDITY,
     MOMENTUM_ENTRY_WINDOW, MOMENTUM_MIN_PREV_MOVE, MOMENTUM_ENABLED,
     CROSS_WINDOW_MIN, CROSS_WINDOW_MAX,
+    MIN_LIQUIDITY_BY_WINDOW, ENTRY_MIN_BY_WINDOW, ENTRY_MAX_BY_WINDOW,  # v1.31: per-window
 )
 
 
@@ -41,8 +42,10 @@ def should_enter(
     if secs < min_seconds:
         return False, "", 0.0
 
-    if market.liquidity < MIN_LIQUIDITY:
-        print(f"[SIGNAL] Skip — liquidity ${market.liquidity:,.0f} < ${MIN_LIQUIDITY:,} (thin market)")
+    # v1.31: per-window liquidity floor (4h markets are thinner than 15m).
+    min_liq = MIN_LIQUIDITY_BY_WINDOW.get(market.window, MIN_LIQUIDITY)
+    if market.liquidity < min_liq:
+        print(f"[SIGNAL] Skip — liquidity ${market.liquidity:,.0f} < ${min_liq:,} (thin market, {market.window})")
         return False, "", 0.0
 
     # Spread filter: skip when the order book is too wide (illiquid or stale prices).
@@ -56,11 +59,10 @@ def should_enter(
     #   CW_BAND_NEG = (-0.15, -0.02)   — allow
     #   CW_BAND_POS = (+0.02, +0.10)   — allow
     #   CW_DEADZONE = (-0.02, +0.02)   — block (no BTC impulse → no edge)
-    # v1.26a mistakenly used +0.03 (from old ETH-only v1.22 filter) and -0.10 instead of
-    # the Cowork-validated +0.02 and -0.15. That blocked all windows with cw in (+0.02,+0.03)
-    # (BTC cw was reading +0.022% → zero trades for 24h).
-    # cross_window=0.0 means no Chainlink data yet — pass through.
-    if cross_window_pct != 0.0:
+    # v1.31 (2026-05-10): the band thresholds were tuned for 15m windows (BTC's natural 15m
+    # drift is small). For 4h, BTC's natural 4h drift is much wider — these thresholds
+    # become structurally wrong. Skip the cw filter entirely on 4h to gather fresh data.
+    if cross_window_pct != 0.0 and market.window != "4h":
         in_neg_range = -0.15 <= cross_window_pct <= -0.02
         in_pos_range = +0.02 <= cross_window_pct <= +0.10
         if not (in_neg_range or in_pos_range):
@@ -73,7 +75,10 @@ def should_enter(
     else:
         side, price = "DOWN", market.down_price
 
-    if price < ENTRY_MIN or price > ENTRY_MAX:
+    # v1.31: per-window entry band (4h uses wider [0.28, 0.45]).
+    emin = ENTRY_MIN_BY_WINDOW.get(market.window, ENTRY_MIN)
+    emax = ENTRY_MAX_BY_WINDOW.get(market.window, ENTRY_MAX)
+    if price < emin or price > emax:
         return False, "", 0.0
 
     # ── Asset-specific filters (Cowork analysis) ──────────────────────────
@@ -83,7 +88,9 @@ def should_enter(
     # BTC DOWN: negative EV across all price bands (t-test p=0.028, 95% CI entirely negative).
     # Loses even in ranging weeks (W16: 48.8% WR, -$85) — structural, not regime-dependent.
     # Cowork 582-trade analysis 2026-04-22. Reconsider monthly.
-    if asset == "BTC" and side == "DOWN":
+    # v1.31: only applies to 5m/15m. The "all price bands" finding is from 15m data;
+    # for 4h experiment, we collect BTC DOWN data fresh.
+    if asset == "BTC" and side == "DOWN" and window in ("5m", "15m"):
         print(f"[SIGNAL] Skip BTC DOWN — negative EV (37% WR, -$327 on 161 trades, p=0.028)")
         return False, "", 0.0
 

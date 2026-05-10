@@ -1,9 +1,10 @@
 """
-Polymarket Up/Down market fetcher — supports 5m and 15m windows.
+Polymarket Up/Down market fetcher — supports 5m, 15m, and 4h windows.
 
 Slug format:
   {asset}-updown-5m-{window_start_ts}   (e.g. btc-updown-5m-1775219400)
   {asset}-updown-15m-{window_start_ts}  (e.g. sol-updown-15m-1775219400)
+  {asset}-updown-4h-{window_start_ts}   (e.g. btc-updown-4h-1778414400)  [v1.31]
 
 Window ends = window_start + window_seconds.
 Window starts are at multiples of window_seconds (Unix epoch).
@@ -25,6 +26,7 @@ CLOB_API  = "https://clob.polymarket.com"
 WINDOW_SECONDS: dict[str, int] = {
     "5m":  300,
     "15m": 900,
+    "4h":  14400,   # v1.31: PAPER-only 4h experiment (Option 1 strategy pivot)
 }
 
 # Slug prefixes keyed by (window, asset)
@@ -41,6 +43,11 @@ SLUG_PREFIXES: dict[str, dict[str, str]] = {
         "SOL": "sol-updown-15m",
         "XRP": "xrp-updown-15m",
     },
+    "4h": {
+        "BTC": "btc-updown-4h",
+        "ETH": "eth-updown-4h",
+        "SOL": "sol-updown-4h",
+    },
 }
 
 # ── Mean-reversion strategy constants (5m) ────────────────────────────────────
@@ -55,6 +62,28 @@ BTC_SKIP_RATE    = float(os.environ.get("BTC_SKIP_RATE", "50.0"))  # $/min BTC m
 BTC_MAGNITUDE_MAX = 0.05  # max Chainlink % move from window start to allow entry
 MAX_SPREAD       = 0.04   # 4¢ — skip if best_ask - best_bid is wider (illiquid/stale book)
 MIN_LIQUIDITY    = 15_000  # Cowork: <10k=53.4% WR, 10-20k=45.4%, >=20k=29.1%; set to 15k to exclude danger band
+
+# v1.31: per-window MIN_LIQUIDITY override. 4h markets carry $3-13k typical liquidity.
+# 15k floor would reject every 4h market — lower floor for the 4h experiment.
+MIN_LIQUIDITY_BY_WINDOW: dict[str, int] = {
+    "5m":  MIN_LIQUIDITY,
+    "15m": MIN_LIQUIDITY,
+    "4h":  2_000,   # ~lowest reasonable (BTC 4h floor was ~$5k, SOL 4h ~$3k)
+}
+
+# v1.31: per-window entry band override. 15m bands are Cowork-tuned; 4h is exploratory.
+# A 4h window has bigger natural price range, so wider entry bands make more sense as
+# a starting point. Will tighten based on data.
+ENTRY_MIN_BY_WINDOW: dict[str, float] = {
+    "5m":  ENTRY_MIN,
+    "15m": ENTRY_MIN,
+    "4h":  0.28,
+}
+ENTRY_MAX_BY_WINDOW: dict[str, float] = {
+    "5m":  ENTRY_MAX,
+    "15m": ENTRY_MAX,
+    "4h":  0.45,
+}
 
 # ── Momentum strategy constants ───────────────────────────────────────────────
 MOMENTUM_ENTRY_WINDOW = 30   # seconds — enter within first 30s of window only

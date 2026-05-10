@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-10 (v1.30)
+**Last updated:** 2026-05-10 (v1.31)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,7 +11,13 @@
 
 ---
 
-## Current active strategy (as of v1.30 — 2026-05-10)
+## Current active strategy (as of v1.31 — 2026-05-10)
+
+**v1.31 — 4h PAPER experiment (Option 1 strategy pivot).** Added 4h Up/Down markets on PAPER for BTC/ETH/SOL. Same `{asset}-updown-4h-{epoch}` slug family as existing 5m/15m. Per-window thresholds: MIN_LIQUIDITY $2k (was $15k), entry band [0.28, 0.45] (was [0.32, 0.40]), soft_exit 1h before close, hard_stop only in last hour. cw filter and BTC DOWN filter disabled on 4h to gather fresh data. multi-live config unchanged — zero LIVE impact. 2-week experiment; ~18 trades/day expected; reach n=200 in ~2 weeks for first Cowork pass.
+
+**ML feature exploration (2026-05-10): no learnable signal.** Gradient-boosted classifier on 17 entry-time features across 721 MR-15m PAPER trades (v1.28-corrected pnl): mean 5-fold time-series CV AUC **= 0.496** (chance = 0.50). Critically, every probability threshold from 0.50 to 0.70 produces a predicted-positive subset *worse* than the baseline of taking all trades — at threshold 0.55, predicted-positive OOF EV is -$1.99/trade vs baseline -$0.95/trade. Higher confidence → worse outcomes. The strategy is structurally noise on these features, not poorly-filtered edge. Reference: `ML_FEATURE_EXPLORATION.md`.
+
+This is decisive evidence that the current MR-15m strategy is unsalvageable via filter tuning. v1.30 SOL data collection still running in parallel (might still be informative on n=60-100 fresh trades), but the working assumption is that MR-15m on 15-minute Polymarket Up/Down markets does not have retail-capturable edge after honest accounting. Pivot scoping in `STRATEGY_PIVOT_SCOPING.md` recommends Option 1 (longer-horizon Polymarket markets) as the next experiment.
 
 **v1.30 — Widen SOL UP band on PAPER.** 48h post-v1.29 produced 21 MR-15m PAPER trades but ZERO SOL UP (band [0.33, 0.35] unreachable in current market). Plan to grow SOL UP n past 200 was infeasible at current rate. Widened PAPER ceiling to 0.40; LIVE stays at 0.35. Implementation: `should_enter()` gets `is_live` kwarg.
 

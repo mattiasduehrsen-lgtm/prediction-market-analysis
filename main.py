@@ -298,16 +298,24 @@ def run_5m_loop(
     window_seconds = WINDOW_SECONDS.get(window, 300)
     # Mean-reversion: enter in first 60s of window regardless of window size
     mr_min_seconds = window_seconds - 60
-    # Soft exit scales with window: 5m→115s, 15m→420s
-    # Cowork 2026-04-18: winners resolve at median 256s; losers that haven't
-    # reverted by minute 10 almost never do. 420s triggers soft-exit 2 min
-    # earlier than the old 300s setting, cutting extended loser hold time.
-    soft_exit_secs        = 115 if window == "5m" else 420
-    # Hard-stop gate: for 15m windows only fire in last 4 minutes (240s remaining).
-    # Cowork 2026-04-18: the gate was documented but never wired — hard-stops were
-    # firing at median 45% through the window (minute 7), same as the 5m bot.
-    # Gating it preserves recovery time for positions that are down early.
-    hard_stop_max_remaining = 240.0 if window == "15m" else float("inf")
+    # v1.31: per-window soft-exit and hard-stop scales.
+    # 5m→115s soft_exit; 15m→420s; 4h→3600s (last hour). Cowork 2026-04-18: the
+    # 15m soft-exit was tuned because winners resolve at median 256s. For 4h we
+    # don't have that data yet — start with "if reversion hasn't happened in
+    # the first 3 hours, exit." Re-tune after first Cowork pass on 4h trades.
+    if window == "5m":
+        soft_exit_secs = 115
+    elif window == "15m":
+        soft_exit_secs = 420
+    else:                            # 4h and any future longer windows
+        soft_exit_secs = 3600        # exit in the last 1 hour if stalled
+    # Hard-stop gate: 15m fires only in last 240s. 4h experiment: only in last 1h.
+    if window == "15m":
+        hard_stop_max_remaining = 240.0
+    elif window == "4h":
+        hard_stop_max_remaining = 3600.0
+    else:
+        hard_stop_max_remaining = float("inf")
 
     # Resolution scalp: hold to force_exit_time (~5s remaining) only.
     # Disable soft-exit and hard-stop — the position resolves within 60s by design.
@@ -804,7 +812,8 @@ def run_5m_loop(
 
                 else:
                     # ── Mean reversion: buy cheap side in entry window ─────────────────
-                    window_duration  = 900 if window == "15m" else 300
+                    # v1.31: use market.window_seconds (already a property) instead of hardcoded.
+                    window_duration  = market.window_seconds
                     secs_into_window = round(max(0.0, time.time() - (market.window_end_ts - window_duration)), 1)
                     clob_trades_60s  = clob_feed.get_recent_trade_count(lookback_secs=60)
 
@@ -1205,12 +1214,21 @@ if __name__ == "__main__":
                     sys.exit(1)
         else:
             # Default: 15m mean-reversion only (v1.26a killed RS; Cowork May 1 analysis found it was false positive)
+            # v1.31: ADDED 4h on PAPER for the longer-horizon experiment (Option 1 from
+            # STRATEGY_PIVOT_SCOPING.md). 15m kept running for SOL data collection (v1.30).
+            # multi-live default is unchanged (LIVE = SOL 15m only).
             _configs = [
                 # BTC 5m mean_reversion removed: 55 trades, 16% WR, -$217 — negative EV
                 # BTC 5m momentum removed: 102 trades, 31% WR, -$168 (MOMENTUM_ENABLED=False anyway)
                 ("BTC", "15m", "mean_reversion"),
                 ("ETH", "15m", "mean_reversion"),
                 ("SOL", "15m", "mean_reversion"),
+                # v1.31: 4h experiment on PAPER. 6 windows/day per asset. Liquidity floor lowered
+                # to $2k for 4h (15k would reject every market). Entry band [0.28, 0.45] (15m used
+                # [0.32, 0.40]). cw filter and BTC DOWN filter disabled for 4h to gather fresh data.
+                ("BTC", "4h", "mean_reversion"),
+                ("ETH", "4h", "mean_reversion"),
+                ("SOL", "4h", "mean_reversion"),
                 # Resolution scalp: KILLED v1.26a. April 25 finding was false positive at n=55.
                 # With 3x data: all sub-strategies net-negative. Structural payoff asymmetry unsalvageable
                 # (avg_loss/avg_win = 7.7/3.5 → needs 69% WR, actual max 61%). See COWORK_REVIEW_2026-05-01.md.

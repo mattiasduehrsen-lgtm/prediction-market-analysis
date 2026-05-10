@@ -2,6 +2,56 @@
 
 ---
 
+## v1.31 — 2026-05-10
+**4h PAPER experiment (longer-horizon strategy pivot)**
+
+### Why
+
+ML feature exploration on n=721 MR-15m PAPER trades (v1.28-corrected) returned **AUC = 0.496** — statistically indistinguishable from chance. Critically, every probability threshold from 0.50 to 0.70 produced a predicted-positive subset *worse* than baseline. **Higher confidence → worse outcomes.** This is decisive evidence that 15m mean-reversion has no learnable signal in the features captured. Reference: `ML_FEATURE_EXPLORATION.md`.
+
+Per `STRATEGY_PIVOT_SCOPING.md`, the next experiment is Option 1: longer-horizon Polymarket Up/Down markets. Discovery (`OPTION_1_DISCOVERY.md`) confirmed 4h markets exist with `{asset}-updown-4h-{epoch}` pattern — the same family as the existing 5m/15m code. 1h and daily exist but use different slug formats and require new discovery code; deferred until 4h shows signal-or-null.
+
+### What changed
+
+`market_5m.py`:
+- `WINDOW_SECONDS["4h"] = 14400`
+- `SLUG_PREFIXES["4h"]` for BTC/ETH/SOL
+- `MIN_LIQUIDITY_BY_WINDOW["4h"] = 2000` (was 15k for 5m/15m — would reject every 4h market)
+- `ENTRY_MIN_BY_WINDOW["4h"] = 0.28`, `ENTRY_MAX_BY_WINDOW["4h"] = 0.45` (wider than 15m's [0.32, 0.40])
+
+`signal_5m.py`:
+- Liquidity check uses per-window floor
+- Entry band uses per-window edges
+- Cross-window filter **skipped** on 4h (15m-tuned thresholds inappropriate at 4h cadence)
+- BTC DOWN hard-skip **only fires on 5m/15m** (the "negative EV across all bands" finding was 15m-specific)
+
+`main.py`:
+- `soft_exit_secs`: 5m=115, 15m=420, **4h=3600** (last 1h)
+- `hard_stop_max_remaining`: 15m=240s, **4h=3600s**, else inf
+- `window_duration` uses `market.window_seconds` (was hardcoded 900/300)
+- `multi-loop` default adds `("BTC", "4h", ...)`, `("ETH", "4h", ...)`, `("SOL", "4h", ...)`
+- `multi-live` default **unchanged** — LIVE still runs SOL 15m only
+
+### Expected behavior
+
+6 4h windows/day × 3 assets = 18 4h evaluation cycles/day on PAPER. Trade frequency depends on how often the cheap side falls into [0.28, 0.45]. Estimating 10-15 trades/day across all 4h assets initially. Reach n=200 in ~2 weeks for first Cowork pass.
+
+**Live verification at deploy time:** all three 4h markets discovered cleanly:
+- BTC-4h slug=`btc-updown-4h-1778414400`, liq=$5.8k
+- ETH-4h slug=`eth-updown-4h-1778414400`, liq=$9.5k
+- SOL-4h slug=`sol-updown-4h-1778414400`, liq=$3.4k
+
+### What this is NOT
+
+- Not a LIVE deployment of 4h. multi-live config is unchanged. Zero LIVE risk.
+- Not abandonment of 15m PAPER data collection. 15m runs in parallel.
+- Not a commitment to longer-horizon as the pivot — purely a 2-week PAPER experiment to test whether 4h has a different edge profile.
+
+### Files changed
+`main.py`, `src/bot/market_5m.py`, `src/bot/signal_5m.py`, `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`. Reference: `OPTION_1_DISCOVERY.md`, `ML_FEATURE_EXPLORATION.md`, `STRATEGY_PIVOT_SCOPING.md`.
+
+---
+
 ## v1.30 — 2026-05-10
 **Widen SOL UP band on PAPER for data collection (LIVE band unchanged)**
 

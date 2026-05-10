@@ -2,6 +2,53 @@
 
 ---
 
+## v1.32 — 2026-05-10
+**Wire WindowBrain (per-trade Claude reasoner) in advisory-only mode**
+
+User strategic insight: "Successful bots running on these markets exist; we need a strategy that thinks on every trade instead of placing based on different markets hitting or missing." The current architecture is a static filter cascade. Each candidate gets the same heuristic. That doesn't capture context (regime, recent flow, microstructure) that informs whether a specific setup is worth taking.
+
+The codebase already had `src/bot/window_brain.py` (310 lines): a per-trade Claude Haiku reasoner that classifies regime + recent-history performance and returns a continuous edge modifier. It was designed but **never wired into main.py**. Reason for caution: the older `claude_advisor.py` (binary ENTER/SKIP) was disabled because it blocked 96% of in-range windows — wrong mental model.
+
+WindowBrain is structurally different:
+- Continuous modifier `[-0.05, +0.05]`, not binary gate
+- Asks "is mean-reversion working right now?" — does NOT predict direction
+- Maintains rolling history of last 10 resolved trades per asset
+- Uses prompt caching → ~$0.005/day cost
+- Fails open (neutral) on any error
+
+### What this version does
+
+1. Generalized `WindowBrain` to take `(asset, window)` in `__init__` so it can run per-window (was 15m-hardcoded). `sync_from_csv` filters by both. Prompt mentions actual window.
+2. Wired into `main.py` for `mean_reversion` strategy on `15m` and `4h` windows:
+   - Brain initialized once per thread at startup
+   - History synced from `output/5m_trading/trades.csv` at every window transition
+   - `brain.advise()` fires once per entry candidate per window (cached for the rest of the window)
+   - Decision logged via `print()` → bot.log: `[BRAIN] {asset} regime={...} mr_edge={...} modifier=±0.0XX (Nms cache r=X w=X) — {reasoning}`
+3. **Brain output does NOT alter trade entry yet.** Pure observation phase.
+
+### Plan
+
+- **Phase 1 (this version):** Brain advises in observation mode. After 50+ brain-evaluated trades, analyze: did brain's regime classification correlate with realized EV?
+- **Phase 2 (v1.33+, conditional):** If brain signal is real, promote to authoritative. Two ways:
+  - Use `edge_modifier` to dynamically tighten/loosen entry band, or
+  - Set `BRAIN_VETO=true` to let high-modifier (degraded regime) skip entries entirely.
+- **Phase 3 (longer-term):** Replace regime-classifier prompt with full per-trade reasoning agent that returns structured `{enter, tp, sl, size_scalar, confidence, reasoning}`.
+
+### Files changed
+`main.py` (brain init, per-window state, advise call), `src/bot/window_brain.py` (generalized window param), `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
+
+### Configuration
+
+Env (defaults):
+- `ANTHROPIC_API_KEY` — required (already set on laptop)
+- `BRAIN_ENABLED=true`
+- `BRAIN_MODEL=claude-haiku-4-5-20251001`
+- `BRAIN_TIMEOUT=6.0`
+- `BRAIN_HISTORY_LEN=10`
+- `BRAIN_VETO=false` — must stay false in v1.32 (advisory only)
+
+---
+
 ## v1.31 — 2026-05-10
 **4h PAPER experiment (longer-horizon strategy pivot)**
 

@@ -287,6 +287,10 @@ def run_5m_loop(
     from src.bot.signal_5m import should_enter, should_enter_momentum, should_enter_resolution_scalp, should_exit, take_profit_price
     from src.bot.claude_advisor import advise_entry
     from src.bot.chainlink_feed import ChainlinkFeed
+    # v1.32: per-trade reasoning brain. Advisory-only mode — fires once per window per asset,
+    # logs decision to bot.log + brain_log.csv. Does NOT influence trade entry yet.
+    # See window_brain.py. Cost ~$0.005/day with prompt caching.
+    from src.bot.window_brain import WindowBrain, NEUTRAL as BRAIN_NEUTRAL
 
     # Live: default 1s for faster fill detection and exit reactions.
     # Paper: 2s (no real money, save Binance API quota).
@@ -342,6 +346,22 @@ def run_5m_loop(
         engine = Engine5m(tag=f"{asset}-{window}-{strategy}")
         cb = None
 
+    # v1.32: WindowBrain — per-trade reasoning advisor (Claude Haiku, prompt-cached).
+    # Advisory-only at this stage: brain fires once per entry candidate per window,
+    # decision logged but NOT used to alter entry. After 50+ brain-evaluated trades
+    # we'll analyze whether brain advice correlates with EV; if yes, promote in v1.33.
+    # Only enable for MR strategy (not RS or momentum) and for 15m/4h windows.
+    brain: WindowBrain | None = None
+    if strategy == "mean_reversion" and window in ("15m", "4h"):
+        try:
+            brain = WindowBrain(asset, window)
+            from src.bot.engine_5m import TRADES_FILE as PAPER_TRADES_FILE
+            brain.sync_from_csv(PAPER_TRADES_FILE)
+            print(f"[BRAIN] Initialized for {asset}-{window}, history n={len(brain._history)}")
+        except Exception as exc:
+            print(f"[BRAIN] init failed ({exc}) — running without brain")
+            brain = None
+
     from src.bot.tick_logger import TickLogger
     from src.bot.clob_feed import ClobFeed
     from src.bot.market_store import BINANCE_SPOT, flush_all
@@ -393,6 +413,9 @@ def run_5m_loop(
     window_advisor_enter: bool = True   # default ENTER until advisor responds
     window_advisor_consulted: bool = False  # True once advisor has been called this window
     window_advisor_reason: str = ""     # advisor's explanation text (for skip log)
+    # v1.32: WindowBrain per-window state. Advised once per entry candidate per window.
+    brain_advised: bool = False
+    brain_advice = BRAIN_NEUTRAL
 
     while True:
         iteration += 1
@@ -457,6 +480,15 @@ def run_5m_loop(
                 window_advisor_enter = True
                 window_advisor_consulted = True   # disabled: advisor blocks 96% of in-range windows (wrong mental model for mean-reversion)
                 window_advisor_reason = ""
+                # v1.32: brain reset + history sync (cheap — reads tail of trades.csv).
+                brain_advised = False
+                brain_advice = BRAIN_NEUTRAL
+                if brain is not None:
+                    try:
+                        from src.bot.engine_5m import TRADES_FILE as _TF
+                        brain.sync_from_csv(_TF)
+                    except Exception as _exc:
+                        print(f"  [BRAIN] sync error: {_exc}")
 
                 cl = feed.get_state()
                 secs = market.seconds_remaining
@@ -828,6 +860,25 @@ def run_5m_loop(
                         clob_trades_60s=clob_trades_60s,
                         is_live=live,                   # v1.30: SOL band width depends on this
                     )
+
+                    # v1.32: WindowBrain per-trade reasoning. Fires once per entry candidate
+                    # per window (cached). Advisory-only — does NOT alter the entry decision.
+                    # We log the brain's regime classification + reasoning so we can later
+                    # analyze whether brain output correlates with realized EV.
+                    if do_enter and brain is not None and not brain_advised:
+                        try:
+                            brain_advice = brain.advise(
+                                entry_price=entry_price,
+                                side=side,
+                                edge=0.0,                  # MR has no Binance-implied edge
+                                rv_std=0.0,                # not currently computed
+                                cross_window_pct=cross_window_pct,
+                                secs_remaining=market.seconds_remaining,
+                            )
+                            brain_advised = True
+                        except Exception as _exc:
+                            print(f"  [BRAIN] advise error: {_exc}")
+                            brain_advised = True   # don't retry this window
 
                     if do_enter:
                         now_ts = time.time()

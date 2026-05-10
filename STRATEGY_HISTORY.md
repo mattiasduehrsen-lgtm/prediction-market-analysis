@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-10 (v1.31)
+**Last updated:** 2026-05-10 (v1.32)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,7 +11,9 @@
 
 ---
 
-## Current active strategy (as of v1.31 — 2026-05-10)
+## Current active strategy (as of v1.32 — 2026-05-10)
+
+**v1.32 — WindowBrain wired in advisory-only mode.** Per-trade Claude Haiku reasoner that classifies regime + recent-history quality and returns continuous edge modifier. Fires once per entry candidate per (asset, window). Output LOGGED to bot.log but does not alter trade entry yet (observation phase). Plan: collect 50+ brain-evaluated trades, analyze whether brain regime calls correlate with realized EV; if yes, promote brain to authoritative in v1.33. Cost ~$0.005/day with prompt caching. Architectural shift toward "thinks on every trade" per user strategic insight: static filter cascades cannot capture per-window context (regime, microstructure, recent flow).
 
 **v1.31 — 4h PAPER experiment (Option 1 strategy pivot).** Added 4h Up/Down markets on PAPER for BTC/ETH/SOL. Same `{asset}-updown-4h-{epoch}` slug family as existing 5m/15m. Per-window thresholds: MIN_LIQUIDITY $2k (was $15k), entry band [0.28, 0.45] (was [0.32, 0.40]), soft_exit 1h before close, hard_stop only in last hour. cw filter and BTC DOWN filter disabled on 4h to gather fresh data. multi-live config unchanged — zero LIVE impact. 2-week experiment; ~18 trades/day expected; reach n=200 in ~2 weeks for first Cowork pass.
 

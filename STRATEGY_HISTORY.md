@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-07 (v1.29)
+**Last updated:** 2026-05-10 (v1.30)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,7 +11,9 @@
 
 ---
 
-## Current active strategy (as of v1.29 — 2026-05-07)
+## Current active strategy (as of v1.30 — 2026-05-10)
+
+**v1.30 — Widen SOL UP band on PAPER.** 48h post-v1.29 produced 21 MR-15m PAPER trades but ZERO SOL UP (band [0.33, 0.35] unreachable in current market). Plan to grow SOL UP n past 200 was infeasible at current rate. Widened PAPER ceiling to 0.40; LIVE stays at 0.35. Implementation: `should_enter()` gets `is_live` kwarg.
 
 **v1.29 — ETH off LIVE.** Retroactive application of v1.28's corrections to n=693 historical MR-15m PAPER trades reveals the "+$0.12 PAPER EV" baseline was entirely an artifact. Corrected EV: ETH UP -$0.43 (n=145), ETH DOWN -$0.49 (n=123), SOL UP +$0.53 (n=74, only +EV segment), BTC UP -$1.05. Same risk-management logic as v1.27 BTC disable. **LIVE now runs SOL only.** ETH continues on PAPER for data collection. See `V1_28_RETROACTIVE_FINDINGS.md`.
 

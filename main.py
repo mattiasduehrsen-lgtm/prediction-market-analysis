@@ -817,6 +817,7 @@ def run_5m_loop(
                         cross_window_pct=cross_window_pct,
                         secs_into_window=secs_into_window,
                         clob_trades_60s=clob_trades_60s,
+                        is_live=live,                   # v1.30: SOL band width depends on this
                     )
 
                     if do_enter:

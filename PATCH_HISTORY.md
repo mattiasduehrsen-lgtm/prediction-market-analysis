@@ -2,6 +2,45 @@
 
 ---
 
+## v1.30 — 2026-05-10
+**Widen SOL UP band on PAPER for data collection (LIVE band unchanged)**
+
+48h after the v1.29 deploy: 21 new MR-15m PAPER trades total, **ZERO SOL UP**. Of 246 SOL windows skipped post-v1.28: 51% `price_too_high` (>0.35), 33% `btc_filter`, 16% `price_too_low` (<0.33). The narrow [0.33, 0.35] band is functionally unreachable in current market conditions.
+
+The plan to "grow SOL UP n past 200" before re-evaluating LIVE was structurally broken at the current rate. Three options were considered: (a) widen SOL band, (b) wait longer (rate ≈ 0/month), (c) pivot strategy. Going with (a) on PAPER only — LIVE band stays at [0.33, 0.35] until the wider band is shown to be +EV under v1.28 corrected accounting.
+
+### Implementation
+
+`should_enter()` gets a new `is_live: bool = False` kwarg. The SOL ceiling is then:
+- LIVE (`is_live=True`):  0.35  (unchanged from v1.21)
+- PAPER (`is_live=False`): 0.40  (widened by 5¢)
+
+Floor stays 0.33 in both cases. SOL DOWN remains hard-disabled.
+
+```python
+sol_ceiling = 0.35 if is_live else 0.40
+```
+
+### Expected effect
+
+Estimating from May 5 data: [0.35, 0.38) had n=50 over the data history (vs n=16 for [0.33, 0.35)). Widening should give us roughly 3-4x the SOL UP trade rate on PAPER. With the v1.28 corrected accounting now applied to all new entries, we'll have a clean dataset for evaluating whether [0.35, 0.40] is also +EV.
+
+### Risk
+
+LIVE behavior unchanged (LIVE config = SOL only with [0.33, 0.35] ceiling). PAPER going wider only generates more data. If the wider band turns out to be -EV under correction, we narrow back. Cost of being wrong: zero (PAPER only).
+
+### What this is NOT
+
+This is NOT a re-enable of any LIVE asset. LIVE remains paused, BTC and ETH remain off LIVE, SOL band on LIVE remains narrow. v1.30 is purely a PAPER data-collection change.
+
+### Files changed
+`main.py` (passes `is_live=live` to `should_enter()`), `src/bot/signal_5m.py` (SOL ceiling depends on `is_live`), `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
+
+### Reference
+`V1_28_RETROACTIVE_FINDINGS.md`, `analyze_postv129.py` (the 48h analysis that motivated this change).
+
+---
+
 ## v1.29 — 2026-05-07
 **ETH disabled on LIVE — corrected baseline shows no positive-EV configuration except SOL UP**
 

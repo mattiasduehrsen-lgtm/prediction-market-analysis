@@ -5,6 +5,6 @@ Bump PATCH and add a line to PATCH_NOTES whenever a meaningful change is deploye
 The dashboard reads this via /api/version.
 """
 
-PATCH       = "v1.29"
-PATCH_DATE  = "2026-05-07"
-PATCH_NOTES = "ETH disabled on LIVE. Retroactive application of v1.28 corrections to n=693 historical MR-15m PAPER trades reveals the '+$0.12/trade PAPER EV' baseline was entirely the over-statement artifact (TP wins recorded ~2.4 cents above the actual TP fill, ~$2/winning trade overstatement). Corrected per-segment EV: ETH UP -$0.43 (n=145), ETH DOWN -$0.49 (n=123), SOL UP +$0.53 (n=74, only +EV segment), BTC UP -$1.05 (already off). ETH t-stat=-0.71 (insignificant but firmly negative). LIVE now runs SOL only. ETH stays on PAPER for continued data collection. LIVE remains paused. See V1_28_RETROACTIVE_FINDINGS.md."
+PATCH       = "v1.30"
+PATCH_DATE  = "2026-05-10"
+PATCH_NOTES = "Widened SOL UP band on PAPER from [0.33, 0.35] to [0.33, 0.40] for data collection. LIVE stays at [0.33, 0.35]. Reason: 48h post-v1.28 produced ZERO SOL UP trades because SOL prices haven't been in the narrow band. Of 246 SOL skipped windows in that period, 51% were price_too_high (>0.35), 33% btc_filter, 16% price_too_low. Plan to grow SOL UP n past 200 was infeasible at current rate. Widening on PAPER lets us collect EV data on [0.35, 0.40] with v1.28 corrected accounting; LIVE stays narrow until we know the wider band is +EV. Implementation: should_enter() gets is_live kwarg; multi-loop passes False, multi-live passes True; SOL ceiling is 0.35 for LIVE, 0.40 for PAPER."

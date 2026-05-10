@@ -29,6 +29,7 @@ def should_enter(
     cross_window_pct: float = 0.0,
     secs_into_window: float = 0.0,    # seconds elapsed since window start
     clob_trades_60s: int = 0,         # CLOB last_trade_price events in last 60s
+    is_live: bool = False,            # v1.30: True for multi-live, False for multi-loop
 ) -> tuple[bool, str, float]:
     """
     Mean-reversion entry: buy the cheap side (ENTRY_MIN–ENTRY_MAX) in the entry window.
@@ -86,8 +87,13 @@ def should_enter(
         print(f"[SIGNAL] Skip BTC DOWN — negative EV (37% WR, -$327 on 161 trades, p=0.028)")
         return False, "", 0.0
 
-    # SOL-15m: DOWN trades are losing (-$73); UP only (+$88). Floor at 0.33 (0.28-0.32 band
-    # too thin, n=5; 0.32-0.35 is the main SOL bucket). Cowork 2026-04-22.
+    # SOL-15m: DOWN trades are losing (-$73); UP only (+$88). Floor at 0.33.
+    # v1.30 (2026-05-10): widened PAPER ceiling from 0.35 to 0.40 for data collection.
+    # The [0.33, 0.35] band is functionally unreachable in current market conditions —
+    # 48h post-v1.28 produced ZERO SOL UP trades. We need data on adjacent buckets to
+    # know if [0.35, 0.40] is also +EV (Cowork May 5: bucket [0.35, 0.38) had +$0.68 EV
+    # on n=50, old accounting). Widening on PAPER is free; LIVE stays at [0.33, 0.35]
+    # until we have honest-accounting data on the wider band.
     if asset == "SOL" and window == "15m":
         if side == "DOWN":
             print(f"[SIGNAL] Skip SOL DOWN — only UP side is profitable (+$88 vs -$73)")
@@ -95,8 +101,9 @@ def should_enter(
         if price < 0.33:
             print(f"[SIGNAL] Skip SOL — entry {price:.3f} < 0.33 (below profitable band)")
             return False, "", 0.0
-        if price > 0.35:
-            print(f"[SIGNAL] Skip SOL — entry {price:.3f} > 0.35 (loses money in high band)")
+        sol_ceiling = 0.35 if is_live else 0.40   # v1.30: PAPER widened for data collection
+        if price > sol_ceiling:
+            print(f"[SIGNAL] Skip SOL — entry {price:.3f} > {sol_ceiling} ({'LIVE narrow' if is_live else 'PAPER wide'} band)")
             return False, "", 0.0
 
     # ETH-15m: 0.30-0.35 band loses $165; 0.35-0.40 zone wins +$40 on 21 trades

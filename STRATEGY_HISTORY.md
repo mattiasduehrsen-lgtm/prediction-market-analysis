@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-10 (v1.32)
+**Last updated:** 2026-05-11 (v1.33)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,7 +11,9 @@
 
 ---
 
-## Current active strategy (as of v1.32 — 2026-05-10)
+## Current active strategy (as of v1.33 — 2026-05-11)
+
+**v1.33 — Brain prompt rewrite #1.** 35h of v1.32 observation surfaced textbook conservatism-bias failure: 95% "degraded" calls, 100% non-negative modifier, 15% used forbidden "skip" language. Same root cause as v1.0 advisor. New prompt explicitly: default is modifier=0; counter LLM conservatism bias actively; baseline EV is -$1/trade so loss clusters are normal; enumerate and forbid the specific anti-patterns observed; tell model to IGNORE edge=0.0 field. STILL advisory-only — no LIVE impact. Reset 80-call observation gate. Per research rules: one more rewrite allowed if this fails; if three prompts fail, kill the brain.
 
 **v1.32 — WindowBrain wired in advisory-only mode.** Per-trade Claude Haiku reasoner that classifies regime + recent-history quality and returns continuous edge modifier. Fires once per entry candidate per (asset, window). Output LOGGED to bot.log but does not alter trade entry yet (observation phase). Plan: collect 50+ brain-evaluated trades, analyze whether brain regime calls correlate with realized EV; if yes, promote brain to authoritative in v1.33. Cost ~$0.005/day with prompt caching. Architectural shift toward "thinks on every trade" per user strategic insight: static filter cascades cannot capture per-window context (regime, microstructure, recent flow).
 

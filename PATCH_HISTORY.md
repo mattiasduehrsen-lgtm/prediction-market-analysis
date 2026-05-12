@@ -2,6 +2,61 @@
 
 ---
 
+## v1.33 — 2026-05-11
+**Brain prompt rewrite #1 — counter conservatism bias**
+
+### Evidence triggering the rewrite
+
+35h of v1.32 observation produced 48 brain calls. The distribution is the textbook conservatism-bias failure mode the research predicted:
+
+| Field | v1.32 distribution | Expected |
+|---|---|---|
+| mr_edge=strong | 0 (0%) | ~25% |
+| mr_edge=normal | 2 (4%) | ~50% |
+| mr_edge=degraded | 39 (95%) | ~25% |
+| modifier mean | +0.029 | ~0.000 |
+| modifier negative | 0 | should exist |
+| modifier positive | 39 | should be balanced |
+| reasoning contains "skip" | 7 (15%) | 0 (forbidden) |
+| reasoning mentions "zero edge" | 18 (38%) | 0 |
+| 4h-vs-15m confusion | 4 | 0 |
+
+Brain has never said "loosen the gate." Brain has never said "regime is strong." Brain's reasoning routinely uses patterns the v1.32 prompt explicitly forbids. This is the same root cause as the v1.0 `claude_advisor.py` failure (96% block rate).
+
+### Rewrite (rewrite #1 of allowed 2)
+
+`_SYSTEM` prompt v2 changes:
+
+1. **modifier=0.00 is explicit default**, not the "neither" fallback. "Most calls should return modifier=0.00."
+2. **Anti-conservatism warning**: "LLMs in trading consistently exhibit conservatism bias. Counter this bias actively."
+3. **Baseline anchor**: "This bot's historical EV is approximately -$1/trade. Loss clusters and negative cumulative PnL are NORMAL background noise, not regime alarms."
+4. **NORMAL reasoning examples** (v1 had zero — only STRONG and DEGRADED): "5/10 wins with mixed exits. Typical noisy conditions." / "No history yet — default neutral."
+5. **Anti-patterns enumerated and forbidden by name**: "Skip", "Edge zero / no edge signal", "Cumulative pnl negative" alone, "Soft-exit cluster" alone, "Mixed outcomes" → modifier=+0.02, "4h window too long".
+6. **Edge field handling**: "edge=0.0 means this metric is NOT computed for mean-reversion. IGNORE."
+7. **4h equal weight with 15m**: "Window length is informational only."
+
+User prompt: removed `edge` and `rv_std` fields entirely (v1.32 model misread 0.0 as bearish in 38% of calls). Added a reminder line: "REMEMBER: default is modifier=0.00 (NORMAL). Only deviate if evidence is SPECIFIC and CLEAR."
+
+### What this version is NOT
+
+- **Still advisory-only.** Brain output is logged; bot ignores it. Same as v1.32. No LIVE impact.
+- **Not a v1.33 promotion** to authoritative. The architecture review's v1.33 spec (activate modifier behind A/B, add confidence field) requires passing the observation gate first. We're re-running observation with a better prompt; this is structurally still "phase 1."
+
+### Operational plan
+
+- Reset call counter. Next 80 brain calls = fresh observation set.
+- After 30 calls, check the four diagnostic signals: is `mr_edge=strong` non-zero? is modifier mean near 0? does reasoning still use forbidden patterns? does brain reference recent_wr in its reasoning?
+- After 80 calls AND if `mr_edge=strong` mean pnl ≥ `mr_edge=degraded` mean pnl + 1 SE: proceed to real v1.33 (activate modifier behind A/B).
+- If this prompt also fails the gate: ONE more rewrite is allowed per the research rules. If three fail, kill the brain.
+
+### Files changed
+`src/bot/window_brain.py` (prompt v2), `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
+
+### Reference
+`BRAIN_RESEARCH_FINDINGS.md` Finding 1 (why v1.32 prompt was set up to fail), Finding 3 (modifier=0 should be common), and the "Three specific things to look for during observation" section.
+
+---
+
 ## v1.32 — 2026-05-10
 **Wire WindowBrain (per-trade Claude reasoner) in advisory-only mode**
 

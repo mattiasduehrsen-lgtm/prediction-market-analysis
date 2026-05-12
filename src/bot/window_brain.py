@@ -39,31 +39,110 @@ BRAIN_HISTORY_LEN = int(os.environ.get("BRAIN_HISTORY_LEN", "10"))
 BRAIN_VETO        = os.environ.get("BRAIN_VETO", "false").lower() == "true"
 BRAIN_ENABLED     = os.environ.get("BRAIN_ENABLED", "true").lower() != "false"
 
-# ── System prompt (cached by Anthropic — charged once per 5-min TTL) ─────────
+# ── System prompt v2 (v1.33 rewrite — counter conservatism bias) ───────────
+# Rewrite #1 of allowed 2 (per BRAIN_RESEARCH_FINDINGS.md). v1 prompt produced
+# 95% "degraded" / 100% non-negative modifier across 48 calls — textbook
+# conservatism-bias failure mode. This version:
+#   - Establishes modifier=0 as the explicit default, not a "neither" answer.
+#   - Anchors on baseline EV ≈ -$1/trade so loss clusters are not over-weighted.
+#   - Lists NORMAL reasoning examples (v1 had none — only success and failure).
+#   - Enumerates the specific anti-patterns v1 produced ("Skip", "zero edge",
+#     "insufficient conviction") and forbids them by name.
+#   - Tells the model edge=0.0 means "not computed", not "no conviction".
+#   - Treats 15m and 4h windows as equally valid (v1 framed 15m as canonical).
 
 _SYSTEM = """\
-You are a regime-detection assistant for a Polymarket 15-minute mean-reversion \
-trading bot. The bot buys the "cheap side" token (~35–40¢) in BTC/ETH/SOL \
-Up/Down prediction markets, betting the price will revert to ~50¢ before the \
-15-minute window expires. It profits in ranging/choppy conditions and loses \
-in sustained trending conditions.
+You are a REGIME CLASSIFIER for a Polymarket mean-reversion trading bot. The bot
+trades 15-minute AND 4-hour Up/Down prediction markets on BTC, ETH, SOL. Each
+window resolves binary: winner pays $1.00, loser pays $0.00. The bot buys the
+cheap side (entry typically 0.28–0.45), then exits at take-profit (~0.60),
+stop-loss (cheap side falls to ~0.10), or window close.
 
-Your only job is to assess whether mean-reversion is likely to work well right \
-now for this specific asset, based on recent trade history. You are NOT trying \
-to predict which direction the asset moves.
+## YOUR JOB
 
-Key failure modes:
-- Trending regime: consecutive losses where "cheap side" kept moving further away
-- High-vol regime: stop-losses triggered at median 45% through window, then price \
-  reverting — we exited too early
-- Illiquid regime: very wide spreads, poor fills, unusually thin books
+You output a SMALL adjustment to the bot's entry threshold based on whether
+mean-reversion is currently working as a regime. You are NOT predicting
+direction. You are NOT deciding skip/enter — that decision belongs to the bot.
+You ARE the regime sanity check on top of the bot's existing systematic filter.
 
-Key success signals:
-- Ranging regime: recent wins via take-profit, prices oscillating around 0.50
-- Consistent WR ≥ 55% over last 8+ trades = edge is working
-- Edge values consistently positive (our side underpriced by Binance)
+## DEFAULT IS NEUTRAL — read this carefully
 
-Output ONLY a valid JSON object — no markdown, no explanation outside the JSON.
+modifier=0.00 is the default. Most calls should return modifier=0.00.
+
+Only push the modifier away from 0 when the evidence is SPECIFIC, RECENT, and
+ACTIONABLE. If you find yourself reasoning like "let's be cautious" or "skip
+this trade" or "insufficient conviction" — STOP. That is discretionary-trader
+thinking. You are a systematic classifier. Caution is the bot's job, not yours.
+
+LLMs in trading consistently exhibit conservatism bias — they over-rate risk
+and pull entries away. Counter this bias actively: your prior should be that
+this trade is NORMAL unless evidence is clearly otherwise.
+
+## BASELINE — THE BOT LOSES MONEY ON AVERAGE
+
+This bot's historical EV is approximately -$1/trade. Loss clusters, soft-exit
+dominance, and negative cumulative PnL over 10 trades are NORMAL background
+noise — not regime alarms. Most 10-trade samples will show 3–6 wins and
+cumulative PnL between -$30 and +$10. That is NORMAL. Do not flag it.
+
+Only flag "degraded" if the regime is clearly WORSE than this noisy baseline:
+e.g. 0–1 wins in 10, OR 4+ consecutive hard_stop_floor losses with no
+recoveries, OR cheap side hitting new lows on every trade for 5+ in a row.
+
+Only flag "strong" if the regime is clearly BETTER: e.g. 7+/10 wins, mostly
+via take_profit, with no streaks longer than 1 loss.
+
+## REASONING EXAMPLES — all three categories
+
+STRONG (modifier = -0.02 to -0.01):
+- "8/10 wins, all take_profit, no >1-loss streaks. Strong ranging regime."
+- "Last 10: 7 wins, mostly TP within 200s. WR 70%, well above baseline."
+
+NORMAL (modifier = 0.00) — THIS SHOULD BE THE COMMON ANSWER:
+- "5/10 wins with mixed exits. Typical noisy conditions."
+- "3/10 wins is baseline. Soft-exit cluster but a recent TP shows reversion works."
+- "Cumulative -$15 in last 10 is within normal range. No specific regime signal."
+- "No history yet. Insufficient data — default neutral."
+- "Mixed exit reasons, no clear streak shape. Standard noise."
+
+DEGRADED (modifier = +0.01 to +0.05):
+- "0/8 wins, all hard_stop_floor at -75%+. Cheap side collapsing fully."
+- "Last 6 are losses, cheap side at new lows each entry. Sustained trend."
+- "5 hard_stop_floor in 7 trades — fast-moving regime, MR thesis broken."
+
+## ANTI-PATTERNS — DO NOT PRODUCE
+
+These reasoning patterns are FORBIDDEN. They are conservatism bias, not
+regime classification:
+- "Skip this trade" / "Gate stricter" / "Insufficient conviction" — you are
+  not deciding skip. Modifier ≠ skip.
+- "Edge zero / no edge signal" — edge=0.0 means "this metric is NOT computed
+  for mean-reversion". IGNORE the edge field entirely. It is a placeholder.
+- "Cumulative pnl negative" alone — negative PnL is BASELINE for this bot.
+  Only matters if it's catastrophic (-$50+ in 10 trades).
+- "Soft-exit cluster" alone — soft_exit_stalled is a NORMAL exit reason,
+  not a regime warning. Common in many regimes including profitable ones.
+- "Mixed outcomes / unclear pattern" → modifier=0.00, not modifier=+0.02.
+  Mixed = normal.
+- "4h window too long" / "window length unusual" — 4h is a SUPPORTED window,
+  equally valid as 15m. Window length is informational only.
+
+If you would have used any of these patterns, return modifier=0.00 with
+reasoning "normal — no specific regime signal".
+
+## WHAT YOU SEE / DON'T SEE
+
+YOU SEE: last N closed trades (side, entry price, exit reason, pnl, won),
+the current candidate (price, side, cross-window %, secs remaining), and
+the target window (15m or 4h — both valid).
+
+YOU DO NOT SEE: order book, intra-window price path, BTC chart, news headlines,
+or any meaningful "edge" or "realized vol" number (those fields are 0.0 = not
+computed for MR — IGNORE).
+
+## OUTPUT
+
+Reply with EXACTLY this JSON object. No markdown. No prose outside the JSON.
 """
 
 
@@ -215,29 +294,28 @@ class WindowBrain:
 
         history_block = "\n".join(history_lines) if history_lines else "  (none)"
 
+        # v1.33: cleaned user prompt — `edge` and `rv_std` are not shown because
+        # they are 0.0 for MR (not computed) and v1.32 logs showed the model
+        # misread them as "no conviction". Cross-window is shown but not framed
+        # as bearish/bullish — model decides what to do with it.
         prompt = (
-            f"Asset: {self.asset} | Window: {self.window}\n\n"
+            f"Asset: {self.asset} | Window: {self.window} | Strategy: mean_reversion\n\n"
             f"Recent resolved trades (oldest → newest):\n{history_block}\n\n"
             f"Summary: {summary}\n\n"
             f"Current entry candidate:\n"
-            f"  Side:          {side}\n"
-            f"  Entry price:   {entry_price:.3f}\n"
-            f"  Edge (Binance implied P − price): {edge:+.4f}\n"
-            f"  Realized vol:  {rv_std:.4f} (per 2s bar; >0.0029 = high-vol)\n"
-            f"  Cross-window:  {cross_window_pct:+.3f}% (prior window BTC move)\n"
+            f"  Side:           {side}\n"
+            f"  Entry price:    {entry_price:.3f}\n"
+            f"  Cross-window:   {cross_window_pct:+.3f}% (prior window asset move)\n"
             f"  Secs remaining: {secs_remaining:.0f}s\n\n"
-            f"Assess the mean-reversion regime for {self.asset} right now.\n"
+            f"Classify the regime. REMEMBER: default is modifier=0.00 (NORMAL).\n"
+            f"Only deviate from 0 if evidence is SPECIFIC and CLEAR (per system prompt).\n\n"
             f"Reply with ONLY this JSON:\n"
             f'{{\n'
-            f'  "regime": "ranging|trending|volatile|unclear",\n'
-            f'  "mr_edge": "strong|normal|degraded",\n'
-            f'  "edge_modifier": <float, -0.05 to +0.05>,\n'
-            f'  "reasoning": "<one sentence, max 20 words>"\n'
-            f'}}\n\n'
-            f'edge_modifier guide:\n'
-            f'  +0.02 to +0.05: degraded (trending regime, loss cluster) → stricter gate\n'
-            f'  0.00:           normal / unclear → no change\n'
-            f'  -0.01 to -0.02: strong (ranging, consistent wins, edge positive) → slightly looser'
+            f'  "regime":        "ranging" | "trending" | "volatile" | "unclear",\n'
+            f'  "mr_edge":       "strong" | "normal" | "degraded",\n'
+            f'  "edge_modifier": <float in [-0.05, +0.05]; default 0.00>,\n'
+            f'  "reasoning":     "<one sentence, max 20 words, no forbidden patterns>"\n'
+            f'}}'
         )
 
         try:

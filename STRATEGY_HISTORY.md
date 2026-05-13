@@ -1,6 +1,6 @@
 # Strategy History — Prediction Market Bot
 
-**Last updated:** 2026-05-11 (v1.33)
+**Last updated:** 2026-05-12 (v1.34)
 **Purpose:** Single source of truth for what the bot IS doing, what it WAS doing, and how to revert changes.
 
 > **CRITICAL — READ FIRST:**
@@ -11,7 +11,9 @@
 
 ---
 
-## Current active strategy (as of v1.33 — 2026-05-11)
+## Current active strategy (as of v1.34 — 2026-05-12)
+
+**v1.34 — ETH-15m re-enabled on LIVE, gated by recent-WR filter.** Forward-EV replay analysis on 693 PAPER trades: brain regime is anti-predictive for BTC/SOL (mean reversion at the regime level) but works for ETH (strong +$0.52 vs degraded -$0.95). Brain just echoes recent-WR threshold; using raw WR directly is cheaper, deterministic, and equivalent signal. v1.34 implements `_recent_trade_wr()` and gates ETH-15m LIVE entries on `wins >= 5/8` recent. PAPER ETH continues unconditionally. BTC stays off LIVE. SOL unchanged. Brain narrowed to ETH-15m research observation only. **LIVE still paused — user must unpause for trades to actually fire.** First defensible +EV LIVE configuration since project inception.
 
 **v1.33 — Brain prompt rewrite #1.** 35h of v1.32 observation surfaced textbook conservatism-bias failure: 95% "degraded" calls, 100% non-negative modifier, 15% used forbidden "skip" language. Same root cause as v1.0 advisor. New prompt explicitly: default is modifier=0; counter LLM conservatism bias actively; baseline EV is -$1/trade so loss clusters are normal; enumerate and forbid the specific anti-patterns observed; tell model to IGNORE edge=0.0 field. STILL advisory-only — no LIVE impact. Reset 80-call observation gate. Per research rules: one more rewrite allowed if this fails; if three prompts fail, kill the brain.
 

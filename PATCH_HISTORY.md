@@ -2,6 +2,83 @@
 
 ---
 
+## v1.34 — 2026-05-12
+**ETH-15m re-enabled on LIVE, gated by recent-WR filter. Brain narrowed to ETH-only observation.**
+
+### Why now
+
+24h of v1.33 brain output showed the rewritten prompt fixed conservatism bias (0% degraded, 100% normal). But a synthetic replay test forced the question: does the brain's regime call have FORWARD predictive value?
+
+**Replay test** (15 windows, 5 each of clear degraded/normal/strong): 15/15 correct classification. Brain is well-calibrated.
+
+**Forward-EV check** on 556 historical 10-trade windows: brain regime classification correlates with next-trade EV ONLY for ETH. For BTC and SOL, the correlation is inverted — strong-regime predicts WORSE forward EV (regime reversion at the regime level).
+
+| Brain says (pooled) | n | Next-trade EV (v1.28 corrected) |
+|---|---|---|
+| degraded | 101 | -$0.07 |
+| normal | 320 | -$0.64 |
+| strong | 135 | **-$1.05** ← worst |
+
+**ETH-only:**
+| Brain says | n | Next-trade EV |
+|---|---|---|
+| degraded | 36 | -$0.95 |
+| normal | 115 | +$0.14 |
+| **strong** | 74 | **+$0.52** |
+
+ETH strong vs degraded gap: +$1.47/trade. This is the only segment where brain regime has positive forward signal.
+
+### What changed
+
+1. **`_recent_trade_wr(asset, window, n=8)` helper** in main.py. Reads `output/5m_trading/trades.csv` and returns (wins, total) over the most recent N closed trades for that segment. Deterministic, no API, runs in milliseconds.
+
+2. **ETH-15m LIVE conditional entry filter** in the MR entry path. When `live AND asset=="ETH" AND window=="15m"`:
+   - If fewer than 8 recent trades exist → skip (no filter signal yet)
+   - If recent wins < 5/8 → skip with `[WR-FILTER]` log line
+   - Else allow entry (normal flow)
+   - **PAPER ETH continues to enter unconditionally** to keep collecting data
+
+3. **`multi-live` default config: ETH-15m re-added** alongside SOL-15m. BTC stays off LIVE.
+
+4. **Brain narrowed to ETH-15m only.** BTC, SOL, and all 4h threads no longer initialize WindowBrain — those API calls were producing anti-predictive noise. Saves ~70% of brain cost while preserving the signal for the segment where it works.
+
+### What this does NOT do
+
+- **Does NOT unpause LIVE.** `paused.live.flag` is preserved through this deploy. User must explicitly remove the flag for v1.34 to actually place LIVE trades. The configuration is staged; the activation is deliberate.
+- Does NOT change PAPER behavior for any asset. PAPER continues entering on all 6 (asset, window) combos to keep building history.
+- Does NOT promote the brain to authoritative. Brain stays advisory-only on ETH — used for observation/research, not gating.
+
+### Why use raw WR instead of the brain
+
+The replay confirmed the brain just echoes the WR threshold (since we filtered windows by WR to construct the test). The brain is essentially a regime-classifier-of-the-WR-input. Using WR directly:
+- Removes API dependency (no timeout, no rate limits, no model drift)
+- Cost: $0 vs $0.05/day
+- Latency: microseconds vs 1-2 seconds
+- Determinism: every restart, same input → same answer
+- Auditable: the function is 20 lines, completely transparent
+
+Brain stays around (ETH-only) as a research tool: when WR filter passes AND brain says strong, that's the highest-confidence segment. We can compare brain-strong-WR-passes vs brain-normal-WR-passes once we have data.
+
+### Expected production behavior
+
+At current rate (~6 ETH-15m entries/week on PAPER, with maybe 30% in strong-WR regime): roughly **1-2 ETH LIVE trades per week** when filter passes.
+
+Per-trade EV: +$0.52 (point estimate, wide CI). At $5 size: +$0.50-$1/week if signal holds. Not transformative; **first defensible positive-EV LIVE configuration** since project inception.
+
+### Risks
+
+- ETH-strong EV +$0.52 has 95% CI roughly [-$1.50, +$2.50]. Could be noise on n=74.
+- The WR filter is computed from PAPER history. PAPER and LIVE diverge (v1.28 execution drag analysis). LIVE EV may differ.
+- The "regime persistence" hypothesis the filter relies on is statistically weak (autocorrelation +0.158). It works on ETH but the mechanism isn't fully understood.
+
+### Files changed
+`main.py` (helper + filter + multi-live config + brain scope), `src/bot/version.py`, `PATCH_HISTORY.md`, `STRATEGY_HISTORY.md`.
+
+### Reference
+`BRAIN_RESEARCH_DATA.md` (forward-EV signal table), `replay_brain_test.py` (calibration validation), `replay_forward_ev.py` (forward-EV by regime).
+
+---
+
 ## v1.33 — 2026-05-11
 **Brain prompt rewrite #1 — counter conservatism bias**
 

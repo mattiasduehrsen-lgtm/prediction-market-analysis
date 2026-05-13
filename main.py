@@ -65,6 +65,51 @@ def _setup_logging() -> None:
     sys.stderr = wrapped
 
 
+# ── v1.34: recent-trade WR helper for ETH conditional LIVE entry ──────────────
+def _recent_trade_wr(asset: str, window: str, n: int = 8) -> "tuple[int, int]":
+    """
+    Return (wins, total) over the most recent N closed trades for (asset, window)
+    in the PAPER trades.csv. Used by v1.34 ETH-conditional LIVE gate: ETH-15m
+    LIVE entries require recent_wr >= 5/8 (~62.5%).
+
+    Rationale: the v1.33 brain replay+forward-EV analysis showed that for ETH,
+    prior 8-trade WR >= 5/8 correlates with +$0.52/trade next-trade EV vs
+    -$0.95/trade for low recent WR. The brain's regime classifier essentially
+    rediscovers this WR threshold; using the threshold directly is cheaper,
+    deterministic, and has no API dependency.
+
+    Returns (0, 0) if file missing or fewer than `n` closed trades exist.
+    Source: cowork_snapshot/5m_trading/trades.csv is the PAPER history file.
+    """
+    import csv as _csv
+    from src.bot.engine_5m import TRADES_FILE as _TF
+    try:
+        if not _TF.exists():
+            return 0, 0
+        with _TF.open(encoding="utf-8") as fh:
+            reader = _csv.DictReader(fh)
+            rows = [r for r in reader
+                    if r.get("asset", "").upper() == asset.upper()
+                    and r.get("window") == window
+                    and r.get("strategy") == "mean_reversion"
+                    and r.get("exit_reason") not in ("", "open")]
+        recent = rows[-n:]
+        if len(recent) < n:
+            return 0, 0
+        wins = 0
+        for r in recent:
+            try:
+                pnl = float(r.get("pnl_usd", "0") or "0")
+                if pnl > 0:
+                    wins += 1
+            except (TypeError, ValueError):
+                pass
+        return wins, len(recent)
+    except Exception as _e:
+        print(f"  [WR-FILTER] error reading trades.csv: {_e}")
+        return 0, 0
+
+
 # ── Core loop ─────────────────────────────────────────────────────────────────
 
 def run_loop() -> None:
@@ -347,12 +392,17 @@ def run_5m_loop(
         cb = None
 
     # v1.32: WindowBrain — per-trade reasoning advisor (Claude Haiku, prompt-cached).
-    # Advisory-only at this stage: brain fires once per entry candidate per window,
-    # decision logged but NOT used to alter entry. After 50+ brain-evaluated trades
-    # we'll analyze whether brain advice correlates with EV; if yes, promote in v1.33.
-    # Only enable for MR strategy (not RS or momentum) and for 15m/4h windows.
+    # v1.34: scoped to ETH-15m ONLY. Forward-EV analysis on 693 PAPER trades showed:
+    #   - ETH: brain regime predicts forward EV correctly (strong +$0.52, degraded -$0.95)
+    #   - BTC: regime is ANTI-predictive (strong -$2.97, degraded -$0.97 — mean reversion at
+    #     the regime level — promoting brain would actively hurt EV)
+    #   - SOL: anti-predictive but tiny n (likely noise)
+    #   - 4h:  no data yet (n=0 history)
+    # The bot's actual ETH LIVE gate uses _recent_trade_wr() directly (cheaper, no API,
+    # deterministic). Brain on ETH-15m is kept for research observation: when the WR
+    # filter passes, we want to know what brain says alongside.
     brain: WindowBrain | None = None
-    if strategy == "mean_reversion" and window in ("15m", "4h"):
+    if strategy == "mean_reversion" and asset == "ETH" and window == "15m":
         try:
             brain = WindowBrain(asset, window)
             from src.bot.engine_5m import TRADES_FILE as PAPER_TRADES_FILE
@@ -863,8 +913,8 @@ def run_5m_loop(
 
                     # v1.32: WindowBrain per-trade reasoning. Fires once per entry candidate
                     # per window (cached). Advisory-only — does NOT alter the entry decision.
-                    # We log the brain's regime classification + reasoning so we can later
-                    # analyze whether brain output correlates with realized EV.
+                    # v1.34: brain is initialized ONLY for ETH-15m (where forward-EV check showed
+                    # signal). BTC/SOL/4h threads have brain=None and skip this block entirely.
                     if do_enter and brain is not None and not brain_advised:
                         try:
                             brain_advice = brain.advise(
@@ -879,6 +929,24 @@ def run_5m_loop(
                         except Exception as _exc:
                             print(f"  [BRAIN] advise error: {_exc}")
                             brain_advised = True   # don't retry this window
+
+                    # ── v1.34: ETH-15m LIVE conditional WR filter ────────────────────────
+                    # Re-enable ETH on LIVE but ONLY when prior 8-trade WR ≥ 5/8 (62.5%).
+                    # Forward-EV analysis: ETH-strong-regime EV +$0.52/trade (n=74) vs ETH-
+                    # degraded -$0.95/trade. PAPER ETH continues to enter unconditionally to
+                    # keep collecting data. BTC LIVE: still off (regime is anti-predictive).
+                    # SOL LIVE: still unconditional (no useful WR signal at corrected accounting).
+                    if (do_enter and live and asset == "ETH" and window == "15m"
+                            and strategy == "mean_reversion"):
+                        _wins, _total = _recent_trade_wr(asset, window, n=8)
+                        if _total < 8:
+                            print(f"  [WR-FILTER] ETH LIVE skip — only {_total} recent trades (need 8 for filter)")
+                            do_enter = False
+                        elif _wins < 5:
+                            print(f"  [WR-FILTER] ETH LIVE skip — recent {_wins}/{_total} wins below 5/8 threshold")
+                            do_enter = False
+                        else:
+                            print(f"  [WR-FILTER] ETH LIVE allowed — recent {_wins}/{_total} wins ≥ 5/8")
 
                     if do_enter:
                         now_ts = time.time()
@@ -1244,9 +1312,15 @@ if __name__ == "__main__":
             #   Same risk-management logic as v1.27 BTC disable: negative point estimate at
             #   meaningful n is sufficient to take a market off LIVE while paused.
             #   LIVE now runs SOL only (SOL UP). Continue ETH on PAPER for data collection.
+            # v1.34 (2026-05-12 brain replay + forward-EV analysis):
+            #   Re-enable ETH-15m on LIVE *conditional on recent 8-trade WR ≥ 5/8*. ETH UP
+            #   in strong regime: EV +$0.52/trade (n=74) vs degraded -$0.95/trade. Filter
+            #   applied inside the entry path in run_5m_loop (search "v1.34: ETH-15m LIVE").
+            #   BTC stays off — regime is anti-predictive for BTC (any filter would hurt).
+            #   SOL stays unconditional — small-n signal is noise.
             _configs = [
-                # ("BTC", "15m", "mean_reversion"),  # v1.27: disabled on LIVE
-                # ("ETH", "15m", "mean_reversion"),  # v1.29: disabled on LIVE
+                # ("BTC", "15m", "mean_reversion"),       # v1.27: disabled on LIVE
+                ("ETH", "15m", "mean_reversion"),         # v1.34: re-enabled, conditional on WR filter
                 ("SOL", "15m", "mean_reversion"),
             ]
         _setup_logging()

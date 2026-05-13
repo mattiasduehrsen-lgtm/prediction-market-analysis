@@ -46,14 +46,25 @@ schtasks /end /tn PolyBot 2>&1
 schtasks /end /tn PolyDashboard 2>&1
 Start-Sleep -Seconds 4    # let task trees finish exiting
 Stop-Process -Name python -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 6    # Windows can take several seconds to release file handles
+Stop-Process -Name powershell -Force -ErrorAction SilentlyContinue -InformationAction SilentlyContinue 2>$null   # watchdog ps1
 # Belt-and-braces: kill any lingering cmd.exe instances running our watch_*.bat
 Get-CimInstance Win32_Process -Filter "name='cmd.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match "watch_paper\.bat|watch_bot\.ps1" } |
+    Where-Object { $_.CommandLine -match "watch_paper\.bat|watch_bot" } |
     ForEach-Object {
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
     }
-Start-Sleep -Seconds 3
+
+# Poll until no python.exe remains (max 30s)
+Write-Host "[wait] polling for python.exe to fully exit..."
+for ($i = 0; $i -lt 30; $i++) {
+    $py = Get-Process -Name python -ErrorAction SilentlyContinue
+    if (-not $py) {
+        Write-Host ("[wait] python.exe is gone after {0}s" -f $i)
+        break
+    }
+    Start-Sleep -Seconds 1
+}
+Start-Sleep -Seconds 2    # extra grace for OS to release handles
 
 # Rotate logs with retry on file-locked errors
 function Rotate-WithRetry {

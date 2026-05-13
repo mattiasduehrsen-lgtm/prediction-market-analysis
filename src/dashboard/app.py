@@ -424,3 +424,156 @@ def api_live_pause():
 def api_live_resume():
     PAUSE_FLAG.unlink(missing_ok=True)
     return jsonify({"paused": False})
+
+
+# ── v1.34: LIVE readiness, brain advice, health ───────────────────────────────
+
+# Entry-band thresholds per (asset, window). Must mirror market_5m.py constants.
+_ENTRY_BANDS = {
+    ("BTC", "15m"): {"min": 0.38, "max": 0.40, "live": False},
+    ("ETH", "15m"): {"min": 0.35, "max": 0.40, "live": True},   # v1.34: LIVE re-enabled (gated)
+    ("SOL", "15m"): {"min": 0.33, "max": 0.35, "live": True},
+    ("BTC", "4h"):  {"min": 0.28, "max": 0.45, "live": False},  # PAPER experiment
+    ("ETH", "4h"):  {"min": 0.28, "max": 0.45, "live": False},
+    ("SOL", "4h"):  {"min": 0.28, "max": 0.45, "live": False},
+}
+
+
+def _recent_wr(asset: str, window: str, n: int = 8):
+    """Return (wins, total) over last N closed MR trades for the asset+window."""
+    rows = _read_csv(OUT_5M / "trades.csv")
+    rows = [r for r in rows
+            if r.get("asset", "").upper() == asset.upper()
+            and r.get("window") == window
+            and r.get("strategy") == "mean_reversion"
+            and r.get("exit_reason") not in ("", "open")]
+    recent = rows[-n:]
+    if len(recent) < n:
+        return 0, len(recent)
+    wins = sum(1 for r in recent if (float(r.get("pnl_usd") or 0) > 0))
+    return wins, len(recent)
+
+
+@app.route("/api/live/readiness")
+def api_live_readiness():
+    """
+    Per (asset, window) LIVE entry-readiness snapshot.
+
+    For each LIVE-eligible market, lists the gates and which currently pass.
+    A market is `ready_to_trade=True` only if all gates pass.
+
+    Frontend uses this to display: "ETH LIVE: blocked (recent 4/8 WR < 5/8)"
+    """
+    paused = PAUSE_FLAG.exists()
+    out = {"live_paused": paused, "assets": {}}
+
+    for (asset, window), band in _ENTRY_BANDS.items():
+        if not band["live"]:
+            continue   # PAPER-only segment
+        key = f"{asset}-{window}"
+        gates = []
+        # Pause flag gate
+        gates.append({
+            "name": "live_pause_flag",
+            "passed": not paused,
+            "detail": "flag present" if paused else "active",
+        })
+        # WR filter (currently only enforced for ETH-15m on LIVE)
+        if asset == "ETH" and window == "15m":
+            wins, total = _recent_wr(asset, window, n=8)
+            wr_ok = (total >= 8) and (wins >= 5)
+            if total < 8:
+                detail = f"only {total} recent trades (need 8)"
+            else:
+                detail = f"{wins}/{total} wins {'>=' if wr_ok else '<'} 5/8 threshold"
+            gates.append({
+                "name": "wr_filter_5_of_8",
+                "passed": wr_ok,
+                "detail": detail,
+                "wins": wins,
+                "total": total,
+            })
+        all_pass = all(g["passed"] for g in gates)
+        out["assets"][key] = {
+            "live_eligible": True,
+            "entry_band_min": band["min"],
+            "entry_band_max": band["max"],
+            "gates": gates,
+            "ready_to_trade": all_pass,
+        }
+
+    return jsonify(out)
+
+
+# Cached brain advice scrape — bot.log is huge so we tail-and-cache.
+_BRAIN_LINE_RE = re.compile(
+    r"\[BRAIN\]\s+(?P<asset>[A-Z]{3})\s+regime=(?P<regime>\w+)\s+"
+    r"mr_edge=(?P<mr_edge>\w+)\s+modifier=(?P<mod>[+\-][0-9.]+).*?[—-]\s*(?P<reasoning>.+)$"
+)
+
+
+@app.route("/api/brain")
+def api_brain():
+    """
+    Returns the most recent N brain advice lines from bot.log.
+    Parses [BRAIN] log entries; only entries with regime= present.
+    """
+    log_path = Path(__file__).resolve().parents[2] / "bot.log"
+    if not log_path.exists():
+        return jsonify({"advice": []})
+
+    try:
+        # Read last ~300KB only - brain calls are rare so this should catch the most recent
+        max_bytes = 300 * 1024
+        size = log_path.stat().st_size
+        with log_path.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            chunk = fh.read().decode("utf-8", errors="replace")
+        lines = chunk.splitlines()
+        advice = []
+        for line in lines:
+            m = _BRAIN_LINE_RE.search(line)
+            if m:
+                advice.append({
+                    "asset": m.group("asset"),
+                    "regime": m.group("regime"),
+                    "mr_edge": m.group("mr_edge"),
+                    "modifier": float(m.group("mod")),
+                    "reasoning": m.group("reasoning").strip()[:200],
+                })
+        # Most recent 8
+        return jsonify({"advice": advice[-8:]})
+    except Exception as exc:
+        return jsonify({"advice": [], "error": str(exc)[:120]})
+
+
+@app.route("/api/health")
+def api_health():
+    """
+    Bot health summary for the dashboard.
+    NOT a monitoring endpoint - just descriptive snapshots.
+    """
+    now = time.time()
+    root = Path(__file__).resolve().parents[2]
+
+    def _age_secs(p):
+        try:
+            return now - p.stat().st_mtime
+        except Exception:
+            return None
+
+    skipped  = OUT_5M / "skipped_windows.csv"
+    trades   = OUT_5M / "trades.csv"
+    bot_log  = root / "bot.log"
+    watchdog = root / "watchdog_paper.log"
+
+    return jsonify({
+        "skipped_windows_age_sec": _age_secs(skipped),
+        "paper_trades_age_sec":    _age_secs(trades),
+        "bot_log_age_sec":         _age_secs(bot_log),
+        "bot_log_size_mb":         (bot_log.stat().st_size / (1024*1024)) if bot_log.exists() else 0,
+        "watchdog_paper_age_sec":  _age_secs(watchdog),
+        "version":                 PATCH,
+        "version_date":            PATCH_DATE,
+    })

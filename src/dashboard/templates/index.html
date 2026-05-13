@@ -247,7 +247,19 @@
   <span id="pause-status" style="font-size:12px;color:#888"></span>
 </div>
 
-<div class="cards">
+<!-- v1.34: LIVE entry-readiness panel — shows what's blocking each asset right now -->
+<section style="margin:12px 24px 0;padding:12px 16px;background:#0d0f18;border:1px solid #2a2d3a;border-radius:8px">
+  <h3 style="margin:0 0 8px;font-size:13px;color:#aaa;letter-spacing:1px;text-transform:uppercase">LIVE Entry Readiness</h3>
+  <div id="readiness-body" style="font-family:monospace;font-size:12px;line-height:1.7;color:#ccc">Loading…</div>
+</section>
+
+<!-- v1.34: Last brain advice (read-only research display) -->
+<section style="margin:12px 24px 0;padding:12px 16px;background:#0d0f18;border:1px solid #2a2d3a;border-radius:8px">
+  <h3 style="margin:0 0 8px;font-size:13px;color:#aaa;letter-spacing:1px;text-transform:uppercase">Recent Brain Advice (ETH-15m research)</h3>
+  <div id="brain-body" style="font-family:monospace;font-size:11px;line-height:1.6;color:#999;max-height:140px;overflow-y:auto">Loading…</div>
+</section>
+
+<div class="cards" style="margin-top:12px">
   <div class="card">
     <div class="label">Wallet (USDC)</div>
     <div class="value yellow" id="live-wallet">$—</div>
@@ -860,7 +872,66 @@ function refreshAll() {
   refreshEquity();
   refreshBalance();
   refreshPauseState();
+  refreshReadiness();    // v1.34
+  refreshBrain();        // v1.34
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+// v1.34: LIVE entry-readiness panel
+async function refreshReadiness() {
+  try {
+    const d = await fetch('/api/live/readiness').then(r => r.json());
+    const body = $('readiness-body');
+    if (!d.assets || Object.keys(d.assets).length === 0) {
+      body.innerHTML = '<span style="color:#666">no LIVE-eligible markets</span>';
+      return;
+    }
+    const lines = [];
+    for (const [key, a] of Object.entries(d.assets)) {
+      const statusColor = a.ready_to_trade ? '#4ade80' : '#f87171';
+      const statusText  = a.ready_to_trade ? 'READY' : 'BLOCKED';
+      const band = `band [${a.entry_band_min.toFixed(2)}, ${a.entry_band_max.toFixed(2)}]`;
+      let gateText = a.gates.map(g => {
+        const c = g.passed ? '#4ade80' : '#f87171';
+        const mark = g.passed ? '✓' : '✗';
+        return `<span style="color:${c}">${mark} ${g.name}: ${g.detail}</span>`;
+      }).join(' &nbsp; | &nbsp; ');
+      lines.push(
+        `<div style="margin-bottom:6px"><b style="color:${statusColor}">${key.padEnd(10)} ${statusText}</b> ` +
+        `<span style="color:#666">${band}</span><br>` +
+        `<span style="padding-left:14px">${gateText}</span></div>`
+      );
+    }
+    if (d.live_paused) {
+      lines.unshift('<div style="color:#fbbf24;margin-bottom:8px"><b>⚠ LIVE is PAUSED</b> — no trades will fire regardless of gate state.</div>');
+    }
+    body.innerHTML = lines.join('');
+  } catch(e) {
+    $('readiness-body').textContent = 'error: ' + e.message;
+  }
+}
+
+// v1.34: brain advice display (last N from bot.log)
+async function refreshBrain() {
+  try {
+    const d = await fetch('/api/brain').then(r => r.json());
+    const body = $('brain-body');
+    if (!d.advice || d.advice.length === 0) {
+      body.innerHTML = '<span style="color:#666">no recent brain advice in log</span>';
+      return;
+    }
+    const lines = d.advice.slice().reverse().map(a => {
+      const edgeColor = a.mr_edge === 'strong'   ? '#4ade80' :
+                        a.mr_edge === 'degraded' ? '#f87171' : '#aaa';
+      const modSign = a.modifier > 0 ? '+' : '';
+      return `<div><b style="color:${edgeColor}">${a.asset} ${a.regime}/${a.mr_edge}</b> ` +
+             `<span style="color:#888">mod=${modSign}${a.modifier.toFixed(3)}</span> ` +
+             `— <span style="color:#bbb">${a.reasoning}</span></div>`;
+    });
+    body.innerHTML = lines.join('');
+  } catch(e) {
+    $('brain-body').textContent = 'error: ' + e.message;
+  }
 }
 
 // Fetch patch version once on load — doesn't change while running

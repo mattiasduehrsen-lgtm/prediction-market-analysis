@@ -40,19 +40,30 @@ $wasPaused = Test-Path $pauseFlag
 Write-Host "LIVE pause flag was: $wasPaused"
 
 # Stop processes (releases file locks)
+# NOTE: Stop-Process -Name powershell would kill THIS script's own ssh session.
+# Target only the watchdog powershell.exe (running watch_bot.ps1) by command line.
 Write-Host "`n--- Stopping tasks ---"
+$myPid = $PID
 schtasks /end /tn PolyBotPaper 2>&1
 schtasks /end /tn PolyBot 2>&1
 schtasks /end /tn PolyDashboard 2>&1
 Start-Sleep -Seconds 4    # let task trees finish exiting
-Stop-Process -Name python -Force -ErrorAction SilentlyContinue
-Stop-Process -Name powershell -Force -ErrorAction SilentlyContinue -InformationAction SilentlyContinue 2>$null   # watchdog ps1
-# Belt-and-braces: kill any lingering cmd.exe instances running our watch_*.bat
+
+# Belt-and-braces: kill any lingering watchdog cmd.exe AND watchdog powershell.exe.
+# Match by CommandLine to avoid killing ourselves.
 Get-CimInstance Win32_Process -Filter "name='cmd.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match "watch_paper\.bat|watch_bot" } |
     ForEach-Object {
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
     }
+Get-CimInstance Win32_Process -Filter "name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "watch_bot\.ps1" -and $_.ProcessId -ne $myPid } |
+    ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+
+# Kill python last so watchdogs can't restart it
+Stop-Process -Name python -Force -ErrorAction SilentlyContinue
 
 # Poll until no python.exe remains (max 30s)
 Write-Host "[wait] polling for python.exe to fully exit..."

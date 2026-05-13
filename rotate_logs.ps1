@@ -79,7 +79,7 @@ Start-Sleep -Seconds 2    # extra grace for OS to release handles
 
 # Rotate logs with retry on file-locked errors
 function Rotate-WithRetry {
-    param([string]$Path, [string]$NewName, [int]$MaxRetries = 6, [int]$DelaySec = 2)
+    param([string]$Path, [string]$NewName, [int]$MaxRetries = 30, [int]$DelaySec = 3)
     for ($i = 0; $i -lt $MaxRetries; $i++) {
         try {
             Rename-Item -Path $Path -NewName $NewName -ErrorAction Stop

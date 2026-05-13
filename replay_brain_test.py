@@ -21,6 +21,12 @@ import io
 import os
 import sys
 import time
+
+# Force UTF-8 stdout so em-dashes / arrows in brain reasoning don't crash on Windows cp1252.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 from pathlib import Path
 from collections import deque
 
@@ -134,9 +140,11 @@ def test_one(sample, expected_label):
 
     correct = advice.mr_edge == expected_label
     mark = "PASS" if correct else "FAIL"
+    # Strip non-ASCII from reasoning to keep print safe on Windows cp1252 terminals.
+    reasoning_ascii = advice.reasoning.encode("ascii", errors="replace").decode("ascii")[:80]
     print(f"  {mark} [{expected_label:>8} expected] wins={sample['wins']:>2}/10  "
-          f"→ regime={advice.regime:<9} mr_edge={advice.mr_edge:<8} "
-          f"mod={advice.edge_modifier:+.3f}  conf=? — {advice.reasoning[:80]}")
+          f"-> regime={advice.regime:<9} mr_edge={advice.mr_edge:<8} "
+          f"mod={advice.edge_modifier:+.3f}  | {reasoning_ascii}")
     return correct, advice
 
 

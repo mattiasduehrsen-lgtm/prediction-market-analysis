@@ -133,7 +133,7 @@ def test_one(sample, expected_label):
     )
 
     correct = advice.mr_edge == expected_label
-    mark = "✓" if correct else "✗"
+    mark = "PASS" if correct else "FAIL"
     print(f"  {mark} [{expected_label:>8} expected] wins={sample['wins']:>2}/10  "
           f"→ regime={advice.regime:<9} mr_edge={advice.mr_edge:<8} "
           f"mod={advice.edge_modifier:+.3f}  conf=? — {advice.reasoning[:80]}")

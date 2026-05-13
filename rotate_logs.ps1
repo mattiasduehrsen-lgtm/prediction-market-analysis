@@ -44,20 +44,43 @@ Write-Host "`n--- Stopping tasks ---"
 schtasks /end /tn PolyBotPaper 2>&1
 schtasks /end /tn PolyBot 2>&1
 schtasks /end /tn PolyDashboard 2>&1
+Start-Sleep -Seconds 4    # let task trees finish exiting
 Stop-Process -Name python -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 6    # Windows can take several seconds to release file handles
+# Belt-and-braces: kill any lingering cmd.exe instances running our watch_*.bat
+Get-CimInstance Win32_Process -Filter "name='cmd.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "watch_paper\.bat|watch_bot\.ps1" } |
+    ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
+    }
 Start-Sleep -Seconds 3
 
-# Rotate logs
+# Rotate logs with retry on file-locked errors
+function Rotate-WithRetry {
+    param([string]$Path, [string]$NewName, [int]$MaxRetries = 6, [int]$DelaySec = 2)
+    for ($i = 0; $i -lt $MaxRetries; $i++) {
+        try {
+            Rename-Item -Path $Path -NewName $NewName -ErrorAction Stop
+            return $true
+        } catch {
+            if ($i -eq $MaxRetries - 1) {
+                Write-Host ("[ERROR] rotate {0} failed after {1} retries: {2}" -f $Path, $MaxRetries, $_) -ForegroundColor Red
+                return $false
+            }
+            Write-Host ("[retry {0}/{1}] file still locked, waiting {2}s..." -f ($i+1), $MaxRetries, $DelaySec)
+            Start-Sleep -Seconds $DelaySec
+        }
+    }
+    return $false
+}
+
 $stamp = Get-Date -Format "yyyy-MM-dd-HHmm"
 foreach ($f in @($logFile, $dashLog)) {
     if (Test-Path $f) {
         $sizeMb = (Get-Item $f).Length / 1MB
-        $rotated = "$f.$stamp"
-        try {
-            Rename-Item -Path $f -NewName $rotated -ErrorAction Stop
-            Write-Host ("[rotated] {0} ({1:N1} MB) -> {2}" -f $f, $sizeMb, (Split-Path $rotated -Leaf))
-        } catch {
-            Write-Host "[ERROR] rotate $f failed: $_" -ForegroundColor Red
+        $newName = (Split-Path $f -Leaf) + ".$stamp"
+        if (Rotate-WithRetry -Path $f -NewName $newName) {
+            Write-Host ("[rotated] {0} ({1:N1} MB) -> {2}" -f (Split-Path $f -Leaf), $sizeMb, $newName)
         }
     }
 }

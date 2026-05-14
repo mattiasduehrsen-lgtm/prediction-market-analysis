@@ -341,6 +341,25 @@ def main():
         print(f"ABORT: no Polygon RPC available (tried {len(POLYGON_RPCS)})")
         return 4
 
+    # Pre-flight: check EOA has MATIC for gas. Polymarket's UI uses a gasless
+    # relay; we don't, so the EOA must hold a small amount of MATIC.
+    from eth_account import Account
+    pk_clean = pk if pk.startswith("0x") else "0x" + pk
+    eoa_addr = Account.from_key(pk_clean).address
+    matic_bal = w3.eth.get_balance(eoa_addr)
+    matic_eth = matic_bal / 1e18
+    # Estimate ~0.06 MATIC per redemption (gas * gasPrice from earlier real-world run)
+    estimated_gas_per_tx = 0.06
+    est_total_gas = estimated_gas_per_tx * len(plans)
+    print(f"\nEOA MATIC balance: {matic_eth:.4f} (need ~{est_total_gas:.3f} for {len(plans)} redemption(s))")
+    if matic_eth < est_total_gas:
+        print(f"\nABORT: EOA needs at least {est_total_gas:.3f} MATIC to execute. "
+              f"Currently has {matic_eth:.6f}.")
+        print(f"  Send ~$0.30 of MATIC to {eoa_addr} on Polygon to enable redemption.")
+        print(f"  Cheapest source: bridge from another L2, or buy on a CEX and withdraw to Polygon.")
+        print(f"  Alternative: use Polymarket's web UI 'Claim' button (uses their gasless relay).")
+        return 5
+
     results = []
     for plan in plans:
         print(f"\n--- Executing redeem: {plan['slug'][:40]} ---")

@@ -67,8 +67,8 @@ def main():
     address = get_wallet_address()
     print(f"Wallet address: {address}\n")
 
-    print("Fetching trade history from Polymarket data-api...")
-    trades = fetch_trades(address, limit=500)
+    print("Fetching trade history from Polymarket data-api (paginated)...")
+    trades = fetch_trades(address)
     print(f"Got {len(trades)} trades total\n")
 
     # Group by conditionId

@@ -65,6 +65,14 @@ def parse_asset_from_slug(slug):
     return None, None
 
 
+def window_start_from_slug(slug):
+    """Extract trailing epoch integer from e.g. 'eth-updown-15m-1778697000'."""
+    try:
+        return int(slug.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        return 0
+
+
 def read_csv(p):
     if not p.exists():
         return []
@@ -155,8 +163,11 @@ def main():
         size_usd = round(cost, 2)
         shares   = sum(_f(b.get("size", 0)) for b in info["buys"])
         avg_entry = round(cost / shares, 4) if shares > 0 else 0.0
-        # First buy is the entry timestamp
+        # First buy is the entry timestamp; fall back to window-start epoch from slug
+        # (used when the position came from /positions instead of /trades).
         first_buy_ts = min(int(b.get("timestamp", 0)) for b in info["buys"])
+        if first_buy_ts == 0:
+            first_buy_ts = window_start_from_slug(slug)
         # Sell timestamp (or market resolution time approximation)
         if info["sells"]:
             close_ts = max(int(s.get("timestamp", 0)) for s in info["sells"])

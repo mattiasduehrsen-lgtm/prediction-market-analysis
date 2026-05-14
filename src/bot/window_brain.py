@@ -26,12 +26,43 @@ Configuration (via .env):
 """
 from __future__ import annotations
 
+import csv as _csv
 import json
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+
+# v1.34: brain decisions CSV — written every advise() call for offline analysis.
+# Shared lock because multiple threads (per asset) write to the same file.
+_BRAIN_LOG_PATH = Path(__file__).resolve().parents[2] / "output/5m_trading/brain_decisions.csv"
+_BRAIN_LOG_LOCK = threading.Lock()
+_BRAIN_LOG_COLUMNS = [
+    "timestamp", "asset", "window", "side", "entry_price",
+    "cross_window_pct", "secs_remaining",
+    "regime", "mr_edge", "modifier", "reasoning",
+    "history_n", "history_wins", "elapsed_ms",
+    "cache_read_tokens", "cache_creation_tokens", "model",
+]
+
+
+def _append_brain_log(row: dict) -> None:
+    """Append a brain advice row to brain_decisions.csv. Best-effort."""
+    try:
+        _BRAIN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _BRAIN_LOG_LOCK:
+            new_file = not _BRAIN_LOG_PATH.exists() or _BRAIN_LOG_PATH.stat().st_size == 0
+            with _BRAIN_LOG_PATH.open("a", encoding="utf-8", newline="") as fh:
+                w = _csv.DictWriter(fh, fieldnames=_BRAIN_LOG_COLUMNS)
+                if new_file:
+                    w.writeheader()
+                # Truncate unknown keys; missing keys are blank
+                w.writerow({k: row.get(k, "") for k in _BRAIN_LOG_COLUMNS})
+    except Exception as exc:
+        # Never let brain logging fail an advise() call
+        print(f"  [BRAIN] log write error: {exc}")
 
 BRAIN_MODEL       = os.environ.get("BRAIN_MODEL",       "claude-haiku-4-5-20251001")
 BRAIN_TIMEOUT     = float(os.environ.get("BRAIN_TIMEOUT", "6.0"))
@@ -366,6 +397,27 @@ class WindowBrain:
                 f"({elapsed_ms}ms{cache_stats}) — {advice.reasoning}"
             )
             self._last_advice = advice
+
+            # v1.34: persist to brain_decisions.csv for offline analysis
+            _append_brain_log({
+                "timestamp":              time.time(),
+                "asset":                  self.asset,
+                "window":                 self.window,
+                "side":                   side,
+                "entry_price":            entry_price,
+                "cross_window_pct":       cross_window_pct,
+                "secs_remaining":         round(secs_remaining, 1),
+                "regime":                 advice.regime,
+                "mr_edge":                advice.mr_edge,
+                "modifier":               advice.edge_modifier,
+                "reasoning":              advice.reasoning,
+                "history_n":              len(self._history),
+                "history_wins":           sum(1 for t in self._history if t["won"]),
+                "elapsed_ms":             elapsed_ms,
+                "cache_read_tokens":      getattr(usage, "cache_read_input_tokens", 0) if usage else 0,
+                "cache_creation_tokens":  getattr(usage, "cache_creation_input_tokens", 0) if usage else 0,
+                "model":                  BRAIN_MODEL,
+            })
             return advice
 
         except Exception as exc:

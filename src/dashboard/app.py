@@ -515,15 +515,37 @@ _BRAIN_LINE_RE = re.compile(
 @app.route("/api/brain")
 def api_brain():
     """
-    Returns the most recent N brain advice lines from bot.log.
-    Parses [BRAIN] log entries; only entries with regime= present.
+    Returns the most recent N brain advice rows.
+    v1.34: prefers brain_decisions.csv (structured); falls back to bot.log
+    parsing if the CSV doesn't exist yet.
     """
+    csv_path = OUT_5M / "brain_decisions.csv"
+    if csv_path.exists():
+        try:
+            rows = _read_csv(csv_path)[-8:]
+            advice = []
+            for r in rows:
+                try:
+                    advice.append({
+                        "asset":     r.get("asset", "?"),
+                        "window":    r.get("window", ""),
+                        "regime":    r.get("regime", ""),
+                        "mr_edge":   r.get("mr_edge", ""),
+                        "modifier":  float(r.get("modifier") or 0),
+                        "reasoning": (r.get("reasoning") or "")[:200],
+                        "timestamp": float(r.get("timestamp") or 0),
+                    })
+                except (TypeError, ValueError):
+                    continue
+            return jsonify({"advice": advice, "source": "csv"})
+        except Exception as exc:
+            return jsonify({"advice": [], "source": "csv", "error": str(exc)[:120]})
+
+    # Fallback: parse bot.log
     log_path = Path(__file__).resolve().parents[2] / "bot.log"
     if not log_path.exists():
-        return jsonify({"advice": []})
-
+        return jsonify({"advice": [], "source": "none"})
     try:
-        # Read last ~300KB only - brain calls are rare so this should catch the most recent
         max_bytes = 300 * 1024
         size = log_path.stat().st_size
         with log_path.open("rb") as fh:
@@ -542,10 +564,122 @@ def api_brain():
                     "modifier": float(m.group("mod")),
                     "reasoning": m.group("reasoning").strip()[:200],
                 })
-        # Most recent 8
-        return jsonify({"advice": advice[-8:]})
+        return jsonify({"advice": advice[-8:], "source": "log"})
     except Exception as exc:
-        return jsonify({"advice": [], "error": str(exc)[:120]})
+        return jsonify({"advice": [], "source": "log", "error": str(exc)[:120]})
+
+
+@app.route("/api/decisions")
+def api_decisions():
+    """
+    Aggregates the last N hours of skipped_windows.csv so the user can see
+    WHY the bot is/isn't trading right now.
+
+    Query params:
+      hours: lookback window (default 24)
+
+    Response:
+      {
+        "hours": 24,
+        "total_skipped": 1234,
+        "by_reason": {"price_too_high": 600, "btc_filter": 300, ...},
+        "by_asset": {"BTC": {"total": 400, "by_reason": {...}}, ...},
+        "trades_entered_in_window": 8
+      }
+    """
+    try:
+        hours = int(request.args.get("hours", 24))
+    except (TypeError, ValueError):
+        hours = 24
+    cutoff_ts = time.time() - (hours * 3600)
+
+    skipped_rows = _read_csv(OUT_5M / "skipped_windows.csv")
+    recent_skips = [r for r in skipped_rows
+                    if float(r.get("window_end_ts") or 0) >= cutoff_ts]
+
+    by_reason = {}
+    by_asset = {}
+    for r in recent_skips:
+        reason = r.get("skip_reason", "?")
+        asset = (r.get("asset") or "?").upper()
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+        ab = by_asset.setdefault(asset, {"total": 0, "by_reason": {}})
+        ab["total"] += 1
+        ab["by_reason"][reason] = ab["by_reason"].get(reason, 0) + 1
+
+    # Sort reasons by count
+    by_reason = dict(sorted(by_reason.items(), key=lambda kv: -kv[1]))
+    for ab in by_asset.values():
+        ab["by_reason"] = dict(sorted(ab["by_reason"].items(), key=lambda kv: -kv[1]))
+
+    trades_rows = _read_csv(OUT_5M / "trades.csv")
+    entered = sum(1 for r in trades_rows if float(r.get("opened_at") or 0) >= cutoff_ts)
+
+    return jsonify({
+        "hours":                    hours,
+        "total_skipped":            len(recent_skips),
+        "trades_entered_in_window": entered,
+        "by_reason":                by_reason,
+        "by_asset":                 by_asset,
+    })
+
+
+@app.route("/api/healthz")
+def api_healthz():
+    """
+    Strict monitoring endpoint. Returns:
+      200  if everything is alive and recent (suitable for uptime monitoring)
+      503  if any critical signal is stale; body lists which checks failed
+
+    Designed for external pings (e.g. uptimerobot.com hitting this endpoint
+    every 5 minutes — alert on 503).
+
+    Checks:
+      - skipped_windows.csv written in last 5 minutes  (PAPER is evaluating)
+      - bot.log written in last 60 seconds            (any process is alive)
+      - Optional: paused.live.flag NOT present       (skipped — pause is intentional)
+    """
+    now = time.time()
+    root = Path(__file__).resolve().parents[2]
+
+    failures = []
+    checks = {}
+
+    skipped = OUT_5M / "skipped_windows.csv"
+    if skipped.exists():
+        age = now - skipped.stat().st_mtime
+        checks["skipped_windows_age_sec"] = round(age, 1)
+        if age > 300:
+            failures.append(f"skipped_windows.csv stale ({int(age)}s > 300s)")
+    else:
+        failures.append("skipped_windows.csv missing")
+        checks["skipped_windows_age_sec"] = None
+
+    bot_log = root / "bot.log"
+    if bot_log.exists():
+        age = now - bot_log.stat().st_mtime
+        checks["bot_log_age_sec"] = round(age, 1)
+        if age > 60:
+            failures.append(f"bot.log stale ({int(age)}s > 60s)")
+    else:
+        failures.append("bot.log missing")
+        checks["bot_log_age_sec"] = None
+
+    # Trades-csv recency: if 24h+ since last write AND LIVE is unpaused, may be a problem
+    # but it's normal during quiet markets — don't fail healthz on this.
+    trades = OUT_5M / "trades.csv"
+    if trades.exists():
+        checks["paper_trades_age_sec"] = round(now - trades.stat().st_mtime, 1)
+
+    status = "ok" if not failures else "fail"
+    resp = jsonify({
+        "status":   status,
+        "checks":   checks,
+        "failures": failures,
+        "version":  PATCH,
+    })
+    resp.status_code = 200 if not failures else 503
+    return resp
 
 
 @app.route("/api/health")

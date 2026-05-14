@@ -44,13 +44,23 @@ def get_wallet_address():
         return None
 
 
-def fetch_trades(address, limit=500):
-    """Fetch trades from Polymarket data-api."""
-    url = f"https://data-api.polymarket.com/trades"
-    params = {"user": address, "limit": limit}
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
+def fetch_trades(address, page_size=500, max_pages=20):
+    """Fetch ALL trades from Polymarket data-api via pagination."""
+    out = []
+    offset = 0
+    for _ in range(max_pages):
+        url = "https://data-api.polymarket.com/trades"
+        params = {"user": address, "limit": page_size, "offset": offset}
+        r = requests.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        page = r.json()
+        if not page:
+            break
+        out.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return out
 
 
 def main():

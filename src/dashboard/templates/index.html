@@ -259,6 +259,12 @@
   <div id="brain-body" style="font-family:monospace;font-size:11px;line-height:1.6;color:#999;max-height:140px;overflow-y:auto">Loading…</div>
 </section>
 
+<!-- Orphan watch: warns if Polymarket holds positions we have no CSV row for -->
+<section id="orphan-section" style="margin:12px 24px 0;padding:10px 16px;background:#0d0f18;border:1px solid #2a2d3a;border-radius:8px;display:none">
+  <h3 style="margin:0 0 6px;font-size:13px;letter-spacing:1px;text-transform:uppercase">Unrecorded Polymarket Positions</h3>
+  <div id="orphan-body" style="font-family:monospace;font-size:12px;line-height:1.6"></div>
+</section>
+
 <div class="cards" style="margin-top:12px">
   <div class="card">
     <div class="label">Wallet (USDC)</div>
@@ -877,6 +883,7 @@ function refreshAll() {
   refreshPauseState();
   refreshReadiness();    // v1.34
   refreshBrain();        // v1.34
+  refreshOrphans();      // orphan-watch
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
@@ -911,6 +918,33 @@ async function refreshReadiness() {
     body.innerHTML = lines.join('');
   } catch(e) {
     $('readiness-body').textContent = 'error: ' + e.message;
+  }
+}
+
+// orphan-watch: any Polymarket positions we have no CSV row for
+async function refreshOrphans() {
+  try {
+    const d = await fetch('/api/orphans').then(r => r.json());
+    const section = document.getElementById('orphan-section');
+    const body = document.getElementById('orphan-body');
+    if (!section || !body) return;
+    const n = d.n_orphans || 0;
+    if (n === 0) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = 'block';
+    section.style.borderColor = '#f87171';
+    body.style.color = '#fda4a4';
+    const lines = [
+      `<b style="color:#f87171">${n} unrecorded position(s) on Polymarket.</b> Backfill task runs every 4h; if this number persists, run backfill_missing_trades.py manually.`,
+    ];
+    for (const o of (d.orphans || []).slice(0, 5)) {
+      lines.push(`<div style="color:#888;font-size:11px">  ${o.slug?.slice(0,42) || '?'} — ${o.shares} shares @ ${o.avg_price} ${o.redeemable ? '(redeemable)' : ''}</div>`);
+    }
+    body.innerHTML = lines.join('');
+  } catch(e) {
+    // silently fail — non-critical panel
   }
 }
 

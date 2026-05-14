@@ -66,6 +66,13 @@ def _setup_logging() -> None:
 
 
 # ── v1.34: recent-trade WR helper for ETH conditional LIVE entry ──────────────
+# Cache keyed by (asset, window, n) → (wins, total, fetched_at). TTL 30s.
+# Reduces CSV reads from 6 threads × every-poll-cycle to roughly 1 per 30s per
+# (asset, window). The filter remains correct because trades.csv only changes
+# when a position closes — which happens on the order of minutes, not seconds.
+_WR_CACHE: dict = {}
+_WR_TTL = 30.0
+
 def _recent_trade_wr(asset: str, window: str, n: int = 8) -> "tuple[int, int]":
     """
     Return (wins, total) over the most recent N closed trades for (asset, window)
@@ -82,7 +89,12 @@ def _recent_trade_wr(asset: str, window: str, n: int = 8) -> "tuple[int, int]":
     Source: cowork_snapshot/5m_trading/trades.csv is the PAPER history file.
     """
     import csv as _csv
+    import time as _time
     from src.bot.engine_5m import TRADES_FILE as _TF
+    key = (asset.upper(), window, n)
+    cached = _WR_CACHE.get(key)
+    if cached is not None and (_time.time() - cached[2]) < _WR_TTL:
+        return cached[0], cached[1]
     try:
         if not _TF.exists():
             return 0, 0
@@ -104,7 +116,9 @@ def _recent_trade_wr(asset: str, window: str, n: int = 8) -> "tuple[int, int]":
                     wins += 1
             except (TypeError, ValueError):
                 pass
-        return wins, len(recent)
+        result = (wins, len(recent))
+        _WR_CACHE[key] = (result[0], result[1], _time.time())
+        return result
     except Exception as _e:
         print(f"  [WR-FILTER] error reading trades.csv: {_e}")
         return 0, 0

@@ -1121,6 +1121,11 @@ class LiveEngine5m:
         # We must exclude exit_reason from asdict(pos) to avoid duplicate-kwarg TypeError.
         pos_dict = asdict(pos)
         pos_dict.pop("exit_reason", None)
+        # Bug fix: state was being copied verbatim from the position (often "open" or
+        # "pending_exit") even though we're about to record a CLOSED trade. Override
+        # it here so CSV analysis isn't confused by trades that have both state=open
+        # AND exit_reason=take_profit simultaneously.
+        pos_dict["state"] = "closed"
 
         trade = ClosedLiveTrade5m(
             **pos_dict,

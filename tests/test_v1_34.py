@@ -17,6 +17,17 @@ import pytest
 
 # ── _recent_trade_wr ──────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _clear_wr_cache():
+    """Clear _WR_CACHE between tests so stale entries from prior tests don't leak."""
+    try:
+        import main
+        main._WR_CACHE.clear()
+    except Exception:
+        pass
+    yield
+
+
 @pytest.fixture
 def trades_csv(tmp_path, monkeypatch):
     """Build a temp trades.csv and patch TRADES_FILE so main.py reads it."""

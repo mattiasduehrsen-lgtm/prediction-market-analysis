@@ -634,6 +634,69 @@ def api_decisions():
     })
 
 
+@app.route("/api/orphans")
+def api_orphans():
+    """
+    Returns count of Polymarket positions held by our wallet that the bot
+    doesn't have a trade row for — i.e. positions opened but never closed
+    in our records. The 4-hour ReconcileBackfill task should keep this at 0.
+    If it climbs > 0, the backfill is failing or new orphans are appearing
+    faster than the task can catch them.
+
+    Cached 60s (Polymarket /positions is fine to hit but not on every poll).
+    """
+    import os, requests
+    cache = api_orphans._cache  # type: ignore[attr-defined]
+    now = time.time()
+    if now - cache["ts"] < 60:
+        return jsonify(cache["data"])
+
+    address = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    if not address:
+        return jsonify({"error": "no proxy address"})
+
+    try:
+        r = requests.get(
+            "https://data-api.polymarket.com/positions",
+            params={"user": address, "limit": 200},
+            timeout=8,
+        )
+        positions = r.json() if r.status_code == 200 else []
+    except Exception as e:
+        return jsonify({"error": str(e)[:80]})
+
+    # Local conditions
+    local_conds = set()
+    for asset in ("BTC", "ETH", "SOL"):
+        for row in _read_csv(OUT_5M_LIVE / f"trades_{asset}-15m.csv"):
+            cid = row.get("condition_id", "")
+            if cid:
+                local_conds.add(cid)
+
+    orphans = []
+    for p in positions:
+        cid = p.get("conditionId") or p.get("condition_id") or ""
+        if not cid or cid in local_conds:
+            continue
+        orphans.append({
+            "condition_id": cid,
+            "slug":         p.get("slug", ""),
+            "shares":       p.get("size", 0),
+            "redeemable":   p.get("redeemable", False),
+            "avg_price":    p.get("avgPrice", 0),
+        })
+    data = {
+        "n_orphans":    len(orphans),
+        "n_positions":  len(positions),
+        "orphans":      orphans[:10],   # first 10 for display
+        "checked_at":   now,
+    }
+    cache["ts"] = now
+    cache["data"] = data
+    return jsonify(data)
+api_orphans._cache = {"ts": 0.0, "data": {}}
+
+
 @app.route("/api/healthz")
 def api_healthz():
     """

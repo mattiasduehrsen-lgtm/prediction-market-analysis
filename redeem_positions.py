@@ -36,8 +36,31 @@ load_dotenv()
 ROOT = Path(__file__).resolve().parent
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-# Default RPC — polygon-rpc.com tends to rate-limit; publicnode is more reliable.
-POLYGON_RPC = os.environ.get("POLYGON_RPC", "https://polygon-bor-rpc.publicnode.com")
+# RPC fallback chain. polygon-rpc.com rate-limits aggressively; try alternatives.
+POLYGON_RPCS = [
+    os.environ.get("POLYGON_RPC", "").strip() or None,
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://polygon.llamarpc.com",
+    "https://1rpc.io/matic",
+    "https://polygon.drpc.org",
+    "https://rpc.ankr.com/polygon",
+]
+POLYGON_RPCS = [r for r in POLYGON_RPCS if r]
+
+
+def _connect_polygon():
+    from web3 import Web3
+    for url in POLYGON_RPCS:
+        try:
+            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 8}))
+            # Force a real network call to verify
+            cid = w3.eth.chain_id
+            if cid == 137:
+                print(f"  Connected via {url} (chain {cid})")
+                return w3
+        except Exception as e:
+            print(f"  {url} failed: {type(e).__name__}")
+    return None
 USDC_ADDR   = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"   # USDC on Polygon
 CTF_ADDR    = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"   # Polymarket CTF (Conditional Tokens)
 NEG_RISK_CTF_ADDR = "0xC5d563A36AE78145C45a50134d48A1215220f80a"  # neg-risk CTF (newer markets)
@@ -313,12 +336,10 @@ def main():
     if not pk.startswith("0x"):
         pk = "0x" + pk
 
-    from web3 import Web3
-    w3 = Web3(Web3.HTTPProvider(POLYGON_RPC, request_kwargs={"timeout": 15}))
-    if not w3.is_connected():
-        print(f"ABORT: cannot connect to RPC {POLYGON_RPC}")
+    w3 = _connect_polygon()
+    if w3 is None:
+        print(f"ABORT: no Polygon RPC available (tried {len(POLYGON_RPCS)})")
         return 4
-    print(f"Connected to Polygon (chainId={w3.eth.chain_id})")
 
     results = []
     for plan in plans:

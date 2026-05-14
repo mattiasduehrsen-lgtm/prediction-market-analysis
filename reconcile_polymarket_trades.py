@@ -29,15 +29,19 @@ def _f(s):
 
 
 def get_wallet_address():
-    """Get our Polymarket Safe / proxy address from .env or clob_auth."""
+    """
+    Get the Polymarket PROXY (Safe) address — that's where trades are recorded.
+    client.get_address() returns the EOA signer which has NO trades.
+    """
+    import os
+    proxy = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+    if proxy:
+        return proxy
     try:
         from src.bot.clob_auth import get_client
-        client = get_client()
-        addr = client.get_address()
-        return addr
+        return get_client().get_address()
     except Exception:
-        import os
-        return os.environ.get("POLYMARKET_PROXY_ADDRESS")
+        return None
 
 
 def fetch_trades(address, limit=500):

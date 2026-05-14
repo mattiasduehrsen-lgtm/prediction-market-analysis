@@ -371,7 +371,7 @@ def api_live_log():
 # ── Wallet balance endpoint ────────────────────────────────────────────────────
 # Cached so the dashboard doesn't hammer the CLOB API on every 5s poll.
 _balance_cache: dict = {"usdc": None, "fetched_at": 0.0}
-_BALANCE_TTL = 30.0   # seconds between live refreshes
+_BALANCE_TTL = 12.0   # seconds between live refreshes (was 30s — kept lagging during trades)
 
 
 @app.route("/api/live/balance")

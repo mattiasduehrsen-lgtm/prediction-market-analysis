@@ -656,10 +656,9 @@ function stateColor(state) {
 async function refreshLiveSummary() {
   try {
     const d = await fetch('/api/live/summary').then(r => r.json());
-    // Wallet balance — show from summary if available, else leave for refreshBalance()
-    if (d.wallet_usdc !== undefined && d.wallet_usdc !== null) {
-      $('live-wallet').textContent = '$' + parseFloat(d.wallet_usdc).toFixed(2);
-    }
+    // Wallet balance is NOT read from summary anymore (engine-written JSON lags).
+    // refreshBalance() populates both #live-wallet and #eq-balance directly from
+    // /api/live/balance (fresh CLOB query, 12s cache).
     if (!d.closed_trades && !d.open_positions) {
       $('live-pnl').textContent = '$0.00';
       return;
@@ -753,12 +752,16 @@ let eqChart = null;
 async function refreshBalance() {
   try {
     const d = await fetch('/api/live/balance').then(r => r.json());
-    const el = $('eq-balance');
-    if (d.usdc !== null && d.usdc !== undefined) {
-      el.textContent = '$' + parseFloat(d.usdc).toFixed(2);
-    } else {
-      el.textContent = '$—';
-    }
+    const val = (d.usdc !== null && d.usdc !== undefined)
+      ? '$' + parseFloat(d.usdc).toFixed(2)
+      : '$—';
+    // Update both wallet displays from the same fresh CLOB query.
+    // Previously the LIVE tab read from summary JSON (engine-written, laggy);
+    // now both tabs show the same number, refreshed every 12s server-side.
+    const eqEl = document.getElementById('eq-balance');
+    const liveEl = document.getElementById('live-wallet');
+    if (eqEl)   eqEl.textContent   = val;
+    if (liveEl) liveEl.textContent = val;
   } catch(e) {}
 }
 

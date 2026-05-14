@@ -295,32 +295,42 @@ def api_equity():
 
 @app.route("/api/live/summary")
 def api_live_summary():
+    """
+    LIVE summary now reads counts/PnL directly from trades_*.csv (single source
+    of truth). Previously aggregated from summary*.json which the engine wrote
+    based on in-memory state — but that missed manually-backfilled rows.
+
+    open_positions still comes from summary*.json (engine knows its in-memory
+    state).
+    """
     totals = {"closed_trades": 0, "wins": 0, "losses": 0,
               "total_pnl": 0.0, "open_positions": 0}
-    found = False
+
+    # Pull closed trades directly from CSVs
+    all_rows = []
+    for f in sorted(OUT_5M_LIVE.glob("trades*.csv")):
+        all_rows.extend(_read_csv(f))
+    closed = [r for r in all_rows if r.get("pnl_usd") not in (None, "")]
+    totals["closed_trades"] = len(closed)
+    win_pnls  = [float(r["pnl_usd"]) for r in closed if float(r["pnl_usd"]) > 0]
+    loss_pnls = [float(r["pnl_usd"]) for r in closed if float(r["pnl_usd"]) <= 0]
+    totals["wins"]   = len(win_pnls)
+    totals["losses"] = len(loss_pnls)
+    totals["total_pnl"] = round(sum(float(r["pnl_usd"]) for r in closed), 2)
+    totals["avg_win"]   = round(sum(win_pnls)/len(win_pnls), 2)   if win_pnls   else 0.0
+    totals["avg_loss"]  = round(sum(loss_pnls)/len(loss_pnls), 2) if loss_pnls  else 0.0
+
+    # open_positions still from engine's summary.json (its in-memory truth)
     for f in OUT_5M_LIVE.glob("summary*.json"):
         d = _read_json(f)
-        if not d:
-            continue
-        found = True
-        totals["closed_trades"] += int(d.get("closed_trades", 0))
-        totals["wins"]          += int(d.get("wins", 0))
-        totals["losses"]        += int(d.get("losses", 0))
-        totals["total_pnl"]     += float(d.get("total_pnl", 0))
-        totals["open_positions"]+= int(d.get("open_positions", 0))
-    if not found:
+        if d:
+            totals["open_positions"] += int(d.get("open_positions", 0))
+
+    if totals["closed_trades"] == 0 and totals["open_positions"] == 0:
         return jsonify({})
+
     ct = totals["closed_trades"]
     totals["win_rate"]  = round(totals["wins"] / ct * 100, 1) if ct else 0.0
-    totals["total_pnl"] = round(totals["total_pnl"], 2)
-    # avg win/loss from all live trades
-    rows = []
-    for f in sorted(OUT_5M_LIVE.glob("trades*.csv")):
-        rows.extend(_read_csv(f))
-    win_pnls  = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) > 0]
-    loss_pnls = [float(r["pnl_usd"]) for r in rows if r.get("pnl_usd") and float(r["pnl_usd"]) <= 0]
-    totals["avg_win"]  = round(sum(win_pnls)  / len(win_pnls),  2) if win_pnls  else 0.0
-    totals["avg_loss"] = round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0
     # Wallet balance — written to summary JSON by the live engine every 60s
     wallet_usdc = None
     for f in OUT_5M_LIVE.glob("summary*.json"):

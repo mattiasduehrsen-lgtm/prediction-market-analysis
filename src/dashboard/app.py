@@ -9,6 +9,21 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 from src.bot.version import PATCH, PATCH_DATE, PATCH_NOTES
 
+# Module-level imports for the CLOB balance endpoint — previously imported on
+# every /api/live/balance request (50-100ms cold start each time). Hoist them
+# up so the cache-miss path is just the actual API call.
+import os
+from dotenv import load_dotenv
+load_dotenv()
+try:
+    from src.bot.clob_auth import get_client as _get_clob_client
+    from py_clob_client_v2 import BalanceAllowanceParams, AssetType
+    _CLOB_IMPORTS_OK = True
+except Exception as _e:
+    _CLOB_IMPORTS_OK = False
+    _CLOB_IMPORT_ERROR = str(_e)
+import requests as _requests
+
 # Price-tick lines: [HH:MM:SS] BTC UP=0.505 DOWN=0.495 | 179s left
 _PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
 
@@ -389,13 +404,10 @@ def api_live_balance():
     now = time.time()
     if now - _balance_cache["fetched_at"] < _BALANCE_TTL and _balance_cache["usdc"] is not None:
         return jsonify({"usdc": _balance_cache["usdc"]})
+    if not _CLOB_IMPORTS_OK:
+        return jsonify({"usdc": None, "error": f"CLOB import failed: {_CLOB_IMPORT_ERROR}"})
     try:
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-        from src.bot.clob_auth import get_client
-        from py_clob_client_v2 import BalanceAllowanceParams, AssetType
-        client = get_client()
+        client = _get_clob_client()
         resp = client.get_balance_allowance(
             BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
         )
@@ -414,6 +426,42 @@ def api_live_balance():
 @app.route("/api/version")
 def api_version():
     return jsonify({"patch": PATCH, "date": PATCH_DATE, "notes": PATCH_NOTES})
+
+
+@app.route("/api/live/risk")
+def api_live_risk():
+    """
+    LIVE risk-state summary: daily loss vs cap, position size, headroom.
+    Reads .env for the user-configured caps and trades.csv for today's PnL.
+    """
+    import datetime as _dt
+    now = time.time()
+    today_start = _dt.datetime.now(_dt.timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).timestamp()
+
+    today_pnl = 0.0
+    today_n = 0
+    for asset in ("BTC", "ETH", "SOL"):
+        for r in _read_csv(OUT_5M_LIVE / f"trades_{asset}-15m.csv"):
+            try:
+                if float(r.get("closed_at") or 0) >= today_start:
+                    today_pnl += float(r.get("pnl_usd") or 0)
+                    today_n += 1
+            except (TypeError, ValueError):
+                pass
+
+    daily_loss_cap = float(os.environ.get("LIVE_MAX_DAILY_LOSS_USD", "50"))
+    position_size  = float(os.environ.get("LIVE_POSITION_SIZE_USD", "5"))
+    headroom = round(daily_loss_cap + today_pnl, 2)  # cap is positive number; today_pnl is signed
+    return jsonify({
+        "daily_loss_cap_usd": daily_loss_cap,
+        "position_size_usd":  position_size,
+        "today_pnl":          round(today_pnl, 2),
+        "today_trades":       today_n,
+        "headroom_to_cap":    headroom,
+        "near_cap":           headroom < 10.0,   # warn when within $10 of breaker
+    })
 
 
 # ── Pause / resume controls ────────────────────────────────────────────────────
@@ -645,7 +693,6 @@ def api_orphans():
 
     Cached 60s (Polymarket /positions is fine to hit but not on every poll).
     """
-    import os, requests
     cache = api_orphans._cache  # type: ignore[attr-defined]
     now = time.time()
     if now - cache["ts"] < 60:
@@ -656,7 +703,7 @@ def api_orphans():
         return jsonify({"error": "no proxy address"})
 
     try:
-        r = requests.get(
+        r = _requests.get(
             "https://data-api.polymarket.com/positions",
             params={"user": address, "limit": 200},
             timeout=8,

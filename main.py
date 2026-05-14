@@ -15,6 +15,7 @@ CONFIGS format: ASSET:WINDOW:STRATEGY  (e.g. BTC:5m:mean_reversion SOL:15m:mean_
 """
 from __future__ import annotations
 
+import csv as _csv
 import io
 import json
 import math
@@ -23,6 +24,7 @@ import pathlib
 import sys
 import threading
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -63,6 +65,39 @@ def _setup_logging() -> None:
     wrapped = io.TextIOWrapper(tee, encoding="utf-8", write_through=True)
     sys.stdout = wrapped
     sys.stderr = wrapped
+
+
+# ── Failed-LIVE-entry logger ──────────────────────────────────────────────────
+# When engine.place_entry() returns None for any reason (paused, auth fail,
+# duplicate, share-min, etc.), log the candidate context to a dedicated CSV so
+# we can audit rejection rates without grepping bot.log.
+_FAILED_ENTRIES_PATH = Path("output/5m_live/failed_entries.csv")
+_FAILED_ENTRIES_LOCK = threading.Lock()
+_FAILED_ENTRIES_COLS = ["timestamp", "asset", "window", "side",
+                       "entry_price", "slug", "condition_id"]
+
+def _log_failed_entry(asset, window, side, entry_price, slug, condition_id):
+    """Append one row to failed_entries.csv. Best-effort; never raises."""
+    try:
+        _FAILED_ENTRIES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _FAILED_ENTRIES_LOCK:
+            need_header = (not _FAILED_ENTRIES_PATH.exists()
+                           or _FAILED_ENTRIES_PATH.stat().st_size == 0)
+            with _FAILED_ENTRIES_PATH.open("a", encoding="utf-8", newline="") as fh:
+                w = _csv.DictWriter(fh, fieldnames=_FAILED_ENTRIES_COLS)
+                if need_header:
+                    w.writeheader()
+                w.writerow({
+                    "timestamp":    time.time(),
+                    "asset":        asset,
+                    "window":       window,
+                    "side":         side,
+                    "entry_price":  entry_price,
+                    "slug":         slug,
+                    "condition_id": condition_id,
+                })
+    except Exception as e:
+        print(f"  [FAILED-ENTRIES] log write error: {e}")
 
 
 # ── v1.34: recent-trade WR helper for ETH conditional LIVE entry ──────────────
@@ -1129,7 +1164,7 @@ def run_5m_loop(
 
                         if live:
                             token_id = market.token_id_up if side == "UP" else market.token_id_down
-                            engine.place_entry(
+                            _result = engine.place_entry(
                                 condition_id=market.condition_id,
                                 slug=market.slug,
                                 asset=asset,
@@ -1145,6 +1180,17 @@ def run_5m_loop(
                                 price_60s_before_entry=p_60s,
                                 price_30s_before_entry=p_30s,
                             )
+                            # If place_entry returned None, log the rejection so we
+                            # can later analyze WHY LIVE entries are failing without
+                            # combing through bot.log line by line. The engine's print()
+                            # statements explain the reason; we just record that it
+                            # happened with the candidate context.
+                            if _result is None:
+                                _log_failed_entry(
+                                    asset=asset, window=window, side=side,
+                                    entry_price=entry_price, slug=market.slug,
+                                    condition_id=market.condition_id,
+                                )
                         else:
                             engine.open(
                                 condition_id=market.condition_id,

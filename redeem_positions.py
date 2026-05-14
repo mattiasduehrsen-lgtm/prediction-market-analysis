@@ -36,7 +36,8 @@ load_dotenv()
 ROOT = Path(__file__).resolve().parent
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-POLYGON_RPC = os.environ.get("POLYGON_RPC", "https://polygon-rpc.com")
+# Default RPC — polygon-rpc.com tends to rate-limit; publicnode is more reliable.
+POLYGON_RPC = os.environ.get("POLYGON_RPC", "https://polygon-bor-rpc.publicnode.com")
 USDC_ADDR   = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"   # USDC on Polygon
 CTF_ADDR    = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"   # Polymarket CTF (Conditional Tokens)
 NEG_RISK_CTF_ADDR = "0xC5d563A36AE78145C45a50134d48A1215220f80a"  # neg-risk CTF (newer markets)
@@ -249,6 +250,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--execute", action="store_true",
                     help="Actually broadcast Safe transactions (default: report only)")
+    ap.add_argument("--limit", type=int, default=MAX_PER_RUN,
+                    help=f"Cap on positions to redeem this run (default {MAX_PER_RUN}). Use 1 as a canary.")
     args = ap.parse_args()
 
     addr = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
@@ -298,10 +301,10 @@ def main():
         return 0
 
     # ── Execute path ────────────────────────────────────────────────────────
-    if len(plans) > MAX_PER_RUN:
-        print(f"\nABORT: {len(plans)} plans exceeds MAX_PER_RUN={MAX_PER_RUN}. "
-              f"Re-run after manually reducing or raise the cap with care.")
-        return 2
+    limit = min(args.limit, MAX_PER_RUN)
+    if len(plans) > limit:
+        print(f"\n[INFO] Capping execution to first {limit} of {len(plans)} plans (--limit / MAX_PER_RUN).")
+        plans = plans[:limit]
 
     pk = os.environ.get("POLYMARKET_PRIVATE_KEY", "").strip()
     if not pk:

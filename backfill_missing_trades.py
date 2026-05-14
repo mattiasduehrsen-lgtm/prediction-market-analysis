@@ -85,7 +85,20 @@ def main():
 
     print("Fetching trade history...")
     all_trades = fetch_all_trades(address)
-    print(f"Got {len(all_trades)} trades\n")
+    print(f"Got {len(all_trades)} trades")
+
+    # Also fetch currently-redeemable positions — these are trades where the bot
+    # bought, the market resolved, and the bot never called redeem(). They have
+    # the same effect as "missed close": USDC was spent, tokens worthless or won
+    # but no trade row in our CSV.
+    print("Fetching current redeemable positions...")
+    r = requests.get(
+        "https://data-api.polymarket.com/positions",
+        params={"user": address, "limit": 200},
+        timeout=15,
+    )
+    open_positions = r.json() if r.status_code == 200 else []
+    print(f"Got {len(open_positions)} positions ({sum(1 for p in open_positions if p.get('redeemable'))} redeemable)\n")
 
     # Group by condition
     by_cond = defaultdict(lambda: {"buys": [], "sells": [], "slug": ""})
@@ -106,6 +119,24 @@ def main():
             cid = r.get("condition_id", "")
             if cid:
                 local_conds_by_asset[asset].add(cid)
+
+    # Add currently-redeemable positions to by_cond so they're treated as
+    # missing trades (they have a buy but no sell on Polymarket's side).
+    for p in open_positions:
+        cond = p.get("conditionId") or ""
+        if not cond:
+            continue
+        slug = p.get("slug", "") or by_cond[cond]["slug"]
+        by_cond[cond]["slug"] = slug
+        # If no buy recorded, synthesize one from the position's avgPrice and size.
+        if not by_cond[cond]["buys"]:
+            size = _f(p.get("size", 0))
+            avg = _f(p.get("avgPrice", p.get("avg_price", 0)))
+            if size > 0:
+                by_cond[cond]["buys"].append({
+                    "size": size, "price": avg,
+                    "timestamp": int(p.get("entry_ts", 0)) or 0,
+                })
 
     # Compute missing per asset
     to_backfill = defaultdict(list)

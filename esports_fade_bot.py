@@ -122,10 +122,37 @@ class FadeBot:
             print(f"[fade-bot] market fetch error {condition_id[:10]}: {e}")
         return None
 
+    TARGETS_PATH = ES_DIR / "fade_targets.json"
+
     def _load_targets(self) -> set[str]:
-        path = ES_DIR / "fade_targets.json"
-        d = json.loads(path.read_text(encoding="utf-8"))
+        d = json.loads(self.TARGETS_PATH.read_text(encoding="utf-8"))
+        self.targets_mtime = self.TARGETS_PATH.stat().st_mtime
         return set(w.lower() for w in d["target_wallets"])
+
+    def maybe_reload_targets(self):
+        """Hot-reload fade_targets.json if it's been refreshed on disk.
+
+        Lets the refresh-targets task update wallet list without restarting bot.
+        """
+        try:
+            cur_mtime = self.TARGETS_PATH.stat().st_mtime
+        except OSError:
+            return
+        if cur_mtime <= getattr(self, "targets_mtime", 0):
+            return
+        try:
+            d = json.loads(self.TARGETS_PATH.read_text(encoding="utf-8"))
+            new_targets = set(w.lower() for w in d["target_wallets"])
+            added = len(new_targets - self.target_wallets)
+            removed = len(self.target_wallets - new_targets)
+            self.target_wallets = new_targets
+            self.targets_mtime = cur_mtime
+            print(f"[fade-bot] reloaded {len(new_targets)} targets "
+                  f"(+{added} new, -{removed} dropped)")
+            self.write_event({"type": "targets_reloaded", "count": len(new_targets),
+                              "added": added, "removed": removed})
+        except Exception as e:
+            print(f"[fade-bot] targets reload failed: {e}")
 
     def poll(self):
         """Pull recent trades and filter to target wallets."""
@@ -337,8 +364,9 @@ class FadeBot:
                     n_fades_now = 0
                 if time.time() - last_summary > 60:
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} fades={n_fades_now} "
-                          f"unique_tx={len(self.seen_tx_set)}")
+                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}")
                     last_summary = time.time()
+                    self.maybe_reload_targets()
                 time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             print("[fade-bot] stopping")

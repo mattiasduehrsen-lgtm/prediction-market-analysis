@@ -92,9 +92,8 @@ def main():
             break
         if page % 5 == 0:
             print(f"  page {page}: total markets={len(rows)} elapsed={time.time()-t0:.0f}s")
-        if len(rows) > 500_000:
-            print("  cap 500k — stopping")
-            break
+        # No row cap — Polymarket has >500k markets and the cap was
+        # truncating recent esports markets (which sit at high page numbers).
 
     print(f"\nTotal CLOB markets: {len(rows)}")
     df = pd.DataFrame(rows)

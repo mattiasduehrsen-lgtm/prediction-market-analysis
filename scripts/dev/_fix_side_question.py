@@ -54,10 +54,12 @@ for asset in ("BTC", "ETH", "SOL"):
                 r["side"] = "UP"  # fallback
                 n_fixed += 1
     if n_fixed:
+        fn = [k for k in fieldnames if k is not None]
         with f.open("w", encoding="utf-8", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=list(fieldnames))
+            w = csv.DictWriter(fh, fieldnames=fn, extrasaction="ignore")
             w.writeheader()
-            w.writerows(rows)
+            for r in rows:
+                w.writerow({k: r.get(k, "") for k in fn})
         print(f"  {asset}: fixed {n_fixed} rows")
         total_fixed += n_fixed
 print(f"\nTotal fixed: {total_fixed}")

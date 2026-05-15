@@ -67,8 +67,11 @@ def main():
             for t in (m.get("tokens") or []):
                 tid = t.get("token_id") or t.get("tokenId") or ""
                 outc = t.get("outcome") or ""
+                winner = bool(t.get("winner", False))
+                price = float(t.get("price") or 0)
                 if tid:
-                    tokens.append({"token_id": str(tid), "outcome": outc})
+                    tokens.append({"token_id": str(tid), "outcome": outc,
+                                   "winner": winner, "price": price})
             rows.append({
                 "condition_id": m.get("condition_id") or "",
                 "question_id":  m.get("question_id") or "",

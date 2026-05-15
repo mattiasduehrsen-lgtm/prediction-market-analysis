@@ -180,8 +180,25 @@ def main():
             exit_price = 0.0
             exit_reason = "BACKFILL_market_resolved"
         pnl = round(proceeds - cost, 4)
-        # Inferred side: just use UP since we can't reliably tell from data-api without market metadata
-        side = "?"  # unknown without more data
+        # Side: prefer outcome from /positions or /trades response — the data-api
+        # returns "Up" / "Down" alongside size/price. Falls back to "UP" if absent
+        # (most of our bot's trades are UP; better than "?").
+        side = "?"
+        for src in (info["buys"] + open_positions if False else info["buys"]):
+            o = (src.get("outcome") or "").upper()
+            if o in ("UP", "DOWN"):
+                side = o
+                break
+        if side == "?":
+            # Try open_positions (where outcome is more reliably populated)
+            for p in open_positions:
+                if (p.get("conditionId") or p.get("condition_id")) == cond:
+                    o = (p.get("outcome") or "").upper()
+                    if o in ("UP", "DOWN"):
+                        side = o
+                        break
+        if side == "?":
+            side = "UP"   # conservative default — bot rarely buys DOWN on LIVE
         to_backfill[asset].append({
             "position_id":  f"bf_{uuid.uuid4().hex[:8]}",
             "condition_id": cond,

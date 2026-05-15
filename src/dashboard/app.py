@@ -27,9 +27,10 @@ import requests as _requests
 # Price-tick lines: [HH:MM:SS] BTC UP=0.505 DOWN=0.495 | 179s left
 _PRICE_TICK = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \w+ UP=")
 
-OUT_5M      = Path(__file__).resolve().parents[2] / "output/5m_trading"
-OUT_5M_LIVE = Path(__file__).resolve().parents[2] / "output/5m_live"
-PAUSE_FLAG  = OUT_5M_LIVE / "paused.live.flag"
+OUT_5M       = Path(__file__).resolve().parents[2] / "output/5m_trading"
+OUT_5M_LIVE  = Path(__file__).resolve().parents[2] / "output/5m_live"
+OUT_ESPORTS  = Path(__file__).resolve().parents[2] / "output/esports_fade"
+PAUSE_FLAG   = OUT_5M_LIVE / "paused.live.flag"
 
 app = Flask(__name__)
 
@@ -830,4 +831,136 @@ def api_health():
         "watchdog_paper_age_sec":  _age_secs(watchdog),
         "version":                 PATCH,
         "version_date":            PATCH_DATE,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ESPORTS FADE BOT  —  fully independent CS2 fade-trading bot.
+# Separate process (PolyBotEsports), separate output dir, separate strategy.
+# Do NOT mix with the 15m Up/Down crypto endpoints above.
+# ══════════════════════════════════════════════════════════════════════════════
+
+ES_TRADES_CSV   = OUT_ESPORTS / "paper_trades.csv"
+ES_RESULTS_CSV  = OUT_ESPORTS / "paper_results.csv"
+ES_BOT_LOG      = OUT_ESPORTS / "bot.log"
+ES_WATCHDOG_LOG = Path(__file__).resolve().parents[2] / "watchdog_esports.log"
+
+
+def _es_signal_rows() -> list[dict]:
+    if not ES_TRADES_CSV.exists():
+        return []
+    rows = []
+    with open(ES_TRADES_CSV, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            r = {k: v for k, v in r.items() if k is not None}
+            rows.append(r)
+    return rows
+
+
+@app.route("/api/esports/summary")
+def api_esports_summary():
+    """Aggregate stats: signals logged, last signal age, realized PnL (if eval ran)."""
+    rows = _es_signal_rows()
+    now = time.time()
+    last_signal_ts = 0.0
+    if rows:
+        try:
+            last_signal_ts = float(rows[-1].get("timestamp") or 0)
+        except (TypeError, ValueError):
+            last_signal_ts = 0.0
+    # Count today's signals (UTC day)
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date()
+    signals_today = 0
+    for r in rows:
+        try:
+            ts = float(r.get("timestamp") or 0)
+            if datetime.fromtimestamp(ts, tz=timezone.utc).date() == today:
+                signals_today += 1
+        except (TypeError, ValueError):
+            continue
+
+    # Realized PnL — only available after running analysis/evaluate_paper.py
+    results = []
+    if ES_RESULTS_CSV.exists():
+        with open(ES_RESULTS_CSV, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                r = {k: v for k, v in r.items() if k is not None}
+                results.append(r)
+
+    n_resolved = sum(1 for r in results if r.get("status") in ("WIN", "LOSS"))
+    n_wins     = sum(1 for r in results if r.get("status") == "WIN")
+    total_pnl  = 0.0
+    total_bet  = 0.0
+    for r in results:
+        if r.get("status") not in ("WIN", "LOSS"):
+            continue
+        try:
+            total_pnl += float(r.get("realized_pnl") or 0)
+            total_bet += float(r.get("our_bet") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    target_count = 0
+    try:
+        target_path = Path(__file__).resolve().parents[2] / "cowork_snapshot" / "esports" / "fade_targets.json"
+        if target_path.exists():
+            target_count = len(json.loads(target_path.read_text(encoding="utf-8")).get("target_wallets") or [])
+    except Exception:
+        pass
+
+    return jsonify({
+        "mode":                "PAPER",  # bot is currently always paper from dashboard's POV
+        "target_wallet_count": target_count,
+        "signals_total":       len(rows),
+        "signals_today_utc":   signals_today,
+        "last_signal_age_sec": (now - last_signal_ts) if last_signal_ts else None,
+        # Realized — only populated when analysis/evaluate_paper.py has been run
+        "resolved":            n_resolved,
+        "wins":                n_wins,
+        "win_rate_pct":        round((n_wins / n_resolved * 100), 2) if n_resolved else None,
+        "total_pnl_usd":       round(total_pnl, 2),
+        "total_bet_usd":       round(total_bet, 2),
+        "roi_pct":             round((total_pnl / total_bet * 100), 2) if total_bet else None,
+        "results_age_sec":     (now - ES_RESULTS_CSV.stat().st_mtime) if ES_RESULTS_CSV.exists() else None,
+    })
+
+
+@app.route("/api/esports/recent")
+def api_esports_recent():
+    """Last N signals, newest first."""
+    try:
+        n = int(request.args.get("n", "25"))
+    except ValueError:
+        n = 25
+    rows = _es_signal_rows()[-n:]
+    rows.reverse()
+    return jsonify(rows)
+
+
+@app.route("/api/esports/status")
+def api_esports_status():
+    """Bot process liveness via log file freshness."""
+    now = time.time()
+
+    def _age(p: Path):
+        try:
+            return now - p.stat().st_mtime
+        except Exception:
+            return None
+
+    log_tail = ""
+    if ES_BOT_LOG.exists():
+        try:
+            with open(ES_BOT_LOG, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()[-15:]
+                log_tail = "".join(lines)
+        except Exception:
+            log_tail = ""
+
+    return jsonify({
+        "bot_log_age_sec":      _age(ES_BOT_LOG),
+        "watchdog_log_age_sec": _age(ES_WATCHDOG_LOG),
+        "trades_csv_age_sec":   _age(ES_TRADES_CSV),
+        "log_tail":             log_tail,
     })

@@ -84,6 +84,7 @@
   <button class="tab-btn" onclick="showTab('ev')">EV Analysis</button>
   <button class="tab-btn" onclick="showTab('live')">🔴 Live Trading</button>
   <button class="tab-btn" onclick="showTab('equity')">Equity</button>
+  <button class="tab-btn" onclick="showTab('esports')" style="margin-left: 24px; border-left: 1px solid #2a2d3a; padding-left: 18px;">🎮 Esports Fade <span style="color:#888; font-size:11px;">(separate bot)</span></button>
 </div>
 
 <!-- ══ OVERVIEW TAB ══ -->
@@ -372,6 +373,71 @@
   </section>
 
 </div><!-- end tab-equity -->
+
+<!-- ══ ESPORTS FADE TAB ══ -->
+<!-- Fully independent CS2 fade-trading bot. Not connected to the 15m crypto bot. -->
+<div id="tab-esports" class="tab-pane">
+
+  <section style="padding-top:16px;">
+    <div style="background:#1a1d29; border:1px solid #2a2d3a; border-left:3px solid #9c27b0; padding:12px 16px; border-radius:4px; margin-bottom:16px;">
+      <div style="color:#888; font-size:11px; margin-bottom:4px;">SEPARATE BOT</div>
+      <div style="font-size:13px;">
+        <strong style="color:#ce93d8;">Esports Fade Bot</strong> — fades 481 persistently-losing CS2 traders on Polymarket.
+        Backtested at <strong>+110% ROI</strong> OOS. Runs as its own process (<code>PolyBotEsports</code>),
+        independent of the 15m crypto bot. PAPER mode only until validation completes.
+      </div>
+    </div>
+  </section>
+
+  <section style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+    <div class="es-card"><div class="es-label">MODE</div><div class="es-value" id="es-mode">—</div></div>
+    <div class="es-card"><div class="es-label">TARGET WALLETS</div><div class="es-value" id="es-targets">—</div></div>
+    <div class="es-card"><div class="es-label">SIGNALS TODAY</div><div class="es-value" id="es-today">—</div></div>
+    <div class="es-card"><div class="es-label">SIGNALS TOTAL</div><div class="es-value" id="es-total">—</div></div>
+    <div class="es-card"><div class="es-label">LAST SIGNAL</div><div class="es-value" id="es-last">—</div></div>
+  </section>
+
+  <section style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:8px;">
+    <div class="es-card"><div class="es-label">RESOLVED</div><div class="es-value" id="es-resolved">—</div></div>
+    <div class="es-card"><div class="es-label">WIN RATE</div><div class="es-value" id="es-wr">—</div></div>
+    <div class="es-card"><div class="es-label">TOTAL PNL</div><div class="es-value" id="es-pnl">—</div></div>
+    <div class="es-card"><div class="es-label">ROI</div><div class="es-value" id="es-roi">—</div></div>
+    <div class="es-card"><div class="es-label">RESULTS AGE</div><div class="es-value" id="es-results-age">—</div></div>
+  </section>
+
+  <section>
+    <h2 style="font-size:13px; color:#aaa; margin-top:20px;">Recent fade signals</h2>
+    <table>
+      <thead>
+        <tr style="font-size:11px; color:#888;">
+          <th style="text-align:left">Time (UTC)</th>
+          <th style="text-align:left">Target</th>
+          <th style="text-align:left">Slug</th>
+          <th style="text-align:left">Their side</th>
+          <th style="text-align:right">Their price</th>
+          <th style="text-align:left">Our outcome</th>
+          <th style="text-align:right">Our entry</th>
+          <th style="text-align:right">Bet</th>
+        </tr>
+      </thead>
+      <tbody id="es-recent-tbody"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2 style="font-size:13px; color:#aaa; margin-top:20px;">Bot log tail</h2>
+    <pre id="es-log" style="background:#0f1117; border:1px solid #2a2d3a; color:#bbb; padding:10px; font-size:11px; overflow-x:auto; white-space:pre-wrap;">loading…</pre>
+  </section>
+
+</div><!-- end tab-esports -->
+
+<style>
+.es-card { background:#1a1d29; border:1px solid #2a2d3a; padding:10px 14px; border-radius:4px; }
+.es-label { color:#666; font-size:10px; letter-spacing:0.08em; margin-bottom:4px; }
+.es-value { color:#fff; font-size:18px; font-weight:600; }
+.es-value.pos { color:#00c853; }
+.es-value.neg { color:#ff5252; }
+</style>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -886,7 +952,78 @@ function refreshAll() {
   refreshBrain();        // v1.34
   refreshOrphans();      // orphan-watch
   refreshRisk();         // risk status
+  refreshEsports();      // esports fade bot (separate)
   $('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+// ── ESPORTS FADE BOT — independent of 15m crypto bot ─────────────────────────
+function fmtAge(secs) {
+  if (secs == null) return '—';
+  if (secs < 60)   return Math.round(secs) + 's ago';
+  if (secs < 3600) return Math.round(secs/60) + 'm ago';
+  if (secs < 86400) return Math.round(secs/3600) + 'h ago';
+  return Math.round(secs/86400) + 'd ago';
+}
+
+async function refreshEsports() {
+  // Summary card
+  try {
+    const s = await fetch('/api/esports/summary').then(r => r.json());
+    $('es-mode').textContent     = s.mode || '—';
+    $('es-targets').textContent  = s.target_wallet_count || 0;
+    $('es-today').textContent    = s.signals_today_utc || 0;
+    $('es-total').textContent    = s.signals_total || 0;
+    $('es-last').textContent     = fmtAge(s.last_signal_age_sec);
+
+    $('es-resolved').textContent = s.resolved || 0;
+    $('es-wr').textContent       = s.win_rate_pct != null ? s.win_rate_pct.toFixed(1) + '%' : '—';
+
+    const pnl = s.total_pnl_usd || 0;
+    const pnlEl = $('es-pnl');
+    pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+    pnlEl.className = 'es-value ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '');
+
+    const roi = s.roi_pct;
+    const roiEl = $('es-roi');
+    roiEl.textContent = roi != null ? ((roi >= 0 ? '+' : '') + roi.toFixed(2) + '%') : '—';
+    roiEl.className = 'es-value ' + (roi != null && roi > 0 ? 'pos' : roi != null && roi < 0 ? 'neg' : '');
+
+    $('es-results-age').textContent = fmtAge(s.results_age_sec);
+  } catch (e) {
+    $('es-mode').textContent = 'error: ' + e.message;
+  }
+
+  // Recent signals
+  try {
+    const rows = await fetch('/api/esports/recent?n=25').then(r => r.json());
+    const tb = $('es-recent-tbody');
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" style="color:#666; padding:8px;">No signals yet — bot may be starting up</td></tr>';
+    } else {
+      tb.innerHTML = rows.map(r => {
+        const ts = parseFloat(r.timestamp || 0);
+        const dt = ts ? new Date(ts*1000).toISOString().replace('T',' ').replace(/\..*/,'') : '—';
+        const wallet = (r.target_wallet || '').slice(0, 10) + '…';
+        const slug = (r.fade_slug || '').slice(0, 36);
+        return `<tr style="font-size:11px;">
+          <td style="color:#999">${dt}</td>
+          <td><code style="color:#ce93d8">${wallet}</code></td>
+          <td style="color:#bbb">${slug}</td>
+          <td style="color:#888">${r.their_side} ${r.their_outcome}</td>
+          <td style="text-align:right; color:#bbb">${parseFloat(r.their_price).toFixed(3)}</td>
+          <td style="color:#4fc3f7">${r.our_outcome}</td>
+          <td style="text-align:right; color:#4fc3f7">${parseFloat(r.our_entry).toFixed(3)}</td>
+          <td style="text-align:right">$${parseFloat(r.our_bet).toFixed(0)}</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (e) { /* ignore */ }
+
+  // Log tail
+  try {
+    const s = await fetch('/api/esports/status').then(r => r.json());
+    $('es-log').textContent = s.log_tail || '(no log yet)';
+  } catch (e) { /* ignore */ }
 }
 
 // LIVE risk-status: daily PnL vs circuit-breaker cap

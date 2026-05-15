@@ -697,7 +697,11 @@ class LiveEngine5m:
                 status       = order.get("status", "").lower()
                 raw_matched  = order.get("size_matched", 0) or 0
                 size_matched = float(raw_matched)
-                if status in ("matched", "filled") and size_matched > 0:
+                # Partial-fill bug fix: claim ANY non-zero size_matched (was
+                # only fully-matched). When the user sees 1.58 + 2.36 + 10 fills
+                # in the Polymarket UI and the bot drops the position because it
+                # was 'cancelled' at end, those shares are real and need tracking.
+                if size_matched > 0:
                     avg_price = order.get("average_price")
                     if avg_price:
                         try:
@@ -708,8 +712,8 @@ class LiveEngine5m:
                     pos.state  = State.OPEN
                     _save_positions(self.positions, self._positions_file)
                     print(
-                        f"[LIVE5M] CANCEL→OPEN {position_id} — order filled before cancel; "
-                        f"now tracking {pos.shares:.2f} shares @ {pos.entry_price:.4f}"
+                        f"[LIVE5M] CANCEL→OPEN {position_id} — order partially/fully filled "
+                        f"(status={status}); now tracking {pos.shares:.2f} shares @ {pos.entry_price:.4f}"
                     )
                     # Place standing GTC SELL at TP for this surprise fill
                     self._place_tp_order(position_id)
@@ -785,7 +789,12 @@ class LiveEngine5m:
                 _save_positions(self.positions, self._positions_file)
                 continue
 
-            if status in ("matched", "filled") and size_matched > 0:
+            # Partial-fill bug fix: accept ANY size_matched > 0 if the order is
+            # no longer live ("matched", "filled", "cancelled"). Previously this
+            # branch only fired on full match, so partial fills + cancellation
+            # silently dropped the position while shares stayed in the wallet.
+            terminal = status in ("matched", "filled", "cancelled", "canceled")
+            if size_matched > 0 and (terminal or size_matched >= float(pos.shares)):
                 # Use actual fill price if available (Finding 3.C)
                 avg_price = order.get("average_price")
                 if avg_price:

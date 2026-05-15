@@ -999,6 +999,24 @@ def run_5m_loop(
 
                     if do_enter:
                         now_ts = time.time()
+
+                        # Phase 1: microstructure snapshot at decision time. Pure observation;
+                        # writes CSV after the entry actually opens (so we can join by
+                        # position_id). No bot behavior change.
+                        try:
+                            from src.bot import microstructure as _micro
+                            _micro_snap = _micro.capture(
+                                asset=asset, window=window, side=side,
+                                entry_price=entry_price, secs_into_window=secs_into_window,
+                                clob_feed=clob_feed,
+                                price_history=list(price_history),
+                                binance_feed=binance_feed,
+                                binance_history=list(btc_history),
+                            )
+                        except Exception as _e:
+                            print(f"  [MICRO] capture error: {_e}")
+                            _micro_snap = None
+
                         p_60s = p_30s = cheap_20s_ago = 0.0
                         for ts, px in price_history:
                             age = now_ts - ts
@@ -1191,8 +1209,16 @@ def run_5m_loop(
                                     entry_price=entry_price, slug=market.slug,
                                     condition_id=market.condition_id,
                                 )
+                            else:
+                                # Phase 1: write microstructure snapshot with the new LIVE position_id
+                                if _micro_snap is not None:
+                                    try:
+                                        from src.bot import microstructure as _micro
+                                        _micro.write(_micro_snap, _result.position_id)
+                                    except Exception as _e:
+                                        print(f"  [MICRO] write error: {_e}")
                         else:
-                            engine.open(
+                            _pos = engine.open(
                                 condition_id=market.condition_id,
                                 slug=market.slug,
                                 asset=asset,
@@ -1216,6 +1242,13 @@ def run_5m_loop(
                                 ask_depth_at_entry=book_ask_depth,
                                 clob_midpoint_trend_60s=clob_trend,
                             )
+                            # Phase 1: write microstructure snapshot with the new PAPER position_id
+                            if _pos is not None and _micro_snap is not None:
+                                try:
+                                    from src.bot import microstructure as _micro
+                                    _micro.write(_micro_snap, _pos.position_id)
+                                except Exception as _e:
+                                    print(f"  [MICRO] write error: {_e}")
 
             # ── Summary every ~60s (time-based, stable across poll intervals) ──
             if time.time() - last_summary_ts >= 60:

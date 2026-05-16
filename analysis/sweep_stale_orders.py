@@ -47,7 +47,7 @@ def main():
     print("OPEN ORDERS")
     print("=" * 60)
     try:
-        orders = client.get_orders()
+        orders = client.get_open_orders()
         if not orders:
             print("  (none — nothing resting on book)")
         else:

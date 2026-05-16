@@ -45,6 +45,8 @@ ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pat
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)
 MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
+LIVE_FILL_POLL_INTERVAL = 2.0 # seconds between fill checks
+LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
 
 # Games where per-game OOS backtest cleared ~+100% ROI on a real sample:
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
@@ -67,8 +69,10 @@ class FadeBot:
             from src.bot.clob_auth import get_client
             self.client = get_client()
         self.daily_pnl = 0.0
+        self.daily_pnl_mtime = 0.0
         self.daily_risk_usd = 0.0
         self.day_started = datetime.now(timezone.utc).date()
+        self.daily_pnl_path = OUT_DIR / "live_daily_pnl.json"
         # Exposure state (resets daily)
         self.market_exposure: dict[tuple[str, str], float] = {}  # (cid, our_outcome) -> usd
         self.fades_today = 0
@@ -174,6 +178,32 @@ class FadeBot:
         self.targets_mtime = self.fade_mtime
         print(f"[fade-bot] loaded {len(fade)} fade + {len(self.follow_wallets)} follow wallets")
         return fade
+
+    def maybe_reload_daily_pnl(self):
+        """Refresh self.daily_pnl from live_daily_pnl.json if updated.
+
+        Written by analysis/evaluate_live.py (every 15 min via scheduled task).
+        Only the entry for today's UTC date counts — older snapshots are ignored.
+        """
+        try:
+            if not self.daily_pnl_path.exists():
+                return
+            cur_mtime = self.daily_pnl_path.stat().st_mtime
+        except OSError:
+            return
+        if cur_mtime <= self.daily_pnl_mtime:
+            return
+        try:
+            d = json.loads(self.daily_pnl_path.read_text(encoding="utf-8"))
+            today_str = str(datetime.now(timezone.utc).date())
+            if d.get("date") == today_str:
+                self.daily_pnl = float(d.get("realized_pnl_usd") or 0.0)
+            else:
+                # Snapshot is from a previous day — today's realized PnL is 0
+                self.daily_pnl = 0.0
+            self.daily_pnl_mtime = cur_mtime
+        except Exception as e:
+            print(f"[fade-bot] daily_pnl reload failed: {e}")
 
     def maybe_reload_targets(self):
         """Hot-reload fade_targets.json AND follow_targets.json on mtime change.
@@ -403,41 +433,113 @@ class FadeBot:
             self.place_live_order(trade)
 
     def place_live_order(self, trade: dict):
-        """Place a GTC BUY on Polymarket CLOB for the fade signal."""
+        """Place a GTC BUY on Polymarket CLOB, then poll for fill / cancel on timeout.
+
+        Sequence:
+          1. Submit BUY at our_entry + 1c slippage (taker-style).
+          2. Poll get_order every LIVE_FILL_POLL_INTERVAL seconds.
+          3. If matched → record final fill (price + shares actually matched).
+          4. If still resting after LIVE_FILL_TIMEOUT → cancel.
+          5. After cancel, re-check status (partial fills count — same defense
+             as the 15m bot's v1.10 cancel→open pattern).
+        """
         token_id = trade.get("our_token_id")
         if not token_id:
             self.write_event({"type": "live_skip_no_token", "tx": trade.get("tx_hash")})
             return
-        # Add slippage so the order fills as a taker
         price = round(min(MAX_ENTRY_PRICE, trade["our_entry"] + ENTRY_SLIPPAGE), 2)
         if price < MIN_ENTRY_PRICE:
             self.write_event({"type": "live_skip_price_too_low", "price": price, "tx": trade.get("tx_hash")})
             return
         shares = round(trade["our_bet"] / price, 2)
+
         try:
             from py_clob_client_v2 import OrderArgs, OrderType
             from py_clob_client_v2.order_builder.constants import BUY
             args = OrderArgs(price=price, size=shares, side=BUY, token_id=str(token_id))
             signed = self.client.create_order(args)
             resp = self.client.post_order(signed, OrderType.GTC)
-            order_id = (resp or {}).get("orderID") or (resp or {}).get("orderId") or ""
-            status = (resp or {}).get("status", "")
-            print(f"[fade-bot]   LIVE order posted: id={order_id} status={status} price={price} shares={shares}")
+            order_id  = (resp or {}).get("orderID") or (resp or {}).get("orderId") or ""
+            init_stat = (resp or {}).get("status", "")
+            print(f"[fade-bot]   LIVE order posted: id={order_id} status={init_stat} price={price} shares={shares}")
             self.write_event({"type": "live_order_placed", "order_id": order_id,
-                              "status": status, "price": price, "shares": shares,
+                              "status": init_stat, "price": price, "shares": shares,
                               "token_id": str(token_id), "tx": trade.get("tx_hash"),
                               "fade_condition": trade.get("fade_condition"),
                               "our_outcome": trade.get("our_outcome")})
-            with self.live_orders_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"ts": time.time(), "order_id": order_id,
-                                     "status": status, "price": price, "shares": shares,
-                                     "token_id": str(token_id),
-                                     **{k: trade.get(k) for k in ("fade_condition","fade_slug","our_outcome","target_wallet")}
-                                     }) + "\n")
         except Exception as e:
-            print(f"[fade-bot]   LIVE order FAILED: {e}")
+            print(f"[fade-bot]   LIVE order POST FAILED: {e}")
             self.write_event({"type": "live_order_error", "error": str(e),
                               "tx": trade.get("tx_hash")})
+            return
+
+        # --- Poll for fill, cancel on timeout ---
+        final_status   = init_stat
+        final_matched  = 0.0
+        final_avg_price = price
+        t0 = time.time()
+        if order_id:
+            while time.time() - t0 < LIVE_FILL_TIMEOUT:
+                time.sleep(LIVE_FILL_POLL_INTERVAL)
+                try:
+                    o = self.client.get_order(order_id) or {}
+                    final_status   = str(o.get("status", "")).lower()
+                    final_matched  = float(o.get("size_matched") or 0)
+                    ap = o.get("average_price")
+                    if ap:
+                        try:    final_avg_price = float(ap)
+                        except (TypeError, ValueError): pass
+                except Exception as e:
+                    self.write_event({"type": "live_order_status_error",
+                                      "order_id": order_id, "error": str(e)})
+                    continue
+                if final_status == "matched" or final_matched >= shares:
+                    break
+
+            # Cancel if still resting at timeout
+            if final_status not in ("matched", "cancelled") and final_matched < shares:
+                try:
+                    self.client.cancel(order_id)
+                    # Re-check post-cancel: defends against the cancel-vs-fill race.
+                    o2 = self.client.get_order(order_id) or {}
+                    final_status  = str(o2.get("status", "")).lower() or "cancelled"
+                    new_matched   = float(o2.get("size_matched") or 0)
+                    if new_matched > final_matched:
+                        final_matched = new_matched
+                    ap2 = o2.get("average_price")
+                    if ap2:
+                        try:    final_avg_price = float(ap2)
+                        except (TypeError, ValueError): pass
+                    print(f"[fade-bot]   LIVE order CANCELLED id={order_id} matched={final_matched:.2f}/{shares:.2f}")
+                except Exception as e:
+                    print(f"[fade-bot]   LIVE cancel FAILED id={order_id}: {e}")
+                    self.write_event({"type": "live_order_cancel_error",
+                                      "order_id": order_id, "error": str(e)})
+
+        cost = round(final_avg_price * final_matched, 4)
+        print(f"[fade-bot]   LIVE final: id={order_id} status={final_status} "
+              f"matched={final_matched:.2f}@{final_avg_price:.4f} cost=${cost}")
+        self.write_event({"type": "live_order_final", "order_id": order_id,
+                          "status": final_status, "matched": final_matched,
+                          "avg_price": final_avg_price, "cost_usd": cost,
+                          "tx": trade.get("tx_hash")})
+
+        # Append to live_orders.jsonl with the FINAL state — evaluate_live.py
+        # uses this for PnL. Cost = avg_price * matched (actual $ spent).
+        with self.live_orders_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "ts": time.time(),
+                "order_id": order_id,
+                "status": final_status,
+                "price": final_avg_price,
+                "shares": final_matched,
+                "cost_usd": cost,
+                "requested_price": price,
+                "requested_shares": shares,
+                "token_id": str(token_id),
+                **{k: trade.get(k) for k in ("fade_condition", "fade_slug", "our_outcome",
+                                              "target_wallet", "strategy")},
+            }) + "\n")
 
     def run(self):
         print(f"[fade-bot] polling every {POLL_INTERVAL}s — writing to {OUT_DIR}")
@@ -456,10 +558,13 @@ class FadeBot:
                 else:
                     n_fades_now = 0
                 if time.time() - last_summary > 60:
+                    pnl_str = f" daily_pnl=${self.daily_pnl:+.2f}" if self.live else ""
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} fades={n_fades_now} "
-                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}")
+                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}")
                     last_summary = time.time()
                     self.maybe_reload_targets()
+                    if self.live:
+                        self.maybe_reload_daily_pnl()
                 time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             print("[fade-bot] stopping")

@@ -102,13 +102,15 @@ def main():
             print(f"{z['pos_id']:>10} {z['asset']:>5} {z['side']:>5} {z['shares']:>7.2f} {z['price']:>6.3f} {'NO SLUG':>32}")
             continue
         try:
-            r = sess.get(f"https://clob.polymarket.com/markets/slug/{slug}", timeout=8)
-            if r.status_code != 200:
-                # Try the data-api alternative
-                r = sess.get(f"https://gamma-api.polymarket.com/markets?slug={slug}", timeout=8)
+            # gamma-api gives us conditionId + outcomes + resolution
+            r = sess.get(f"https://gamma-api.polymarket.com/markets/slug/{slug}", timeout=8)
             mkt = r.json() if r.status_code == 200 else None
-            if isinstance(mkt, list) and mkt:
-                mkt = mkt[0]
+            # If gamma has it, also pull CLOB for winner-per-token
+            if mkt and mkt.get("conditionId"):
+                cid = mkt["conditionId"]
+                rc = sess.get(f"https://clob.polymarket.com/markets/{cid}", timeout=8)
+                if rc.status_code == 200:
+                    mkt = rc.json()
         except Exception as e:
             print(f"{z['pos_id']:>10} {z['asset']:>5} {z['side']:>5} {z['shares']:>7.2f} {z['price']:>6.3f} {slug:>32} fetch_err: {e}")
             continue

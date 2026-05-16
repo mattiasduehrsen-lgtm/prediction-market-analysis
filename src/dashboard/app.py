@@ -873,10 +873,16 @@ _MARKET_TIMES_MEM: dict[str, dict] = {}
 _MARKET_TIMES_LOADED = False
 
 
-def _get_market_times(condition_id: str) -> dict | None:
-    """Return {'game_start_time','end_date_iso'} for a market, cached.
+def _get_market_meta(condition_id: str) -> dict | None:
+    """Return cached market metadata for a conditionId, fetching on cache miss.
 
-    Hits CLOB API on cache miss. Cache persisted to ES_MARKET_TIMES.
+    Fields:
+      - game_start_time : ISO time the match starts
+      - end_date_iso    : market resolution deadline
+      - question        : human-readable market question (e.g.,
+        "Counter-Strike: Natus Vincere vs Vitality - Map 1 Winner")
+
+    Cache persisted to ES_MARKET_TIMES.
     """
     global _MARKET_TIMES_MEM, _MARKET_TIMES_LOADED
     if not _MARKET_TIMES_LOADED:
@@ -884,22 +890,29 @@ def _get_market_times(condition_id: str) -> dict | None:
         _MARKET_TIMES_LOADED = True
     if not condition_id:
         return None
-    if condition_id in _MARKET_TIMES_MEM:
-        return _MARKET_TIMES_MEM[condition_id]
+    cached = _MARKET_TIMES_MEM.get(condition_id)
+    # Backfill question for entries that were cached before this field was added.
+    if cached and "question" in cached:
+        return cached
     try:
         r = _requests.get(f"https://clob.polymarket.com/markets/{condition_id}", timeout=4)
         if r.status_code != 200:
-            return None
+            return cached  # keep stale cache rather than wiping
         j = r.json()
         info = {
             "game_start_time": j.get("game_start_time") or "",
             "end_date_iso":    j.get("end_date_iso") or "",
+            "question":        j.get("question") or "",
         }
         _MARKET_TIMES_MEM[condition_id] = info
         _save_market_times_cache(_MARKET_TIMES_MEM)
         return info
     except Exception:
-        return None
+        return cached
+
+
+# Back-compat alias for older callers
+_get_market_times = _get_market_meta
 
 
 def _es_signal_rows() -> list[dict]:
@@ -1021,16 +1034,17 @@ def api_esports_recent():
     rows = rows[-n:]
     rows.reverse()
 
-    # Enrich with game start/end times from the per-conditionId cache.
+    # Enrich with game start/end times + question from per-conditionId cache.
     # On cache miss we fetch CLOB once and persist — subsequent calls are free.
     for r in rows:
         cid = r.get("fade_condition")
         if not cid:
             continue
-        info = _get_market_times(cid)
+        info = _get_market_meta(cid)
         if info:
             r["game_start_time"] = info.get("game_start_time") or ""
             r["end_date_iso"]    = info.get("end_date_iso") or ""
+            r["question"]        = info.get("question") or ""
 
     return jsonify(rows)
 
@@ -1076,6 +1090,18 @@ def api_esports_live():
         recent = recent[-15:][::-1]
     else:
         recent = orders[-15:][::-1]
+
+    # Enrich each recent live order with the market question (for "Vitality wins
+    # Map 1"-style displays) and resolution deadline.
+    for r in recent:
+        cid = r.get("fade_condition") or r.get("conditionId")
+        if not cid:
+            continue
+        info = _get_market_meta(cid)
+        if info:
+            r["question"]        = info.get("question") or ""
+            r["game_start_time"] = info.get("game_start_time") or ""
+            r["end_date_iso"]    = info.get("end_date_iso") or ""
 
     return jsonify({
         "orders_total":     n_total,

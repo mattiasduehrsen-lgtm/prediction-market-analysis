@@ -421,9 +421,9 @@
     <table>
       <thead>
         <tr style="font-size:11px; color:#888;">
-          <th style="text-align:left">Slug</th>
+          <th style="text-align:left">Match / Market</th>
           <th style="text-align:left">Strat</th>
-          <th style="text-align:left">Outcome</th>
+          <th style="text-align:left">Our position</th>
           <th style="text-align:right">Price</th>
           <th style="text-align:right">Shares</th>
           <th style="text-align:right">Cost</th>
@@ -443,12 +443,12 @@
           <th style="text-align:left">Time (UTC)</th>
           <th style="text-align:center">Strat</th>
           <th style="text-align:left">Target</th>
-          <th style="text-align:left">Slug</th>
+          <th style="text-align:left">Match</th>
           <th style="text-align:left" title="Match start (CLOB game_start_time)">Game start</th>
           <th style="text-align:left" title="Market resolution deadline (CLOB end_date_iso)">Resolves by</th>
-          <th style="text-align:left">Their side</th>
+          <th style="text-align:left">Their bet</th>
           <th style="text-align:right">Their price</th>
-          <th style="text-align:left">Our outcome</th>
+          <th style="text-align:left">Our position</th>
           <th style="text-align:right">Our entry</th>
           <th style="text-align:right">Bet</th>
           <th style="text-align:center">Status</th>
@@ -1000,6 +1000,52 @@ function fmtAge(secs) {
   return Math.round(secs/86400) + 'd ago';
 }
 
+// Build a clean "what are we betting on" phrase.
+// Examples:
+//   slug=cs2-navi-vit-2026-05-15-game1, outcome=Vitality
+//   question="Counter-Strike: Natus Vincere vs Vitality - Map 1 Winner"
+//   -> "Vitality to win Map 1"
+//
+//   slug=cs2-...-total-games-2pt5, outcome=Over -> "Over 2.5 maps"
+//   slug=cs2-...-map-handicap-away-1pt5, outcome=Team -> "Team +1.5 maps"
+//   slug=cs2-team-team-DATE, outcome=Team -> "Team to win series"
+function describePosition(slug, outcome, question) {
+  const o = outcome || '?';
+  const s = (slug || '').toLowerCase();
+  const q = question || '';
+
+  // Map-N winner
+  const gameMatch = s.match(/-game(\d)$/);
+  if (gameMatch) return `${o} to win Map ${gameMatch[1]}`;
+
+  // Totals (Over/Under N.N maps)
+  const totalsMatch = s.match(/-total-games-(\d+)pt(\d+)/);
+  if (totalsMatch) return `${o} ${totalsMatch[1]}.${totalsMatch[2]} maps`;
+
+  // Map handicap (Team +/- N.N)
+  const handicapMatch = s.match(/-map-handicap-(home|away)-(\d+)pt(\d+)/);
+  if (handicapMatch) return `${o} +${handicapMatch[2]}.${handicapMatch[3]} maps (handicap)`;
+
+  // Series winner (just teams + date, nothing else after)
+  if (q.toLowerCase().includes('series')) return `${o} to win series`;
+  // Default series-winner shape: cs2-T1-T2-DATE with no additional suffix
+  if (/^[a-z0-9]+-[a-z0-9]+-[a-z0-9]+-\d{4}-\d{2}-\d{2}$/.test(s)) return `${o} to win series`;
+
+  // Fallback: just the outcome name
+  return o;
+}
+
+// Short match label "Team A vs Team B" extracted from the question, fallback to slug
+function shortMatch(slug, question) {
+  if (question) {
+    // Strip the prefix like "Counter-Strike: " and suffix like " - Map 1 Winner"
+    let m = question.replace(/^(Counter-Strike|League of Legends|Dota 2|Valorant)[:\s]*/i, '');
+    m = m.replace(/\s*-\s*(Map \d+ Winner|Series Winner|Winner|Total Games|Map Handicap).*/i, '');
+    return m.length > 36 ? m.slice(0, 36) + '…' : m;
+  }
+  return (slug || '').slice(0, 32);
+}
+
 async function refreshEsports() {
   // Summary card
   try {
@@ -1078,16 +1124,21 @@ async function refreshEsports() {
         const gameStartCell = fmtUtc(r.game_start_time);
         const endDateCell   = fmtUtc(r.end_date_iso);
 
+        // Sentence-style description (uses the question from CLOB if cached)
+        const matchLbl = shortMatch(r.fade_slug, r.question);
+        const ourPosition = describePosition(r.fade_slug, r.our_outcome, r.question);
+        const theirPosition = describePosition(r.fade_slug, r.their_outcome, r.question);
+
         return `<tr style="font-size:11px; ${rowBg}">
           <td style="color:#999">${dt}</td>
           <td style="text-align:center; color:${stratColor}; font-weight:600; font-size:10px;">${strat}</td>
           <td><code style="color:#ce93d8">${wallet}</code></td>
-          <td style="color:#bbb">${slug}</td>
+          <td style="color:#bbb" title="${r.fade_slug || ''}">${matchLbl}</td>
           <td style="font-size:10px;">${gameStartCell}</td>
           <td style="font-size:10px;">${endDateCell}</td>
-          <td style="color:#888">${r.their_side} ${r.their_outcome}</td>
+          <td style="color:#888">${r.their_side} <em>${theirPosition}</em></td>
           <td style="text-align:right; color:#bbb">${parseFloat(r.their_price).toFixed(3)}</td>
-          <td style="color:#4fc3f7">${r.our_outcome}</td>
+          <td style="color:#4fc3f7"><strong>${ourPosition}</strong></td>
           <td style="text-align:right; color:#4fc3f7">${parseFloat(r.our_entry).toFixed(3)}</td>
           <td style="text-align:right">$${parseFloat(r.our_bet).toFixed(0)}</td>
           ${statusCell}
@@ -1126,19 +1177,24 @@ async function refreshEsports() {
         tb.innerHTML = '<tr><td colspan="8" style="color:#666; padding:8px;">No orders yet</td></tr>';
       } else {
         tb.innerHTML = live.recent.map(o => {
-          const slug   = (o.fade_slug || '').slice(0, 32);
-          const strat  = (o.strategy || 'fade').toUpperCase();
+          const slug     = o.fade_slug || '';
+          const question = o.question  || '';
+          const matchLbl = shortMatch(slug, question);
+          const position = describePosition(slug, o.our_outcome, question);
+          const strat    = (o.strategy || 'fade').toUpperCase();
           const stratColor = strat === 'FOLLOW' ? '#69f0ae' : '#ff8a80';
-          const status = (o.status || '').toLowerCase();
-          const price  = parseFloat(o.price || 0).toFixed(3);
-          const shares = parseFloat(o.shares || 0).toFixed(2);
-          const cost   = parseFloat(o.cost_usd || 0).toFixed(2);
-          const pnlVal = o.realized_pnl;
+          const status   = (o.status || '').toLowerCase();
+          const price    = parseFloat(o.price || 0).toFixed(3);
+          const shares   = parseFloat(o.shares || 0).toFixed(2);
+          const cost     = parseFloat(o.cost_usd || 0).toFixed(2);
+          const pnlVal   = o.realized_pnl;
           let stCell, pnlCell;
-          if (status === 'matched' || status === 'live' || status === 'delayed') {
-            stCell  = `<td style="text-align:center; color:#00c853">${status}</td>`;
+          if (status === 'matched') {
+            stCell  = '<td style="text-align:center; color:#00c853">matched</td>';
+          } else if (status === 'live' || status === 'delayed') {
+            stCell  = `<td style="text-align:center; color:#ffab40">${status}</td>`;
           } else if (status === 'cancelled' || status === 'canceled') {
-            stCell  = `<td style="text-align:center; color:#888">cancel</td>`;
+            stCell  = '<td style="text-align:center; color:#888">cancel</td>';
           } else {
             stCell  = `<td style="text-align:center; color:#aaa">${status||'-'}</td>`;
           }
@@ -1149,9 +1205,9 @@ async function refreshEsports() {
             pnlCell = '<td style="text-align:right; color:#666">—</td>';
           }
           return `<tr style="font-size:11px;">
-            <td style="color:#bbb">${slug}</td>
+            <td style="color:#bbb" title="${slug}">${matchLbl}</td>
             <td style="text-align:center; color:${stratColor}; font-weight:600; font-size:10px;">${strat}</td>
-            <td style="color:#4fc3f7">${o.our_outcome || ''}</td>
+            <td style="color:#4fc3f7"><strong>${position}</strong></td>
             <td style="text-align:right">${price}</td>
             <td style="text-align:right">${shares}</td>
             <td style="text-align:right">$${cost}</td>

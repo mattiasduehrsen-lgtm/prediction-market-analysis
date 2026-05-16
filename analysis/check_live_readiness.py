@@ -16,11 +16,13 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
-load_dotenv()
+# Make 'src.bot.clob_auth' importable regardless of CWD
+sys.path.insert(0, str(ROOT))
+from dotenv import load_dotenv
+load_dotenv(ROOT / ".env")
 
 
 def check(name, ok, detail=""):

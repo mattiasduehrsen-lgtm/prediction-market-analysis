@@ -847,6 +847,59 @@ ES_WATCHDOG_LOG = Path(__file__).resolve().parents[2] / "watchdog_esports.log"
 ES_LIVE_ORDERS_JSONL = OUT_ESPORTS / "live_orders.jsonl"
 ES_LIVE_RESULTS_CSV  = OUT_ESPORTS / "live_results.csv"
 ES_LIVE_DAILY_PNL    = OUT_ESPORTS / "live_daily_pnl.json"
+ES_MARKET_TIMES      = OUT_ESPORTS / "market_times.json"
+
+
+def _load_market_times_cache() -> dict[str, dict]:
+    if not ES_MARKET_TIMES.exists():
+        return {}
+    try:
+        return json.loads(ES_MARKET_TIMES.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_market_times_cache(cache: dict[str, dict]):
+    try:
+        import os as _os
+        tmp = ES_MARKET_TIMES.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        _os.replace(tmp, ES_MARKET_TIMES)
+    except Exception:
+        pass
+
+
+_MARKET_TIMES_MEM: dict[str, dict] = {}
+_MARKET_TIMES_LOADED = False
+
+
+def _get_market_times(condition_id: str) -> dict | None:
+    """Return {'game_start_time','end_date_iso'} for a market, cached.
+
+    Hits CLOB API on cache miss. Cache persisted to ES_MARKET_TIMES.
+    """
+    global _MARKET_TIMES_MEM, _MARKET_TIMES_LOADED
+    if not _MARKET_TIMES_LOADED:
+        _MARKET_TIMES_MEM = _load_market_times_cache()
+        _MARKET_TIMES_LOADED = True
+    if not condition_id:
+        return None
+    if condition_id in _MARKET_TIMES_MEM:
+        return _MARKET_TIMES_MEM[condition_id]
+    try:
+        r = _requests.get(f"https://clob.polymarket.com/markets/{condition_id}", timeout=4)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        info = {
+            "game_start_time": j.get("game_start_time") or "",
+            "end_date_iso":    j.get("end_date_iso") or "",
+        }
+        _MARKET_TIMES_MEM[condition_id] = info
+        _save_market_times_cache(_MARKET_TIMES_MEM)
+        return info
+    except Exception:
+        return None
 
 
 def _es_signal_rows() -> list[dict]:
@@ -967,6 +1020,18 @@ def api_esports_recent():
     # The signal CSV is append-only chronologically; tail then reverse for newest-first.
     rows = rows[-n:]
     rows.reverse()
+
+    # Enrich with game start/end times from the per-conditionId cache.
+    # On cache miss we fetch CLOB once and persist — subsequent calls are free.
+    for r in rows:
+        cid = r.get("fade_condition")
+        if not cid:
+            continue
+        info = _get_market_times(cid)
+        if info:
+            r["game_start_time"] = info.get("game_start_time") or ""
+            r["end_date_iso"]    = info.get("end_date_iso") or ""
+
     return jsonify(rows)
 
 

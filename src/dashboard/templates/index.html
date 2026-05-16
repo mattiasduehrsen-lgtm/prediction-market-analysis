@@ -444,6 +444,8 @@
           <th style="text-align:center">Strat</th>
           <th style="text-align:left">Target</th>
           <th style="text-align:left">Slug</th>
+          <th style="text-align:left" title="Match start (CLOB game_start_time)">Game start</th>
+          <th style="text-align:left" title="Market resolution deadline (CLOB end_date_iso)">Resolves by</th>
           <th style="text-align:left">Their side</th>
           <th style="text-align:right">Their price</th>
           <th style="text-align:left">Our outcome</th>
@@ -1032,7 +1034,7 @@ async function refreshEsports() {
     const rows = await fetch('/api/esports/recent?n=25').then(r => r.json());
     const tb = $('es-recent-tbody');
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="8" style="color:#666; padding:8px;">No signals yet — bot may be starting up</td></tr>';
+      tb.innerHTML = '<tr><td colspan="12" style="color:#666; padding:8px;">No signals yet — bot may be starting up</td></tr>';
     } else {
       tb.innerHTML = rows.map(r => {
         const ts = parseFloat(r.timestamp || 0);
@@ -1063,11 +1065,26 @@ async function refreshEsports() {
         const strat = (r.strategy || 'fade').toUpperCase();
         const stratColor = strat === 'FOLLOW' ? '#69f0ae' : '#ff8a80';
 
+        // Game times — only present when /api/esports/recent enriched the row
+        const fmtUtc = (iso) => {
+          if (!iso) return '<span style="color:#444">—</span>';
+          try {
+            const d = new Date(iso);
+            // YYYY-MM-DD HH:MM UTC
+            const pad = n => String(n).padStart(2,'0');
+            return `<span style="color:#9ccc65">${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}</span>`;
+          } catch(e) { return iso; }
+        };
+        const gameStartCell = fmtUtc(r.game_start_time);
+        const endDateCell   = fmtUtc(r.end_date_iso);
+
         return `<tr style="font-size:11px; ${rowBg}">
           <td style="color:#999">${dt}</td>
           <td style="text-align:center; color:${stratColor}; font-weight:600; font-size:10px;">${strat}</td>
           <td><code style="color:#ce93d8">${wallet}</code></td>
           <td style="color:#bbb">${slug}</td>
+          <td style="font-size:10px;">${gameStartCell}</td>
+          <td style="font-size:10px;">${endDateCell}</td>
           <td style="color:#888">${r.their_side} ${r.their_outcome}</td>
           <td style="text-align:right; color:#bbb">${parseFloat(r.their_price).toFixed(3)}</td>
           <td style="color:#4fc3f7">${r.our_outcome}</td>

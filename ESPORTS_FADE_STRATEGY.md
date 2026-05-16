@@ -14,6 +14,43 @@ After ~9h of PAPER on this dev PC:
 
 This is a tiny sample but **points within the +110% backtest band on first contact with live data**. Continuing PAPER collection.
 
+## Re-validation with fresh data (2026-05-15 evening, post-catch-up)
+
+After realizing our scrape was stuck at March 20 due to a 500k-market cap in
+`build_clob_index.py`, we re-ran the full pipeline on the laptop. Data now
+ends 2026-05-15 (today). New numbers:
+
+| Metric | Before catch-up | After catch-up |
+|---|---|---|
+| Markets scraped | 14,316 | **32,610** |
+| Trades indexed | 1,576,278 | **4,200,152** |
+| Active losing CS2 wallets | 481 | **1,817** |
+| OOS fade-bottom-1000 ROI | +110% | **+133%** (164k trades) |
+| OOS copy-top-10 ROI | +57% | **+255%** (9.5k trades) |
+
+Top fade target by realized loss: `0x47138dc1…` with **119,830 trades** at
+**-$67,612 PnL** (-11.3% ROI). This is the wallet that we've been observing
+heavily fading NAVI in tonight's live matches.
+
+**fade_targets.json now has top-500 active losers** (vs 481 before). Bot
+hot-reloaded the new set automatically via mtime check — no restart needed.
+
+The strategy edge grew, not shrank, with more data. Confidence is much higher.
+
+## Production state (2026-05-15)
+
+Bot runs 24/7 on the laptop (`PolyBotEsports`). Dev PC is no longer required
+for any part of the production loop:
+
+| Task | Schedule | What it does |
+|---|---|---|
+| `PolyBotEsports` | continuous (watchdog) | Polls Polymarket, logs fade signals |
+| `PolyBotEsportsEval` | every 30 min | Re-computes realized PnL → dashboard |
+| `PolyBotEsportsRefresh` | every 4 hours | Re-scrapes new markets, regenerates `fade_targets.json`; bot hot-reloads |
+
+Dashboard tab `🎮 Esports Fade` (separate from the 15m crypto bot) shows
+signals, PnL, recent fades, bot log tail.
+
 ---
 
 ## TL;DR

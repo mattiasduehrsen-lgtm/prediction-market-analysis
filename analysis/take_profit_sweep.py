@@ -88,18 +88,19 @@ def main():
         if not token_id:
             continue
 
-        # Best bid = what someone is offering to BUY for. That's what we'd
-        # receive selling now.
+        # Best bid = HIGHEST price someone is offering to buy at. That's what
+        # we'd receive selling now. The CLOB returns a dict with "bids" sorted
+        # ascending — best bid is the LAST element.
         try:
             ob = client.get_order_book(str(token_id))
-            bids = getattr(ob, "bids", None) or []
+            bids = (ob or {}).get("bids") if isinstance(ob, dict) else []
             best_bid = 0.0
             if bids:
-                # Bids may be a list of dicts with price/size, or namedtuples
-                first = bids[0]
-                price_val = first.get("price") if isinstance(first, dict) else getattr(first, "price", None)
-                if price_val is not None:
-                    best_bid = float(price_val)
+                last = bids[-1]
+                if isinstance(last, dict):
+                    best_bid = float(last.get("price") or 0)
+                else:
+                    best_bid = float(getattr(last, "price", 0))
         except Exception as e:
             print(f"  {slug:>40}  orderbook err: {e}")
             continue

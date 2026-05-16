@@ -100,13 +100,15 @@ def main():
     total_cost = 0.0
 
     # ── Aggregate SELLs per token_id so BUY rows can be paired with SELL exits.
-    # Each token_id may have multiple SELL fills (partial TP sweeps).
+    # Each token_id may have multiple SELL fills (partial TP sweeps); we'll
+    # consume from this pool in chronological BUY order so multiple BUYs on
+    # the same token don't each double-count the same proceeds.
     sells_by_token: dict[str, dict] = {}
     for o in orders:
         if str(o.get("side", "BUY")).upper() != "SELL":
             continue
         if str(o.get("status", "")).lower() != "matched":
-            continue   # only count matched SELLs
+            continue
         tid = str(o.get("token_id") or "")
         if not tid:
             continue
@@ -114,17 +116,30 @@ def main():
         sells_by_token[tid]["shares"]   += float(o.get("shares") or 0)
         sells_by_token[tid]["proceeds"] += float(o.get("cost_usd") or 0)
 
-    for o in orders:
-        # Skip SELL rows in the main per-BUY accounting loop; they're folded
-        # into the matching BUY row above.
-        if str(o.get("side", "BUY")).upper() == "SELL":
-            continue
+    # Track how much we've already consumed per token so subsequent BUYs on
+    # the same token get only the remaining (unallocated) proceeds.
+    consumed: dict[str, dict] = {tid: {"shares": 0.0, "proceeds": 0.0}
+                                 for tid in sells_by_token}
 
+    # Sort BUYs chronologically so FIFO allocation is deterministic
+    buy_orders = sorted(
+        [o for o in orders if str(o.get("side", "BUY")).upper() == "BUY"
+                          and str(o.get("status", "")).lower() == "matched"
+                          and float(o.get("shares") or 0) > 0],
+        key=lambda x: float(x.get("ts") or 0)
+    )
+    # Also include non-matched BUY rows (cancelled/etc) so they show up in the
+    # output even though they don't get paired with sells
+    other_rows = [o for o in orders if str(o.get("side", "BUY")).upper() == "BUY"
+                                    and (str(o.get("status", "")).lower() != "matched"
+                                         or float(o.get("shares") or 0) <= 0)]
+
+    for o in buy_orders + other_rows:
         cid    = o.get("fade_condition") or ""
         our_o  = o.get("our_outcome") or ""
         price  = float(o.get("price") or 0)
         shares = float(o.get("shares") or 0)
-        cost   = price * shares          # actual $ spent on this BUY
+        cost   = price * shares
         ts     = float(o.get("ts") or 0)
         tid    = str(o.get("token_id") or "")
 
@@ -133,10 +148,21 @@ def main():
 
         is_today = ts and str(datetime.fromtimestamp(ts, tz=timezone.utc).date()) == today_str
 
-        # Was this position (partially or fully) sold early via TP?
-        sell = sells_by_token.get(tid, {"shares": 0.0, "proceeds": 0.0})
-        sold_shares   = sell["shares"]
-        sold_proceeds = sell["proceeds"]
+        # Consume from this token's remaining sell pool (FIFO across BUYs).
+        pool      = sells_by_token.get(tid, {"shares": 0.0, "proceeds": 0.0})
+        used      = consumed.get(tid, {"shares": 0.0, "proceeds": 0.0})
+        remain_sh = max(0.0, pool["shares"]   - used["shares"])
+        remain_pr = max(0.0, pool["proceeds"] - used["proceeds"])
+        # Allocate min(shares, remain_sh) to this BUY pro-rata on proceeds
+        sold_shares = min(shares, remain_sh)
+        if remain_sh > 0:
+            sold_proceeds = remain_pr * (sold_shares / remain_sh)
+        else:
+            sold_proceeds = 0.0
+        # Record what we just consumed so later BUYs see less
+        if tid in consumed:
+            consumed[tid]["shares"]   += sold_shares
+            consumed[tid]["proceeds"] += sold_proceeds
         unsold_shares = max(0.0, shares - sold_shares)
 
         if shares > 0 and unsold_shares < 0.01 and sold_shares > 0:

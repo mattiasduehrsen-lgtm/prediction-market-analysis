@@ -57,21 +57,18 @@ def main():
     df["pnl"] = pnl_for_price(df["price"], df["won"].values)
     df["game"] = df["mkt_slug"].fillna("").str.split("-").str[0]
 
-    split = int(len(df) * 0.7)
-    train, test = df.iloc[:split], df.iloc[split:].copy()
-
-    # Identify recently-active losers per game (n>=30 in 60d of train, ROI<-5%, last 14d)
+    # Per-game 70/30 split — global split would empty non-CS2 games
     games_to_test = ["cs2", "league", "valorant", "dota", "ewc"]
     print("\n=== Per-game fade-bottom on TEST (active losers from train) ===")
     print(f"{'game':>10} {'targets':>8} {'test_trades':>12} {'WR%':>7} {'PnL':>14} {'ROI%':>8}")
 
     for g in games_to_test:
-        # Filter game subset
-        g_train = train[train["game"] == g]
-        g_test  = test[test["game"] == g]
-        if not len(g_train) or not len(g_test):
-            print(f"{g:>10}  no data")
+        gdf = df[df["game"] == g].sort_values("timestamp").reset_index(drop=True)
+        if len(gdf) < 1000:
+            print(f"{g:>10}  too few trades ({len(gdf)})")
             continue
+        split = int(len(gdf) * 0.7)
+        g_train, g_test = gdf.iloc[:split], gdf.iloc[split:]
 
         # Identify losing wallets within this game
         agg = g_train.groupby("proxyWallet").agg(

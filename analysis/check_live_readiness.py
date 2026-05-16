@@ -80,24 +80,52 @@ def main():
         all_ok &= check("get_client()", False, str(e))
         sys.exit(1)
 
-    # 4 — balance + allowance
-    print("\n[4] On-chain balance")
+    # 4 — balance + ON-CHAIN allowance (API cache lags; query the chain)
+    print("\n[4] On-chain balance + allowance (queries Polygon directly)")
     try:
         from py_clob_client_v2 import BalanceAllowanceParams, AssetType
         b = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
-        bal_raw = b.get("balance", "0")
-        allow_raw = b.get("allowance", "0")
-        bal_usd = int(bal_raw) / 1_000_000
-        allow_usd = int(allow_raw) / 1_000_000
-        check("balance fetched", True, f"${bal_usd:.4f} USDC available")
-        check("allowance fetched", True, f"${allow_usd:.4f} USDC")
-        # Sanity: need at least one day's risk cap available
-        all_ok &= check("balance >= $50 (one day's risk cap)", bal_usd >= 50.0,
-                        f"got ${bal_usd:.2f}")
-        all_ok &= check("allowance >= $50", allow_usd >= 50.0,
-                        f"got ${allow_usd:.2f}")
+        bal_usd = int(b.get("balance", 0)) / 1_000_000
+        check("API balance", True, f"${bal_usd:.4f} USDC")
+        all_ok &= check("balance >= $50", bal_usd >= 50.0, f"got ${bal_usd:.2f}")
     except Exception as e:
         all_ok &= check("balance check", False, str(e))
+
+    # On-chain allowance — the CLOB API caches and lags, so check the chain
+    try:
+        from web3 import Web3
+        USDC_ADDR    = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        CTF_ADDR     = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+        CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+        ERC20_ABI = [{"name": "allowance", "type": "function", "stateMutability": "view",
+            "inputs": [{"name":"o","type":"address"},{"name":"s","type":"address"}],
+            "outputs": [{"type":"uint256"}]}]
+        CTF_LOCAL = [{"name": "isApprovedForAll", "type": "function", "stateMutability": "view",
+            "inputs": [{"name":"o","type":"address"},{"name":"op","type":"address"}],
+            "outputs": [{"type":"bool"}]}]
+        safe_addr = os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+        for url in ["https://polygon-bor-rpc.publicnode.com", "https://polygon.llamarpc.com"]:
+            try:
+                w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 6}))
+                if w3.eth.chain_id == 137:
+                    break
+            except Exception:
+                continue
+        else:
+            raise RuntimeError("no RPC reachable")
+        usdc_allow = w3.eth.contract(address=Web3.to_checksum_address(USDC_ADDR), abi=ERC20_ABI)\
+            .functions.allowance(Web3.to_checksum_address(safe_addr),
+                                 Web3.to_checksum_address(CTF_EXCHANGE)).call()
+        ctf_approved = w3.eth.contract(address=Web3.to_checksum_address(CTF_ADDR), abi=CTF_LOCAL)\
+            .functions.isApprovedForAll(Web3.to_checksum_address(safe_addr),
+                                        Web3.to_checksum_address(CTF_EXCHANGE)).call()
+        all_ok &= check("USDC.allowance(Safe, CTF_Exchange) >= $50",
+                        usdc_allow >= 50_000_000,
+                        f"on-chain: ${usdc_allow/1e6:,.2f}")
+        all_ok &= check("CTF.isApprovedForAll(Safe, Exchange) == True",
+                        bool(ctf_approved), str(ctf_approved))
+    except Exception as e:
+        all_ok &= check("on-chain allowance check", False, str(e))
 
     # 5 — evaluate_live.py dry run
     print("\n[5] LIVE PnL evaluator")

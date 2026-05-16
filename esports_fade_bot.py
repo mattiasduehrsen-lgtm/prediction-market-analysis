@@ -47,6 +47,9 @@ MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 LIVE_FILL_POLL_INTERVAL = 2.0 # seconds between fill checks
 LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
+TP_MIN_PRICE = 0.95           # take-profit: SELL open positions when best bid >= this
+TP_SELL_CAP_CENTS = 99        # cap the actual SELL price at this many cents
+TP_SWEEP_INTERVAL = 60.0      # seconds between take-profit sweeps
 
 # Games where per-game OOS backtest cleared ~+100% ROI on a real sample:
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
@@ -557,11 +560,88 @@ class FadeBot:
                                               "target_wallet", "strategy")},
             }) + "\n")
 
+    def take_profit_sweep(self):
+        """SELL any open CTF positions where the current best bid >= TP_MIN_PRICE.
+
+        Runs every TP_SWEEP_INTERVAL seconds from the bot's heartbeat. Only fires
+        in LIVE mode (paper has no real positions). Quietly skips if no client.
+        """
+        if not self.client:
+            return
+        try:
+            import requests as _r
+            proxy = (self.client.get_address() if hasattr(self.client, "get_address") else "")
+            if not proxy:
+                import os as _os
+                proxy = _os.environ.get("POLYMARKET_PROXY_ADDRESS", "").strip()
+            r = _r.get("https://data-api.polymarket.com/positions",
+                       params={"user": proxy, "limit": 200}, timeout=8)
+            if r.status_code != 200:
+                return
+            positions = r.json() or []
+        except Exception as e:
+            print(f"[fade-bot] tp_sweep positions fetch failed: {e}")
+            return
+
+        open_positions = [p for p in positions
+                          if float(p.get("size") or 0) > 0.01 and not p.get("redeemable")]
+        if not open_positions:
+            return
+
+        try:
+            from py_clob_client_v2 import OrderArgs, OrderType
+            from py_clob_client_v2.order_builder.constants import SELL
+        except Exception:
+            return
+
+        for p in open_positions:
+            tid = p.get("asset") or p.get("token_id", "")
+            if not tid:
+                continue
+            size = float(p.get("size") or 0)
+            try:
+                ob = self.client.get_order_book(str(tid)) or {}
+                bids = ob.get("bids") if isinstance(ob, dict) else []
+                if not bids:
+                    continue
+                last = bids[-1]
+                best_bid = float(last.get("price") if isinstance(last, dict) else getattr(last, "price", 0))
+            except Exception:
+                continue
+            if best_bid < TP_MIN_PRICE:
+                continue
+            # Avoid re-selling — skip if we already have an open SELL for this token.
+            if str(tid) in getattr(self, "tp_sells_placed", set()):
+                continue
+
+            sell_price = round(min(TP_SELL_CAP_CENTS / 100.0, best_bid), 2)
+            sell_size  = round(size, 2)
+            if sell_size < 1:    # skip dust
+                continue
+            try:
+                args_o = OrderArgs(price=sell_price, size=sell_size, side=SELL, token_id=str(tid))
+                signed = self.client.create_order(args_o)
+                resp = self.client.post_order(signed, OrderType.GTC)
+                oid = (resp or {}).get("orderID") or (resp or {}).get("orderId") or ""
+                status = (resp or {}).get("status", "")
+                outcome = p.get("outcome", "?")
+                print(f"[fade-bot]   TP SELL {sell_size}@{sell_price} {outcome[:18]:>18}  id={oid[:18]}... status={status}")
+                if not hasattr(self, "tp_sells_placed"):
+                    self.tp_sells_placed = set()
+                self.tp_sells_placed.add(str(tid))
+                self.write_event({"type": "tp_sell_placed", "order_id": oid, "status": status,
+                                  "price": sell_price, "shares": sell_size,
+                                  "token_id": str(tid), "outcome": outcome})
+            except Exception as e:
+                print(f"[fade-bot]   TP SELL FAILED for {p.get('outcome','?')}: {e}")
+
     def run(self):
         print(f"[fade-bot] polling every {POLL_INTERVAL}s — writing to {OUT_DIR}")
         last_summary = time.time()
+        last_tp_sweep = 0.0  # fire immediately on first heartbeat
         n_trades_seen = 0
         n_fades = 0
+        self.tp_sells_placed = set()
         try:
             while True:
                 trades = self.poll()
@@ -581,6 +661,9 @@ class FadeBot:
                     self.maybe_reload_targets()
                     if self.live:
                         self.maybe_reload_daily_pnl()
+                        if time.time() - last_tp_sweep >= TP_SWEEP_INTERVAL:
+                            self.take_profit_sweep()
+                            last_tp_sweep = time.time()
                 time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             print("[fade-bot] stopping")

@@ -36,13 +36,15 @@ POLL_INTERVAL = 2.0           # seconds between API polls
 RECENT_TRADES_LIMIT = 500     # how many recent trades to scan each poll
 PAPER_BET_USD = 5.0           # bet size (PAPER)
 LIVE_BET_USD = 5.0            # bet size (LIVE)
-DAILY_LOSS_CAP = 50.0         # halt for the day if losses exceed this (LIVE)
+DAILY_LOSS_CAP = 50.0         # halt for the day if REALIZED losses exceed this (LIVE; future — see daily_risk_cap)
+DAILY_RISK_CAP_USD = 50.0     # halt for the day after we've bet this much $ (LIVE, immediate)
 MAX_PER_MARKET_USD = 10.0     # cumulative bet cap per (market, our_outcome)
 MAX_FADES_PER_DAY = 100       # sanity ceiling on daily signal count
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)
 MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
+SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 
 # Games where per-game OOS backtest cleared ~+100% ROI on a real sample:
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
@@ -65,6 +67,7 @@ class FadeBot:
             from src.bot.clob_auth import get_client
             self.client = get_client()
         self.daily_pnl = 0.0
+        self.daily_risk_usd = 0.0
         self.day_started = datetime.now(timezone.utc).date()
         # Exposure state (resets daily)
         self.market_exposure: dict[tuple[str, str], float] = {}  # (cid, our_outcome) -> usd
@@ -73,9 +76,37 @@ class FadeBot:
         # condition_id -> {"outcomes":[a,b], "tokens":{outcome:token_id}}
         self.market_cache: dict[str, dict] = {}
         self._load_market_index()
+        # Prime dedup with recent tx hashes from CSV so a restart doesn't
+        # cause a burst of re-fires from the first poll's 500-trade window.
+        self._prime_seen_tx()
         print(f"[fade-bot] mode={'LIVE' if live else 'PAPER'}")
         print(f"[fade-bot] tracking {len(self.target_wallets)} target wallets")
         print(f"[fade-bot] preloaded {len(self.market_cache)} markets from CLOB index")
+        print(f"[fade-bot] primed {len(self.seen_tx_set)} tx hashes from history")
+
+    def _prime_seen_tx(self):
+        """Pre-populate seen_tx_set from the tail of paper_trades.csv.
+
+        Without this, a bot restart sees an empty dedup set and processes the
+        first poll's entire 500-trade window as 'new', potentially firing a
+        burst of fades on trades we already logged in a previous run.
+        """
+        if not self.papertrades_path.exists():
+            return
+        try:
+            from collections import deque as _dq
+            tail = _dq(maxlen=SEEN_TX_PRIME_LIMIT)
+            with self.papertrades_path.open(encoding="utf-8") as fh:
+                reader = _csv.DictReader(fh)
+                for row in reader:
+                    h = (row.get("tx_hash") or "").strip()
+                    if h:
+                        tail.append(h)
+            for h in tail:
+                self.seen_tx_set.add(h)
+                self.seen_tx.append(h)
+        except Exception as e:
+            print(f"[fade-bot] seen_tx prime failed: {e}")
 
     def _load_market_index(self):
         """Pre-populate market metadata from the local CLOB index parquet."""
@@ -293,13 +324,23 @@ class FadeBot:
         if today != self.day_started:
             self.day_started = today
             self.daily_pnl = 0
+            self.daily_risk_usd = 0.0
             self.market_exposure.clear()
             self.fades_today = 0
             self.last_signal_ts.clear()
 
-        # Daily loss cap (LIVE only)
+        # Daily LOSS cap (LIVE only) — uses realized PnL. Currently dormant
+        # because LIVE PnL tracking isn't wired yet (no resolution-watch loop).
+        # The RISK cap below is the active hard guard.
         if self.live and self.daily_pnl <= -DAILY_LOSS_CAP:
             self.write_event({"type": "skip_daily_loss_cap", "tx": tx, "daily_pnl": self.daily_pnl})
+            return
+
+        # Daily RISK cap (LIVE only) — bounds total $ bet per UTC day.
+        # This is what actually fires until realized-PnL tracking exists.
+        if self.live and self.daily_risk_usd + bet > DAILY_RISK_CAP_USD:
+            self.write_event({"type": "skip_daily_risk_cap", "tx": tx,
+                              "spent_today": self.daily_risk_usd, "cap": DAILY_RISK_CAP_USD})
             return
 
         # Per-day fade count cap (sanity)
@@ -348,6 +389,8 @@ class FadeBot:
         # Update exposure trackers
         self.market_exposure[exp_key] = prior + bet
         self.fades_today += 1
+        if self.live:
+            self.daily_risk_usd += bet
 
         # Paper: log only
         self.write_paper_trade(trade)

@@ -109,14 +109,17 @@ def main():
         out_rows.append({**r, "status": "WIN" if pnl > 0 else "LOSS",
                          "realized_pnl": round(pnl, 4)})
 
-    # Write per-row results
+    # Write per-row results — atomic so the dashboard never reads a partial CSV
     if out_rows:
+        import os
         cols = list(out_rows[0].keys())
-        with RESULTS_PATH.open("w", encoding="utf-8", newline="") as fh:
+        tmp = RESULTS_PATH.with_suffix(".csv.tmp")
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=cols)
             w.writeheader()
             for x in out_rows:
                 w.writerow(x)
+        os.replace(tmp, RESULTS_PATH)
         print(f"\nWrote per-row results: {RESULTS_PATH}")
 
     # Summary

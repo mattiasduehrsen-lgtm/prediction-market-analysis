@@ -108,8 +108,12 @@ def main():
         "target_wallets": unique,
         "target_meta":    followers.to_dict(orient="records"),
     }
+    # Atomic write
+    import os
     path = ES_DIR / "follow_targets.json"
-    path.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    tmp  = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, path)
     print(f"\nSaved {len(unique)} unique follow wallets across {GAMES}: {path}")
 
 

@@ -1,22 +1,77 @@
-.DS_Store
+# ─── Secrets — NEVER COMMIT ─────────────────────────────────────────────────
 .env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+credentials/
+
+# ─── Local-only Claude config ──────────────────────────────────────────────
 CLAUDE.md
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/*.lock
 
-# Python-generated files
+# ─── Logs (may contain order IDs, wallet addresses, trade flow) ────────────
+*.log
+*.log.*
+bot.log
+bot_err.log
+dashboard.log
+dashboard_err.log
+watchdog_paper.log
+watchdog_esports.log
+watchdog_live.log
+live.log
+output/esports_fade/*.log
+
+# ─── Lock files ────────────────────────────────────────────────────────────
+*.lock
+watchdog_*.lock
+
+# ─── Bot runtime output (trade history, balances, positions, PnL) ──────────
+output/
+output/**
+.backfill_cursor
+
+# ─── Bulk snapshots / archived state ───────────────────────────────────────
+# Note: can't use !cowork_snapshot/X exception under an ignored parent dir, so
+# we ignore the contents instead of the dir itself. Anything tracked is kept
+# (git ignore only affects untracked files).
+cowork_snapshot/bot/
+cowork_snapshot/5m_live/
+cowork_snapshot/5m_trading/
+cowork_snapshot/esports/scrape/
+cowork_snapshot/esports/*.parquet
+cowork_snapshot/esports/*_results.json
+cowork_snapshot/esports/clob_token_to_market.json
+cowork_snapshot/esports/token_to_market.json
+cowork_snapshot/*.log
+cowork_snapshot/*.zip
+cowork_snapshot/*.md
+cowork_snapshot/main.py
+bot_data_snapshot.zip
+*.zip.*
+data.zip*
+
+# fade_targets.json + follow_targets.json INTENTIONALLY kept tracked so the
+# bot has wallet lists on fresh clones / new machines.
+
+# ─── Python build artifacts ────────────────────────────────────────────────
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+.tmppytest
+pytest-cache-files-*
 
-# Virtual environments
-.venv
-.backfill_cursor
-data
-data.zip
+# ─── Virtual environment ───────────────────────────────────────────────────
+.venv/
 
+# ─── Research artifacts (keep paper + figs) ────────────────────────────────
 research/*
 !research/main.tex
 !research/main.pdf
@@ -24,17 +79,43 @@ research/*
 !research/analysis
 !research/sections
 
+# ─── Generic scratch / misc ────────────────────────────────────────────────
+.DS_Store
 scratchpad
-
+scratchpad-probe
 fig
 *.tar.zst
-output
+data
+data.zip
 .tmp
 .cache
 test-artifacts
+test-artifacts-probe
 runtime-artifacts
 runtime-probe-a
-scratchpad-probe
-test-artifacts-probe
-.tmppytest
-pytest-cache-files-*
+
+# ─── Dev-only artifacts that may leak strategy/research ────────────────────
+# These were one-off audits or scratch scripts; don't auto-publish them.
+analysis_opus.py
+fetch_wallet_trades.py
+scan_correlation_arb.py
+encode_cmd.py
+_encode_*.py
+analysis/_*.py
+PRODUCTION_AUDIT.md
+SPEED_AUDIT_PROMPT.md
+LIVE_ENGINE_AUDIT_*.md
+"Analysis April18.md"
+Analysis*.md
+COWORK_PROMPT*.md
+COWORK_ANALYSIS_*.md
+COWORK_REVIEW_*.md
+COWORK_ETH_DEEP_DIVE_*.md
+cowork_window_brain_design_*.md
+create_tasks.ps1
+kill_bots.bat
+launch_dashboard_watchdog.bat
+restart_bot.bat
+start_bot.bat
+start_dashboard.bat
+zip_snapshot.ps1

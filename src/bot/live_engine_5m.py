@@ -683,7 +683,7 @@ class LiveEngine5m:
             return
         try:
             if pos.entry_order_id and pos.entry_order_id != "__pending__":
-                self._client.cancel_order(pos.entry_order_id)
+                self._client.cancel_orders([pos.entry_order_id])
             print(f"[LIVE5M] CANCEL {position_id} | entry order cancelled (window expired)")
         except Exception as exc:
             print(f"[LIVE5M] Cancel failed for {position_id}: {exc}")
@@ -856,7 +856,7 @@ class LiveEngine5m:
             # otherwise both orders would try to sell the same shares.
             if pos.tp_order_id:
                 try:
-                    self._client.cancel_order(pos.tp_order_id)
+                    self._client.cancel_orders([pos.tp_order_id])
                     print(
                         f"[LIVE5M] Cancelled TP order {pos.tp_order_id[:16]}... "
                         f"before aggressive exit ({exit_reason})"
@@ -1080,7 +1080,7 @@ class LiveEngine5m:
                     )
                 if pos.exit_order_id and pos.exit_order_id != "__pending__":
                     try:
-                        self._client.cancel_order(pos.exit_order_id)
+                        self._client.cancel_orders([pos.exit_order_id])
                     except Exception:
                         pass
                 pos.state          = State.OPEN

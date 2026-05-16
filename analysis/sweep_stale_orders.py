@@ -79,10 +79,10 @@ def main():
                 if not oid:
                     continue
                 try:
-                    client.cancel_order(oid)
+                    client.cancel_orders([oid])
                     print(f"    cancelled {oid[:18]}...")
                 except Exception as ce:
-                    print(f"    cancel_order {oid[:18]}... FAILED: {ce}")
+                    print(f"    cancel_orders [{oid[:18]}...] FAILED: {ce}")
     elif orders:
         print("DRY RUN — re-run with --confirm to actually cancel these orders.")
 

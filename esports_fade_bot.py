@@ -513,7 +513,9 @@ class FadeBot:
             # Cancel if still resting at timeout
             if final_status not in ("matched", "cancelled") and final_matched < shares:
                 try:
-                    self.client.cancel_order(order_id)
+                    # cancel_orders (plural) takes a list of order_id strings;
+                    # cancel_order (singular) needs an OrderPayload wrapper
+                    self.client.cancel_orders([order_id])
                     # Re-check post-cancel: defends against the cancel-vs-fill race.
                     o2 = self.client.get_order(order_id) or {}
                     final_status  = str(o2.get("status", "")).lower() or "cancelled"

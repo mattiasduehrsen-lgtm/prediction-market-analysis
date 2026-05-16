@@ -1,11 +1,14 @@
 """
-Stream every parquet from the bulk_blockchain_trades_part4 archive,
-filter to esports token_ids only, and write the result to
-cowork_snapshot/esports/esports_trades.parquet.
+Stream every parquet from a bulk_blockchain_trades_partN archive, filter to
+esports token_ids only, and write the result to a parquet output.
 
 Doesn't unzip the full archive — uses zipfile to stream each member parquet,
 filter rows, append to the output. Memory bounded.
+
+Usage:
+  python filter_trades_to_esports.py --zip C:\\path\\to\\partN.zip --out cowork_snapshot/esports/esports_trades_partN.parquet
 """
+import argparse
 import json
 import zipfile
 from io import BytesIO
@@ -15,9 +18,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[1]
-ZIP_PATH = Path("C:/Users/home user/Desktop/bulk_blockchain_trades_part4.zip")
 OUT_DIR  = ROOT / "cowork_snapshot" / "esports"
-OUT_TRADES = OUT_DIR / "esports_trades.parquet"
 
 # Load token whitelist from clob index
 idx = json.loads((OUT_DIR / "clob_token_to_market.json").read_text(encoding="utf-8"))
@@ -28,6 +29,15 @@ print(f"Esports token whitelist: {len(TOKEN_SET)} tokens")
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--zip", required=True, help="Path to bulk_blockchain_trades_partN.zip")
+    ap.add_argument("--out", required=True, help="Output parquet path")
+    args = ap.parse_args()
+    ZIP_PATH = Path(args.zip)
+    OUT_TRADES = Path(args.out)
+    OUT_TRADES.parent.mkdir(parents=True, exist_ok=True)
+    if not ZIP_PATH.exists():
+        raise SystemExit(f"zip not found: {ZIP_PATH}")
     chunks = []
     total_in = 0
     total_kept = 0

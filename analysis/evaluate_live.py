@@ -99,34 +99,82 @@ def main():
     total_pnl = 0.0
     total_cost = 0.0
 
+    # ── Aggregate SELLs per token_id so BUY rows can be paired with SELL exits.
+    # Each token_id may have multiple SELL fills (partial TP sweeps).
+    sells_by_token: dict[str, dict] = {}
     for o in orders:
+        if str(o.get("side", "BUY")).upper() != "SELL":
+            continue
+        if str(o.get("status", "")).lower() != "matched":
+            continue   # only count matched SELLs
+        tid = str(o.get("token_id") or "")
+        if not tid:
+            continue
+        sells_by_token.setdefault(tid, {"shares": 0.0, "proceeds": 0.0})
+        sells_by_token[tid]["shares"]   += float(o.get("shares") or 0)
+        sells_by_token[tid]["proceeds"] += float(o.get("cost_usd") or 0)
+
+    for o in orders:
+        # Skip SELL rows in the main per-BUY accounting loop; they're folded
+        # into the matching BUY row above.
+        if str(o.get("side", "BUY")).upper() == "SELL":
+            continue
+
         cid    = o.get("fade_condition") or ""
         our_o  = o.get("our_outcome") or ""
         price  = float(o.get("price") or 0)
         shares = float(o.get("shares") or 0)
-        cost   = price * shares          # actual $ spent on this order
+        cost   = price * shares          # actual $ spent on this BUY
         ts     = float(o.get("ts") or 0)
+        tid    = str(o.get("token_id") or "")
 
         mkt    = CACHE.get(cid)
         winner = winning_outcome(mkt) if mkt else None
 
-        is_today = False
-        if ts:
-            is_today = str(datetime.fromtimestamp(ts, tz=timezone.utc).date()) == today_str
+        is_today = ts and str(datetime.fromtimestamp(ts, tz=timezone.utc).date()) == today_str
+
+        # Was this position (partially or fully) sold early via TP?
+        sell = sells_by_token.get(tid, {"shares": 0.0, "proceeds": 0.0})
+        sold_shares   = sell["shares"]
+        sold_proceeds = sell["proceeds"]
+        unsold_shares = max(0.0, shares - sold_shares)
+
+        if shares > 0 and unsold_shares < 0.01 and sold_shares > 0:
+            # Fully closed via TP SELL — realized PnL = proceeds - cost
+            pnl = sold_proceeds - cost
+            n_resolved += 1
+            if pnl > 0: n_wins += 1
+            total_pnl  += pnl
+            total_cost += cost
+            if is_today:
+                today_resolved += 1
+                today_pnl += pnl
+            out_rows.append({**o,
+                "status": "TP_SOLD" if pnl > 0 else "TP_LOSS",
+                "realized_pnl": round(pnl, 4),
+                "cost_usd":     round(cost, 4),
+                "sold_shares":  round(sold_shares, 4),
+                "sold_proceeds": round(sold_proceeds, 4),
+            })
+            continue
 
         if winner is None:
+            # Still open + not fully sold + market unresolved
             out_rows.append({**o, "status": "UNRESOLVED", "realized_pnl": "",
-                             "cost_usd": round(cost, 4)})
+                             "cost_usd": round(cost, 4),
+                             "sold_shares":  round(sold_shares, 4),
+                             "sold_proceeds": round(sold_proceeds, 4)})
             if is_today:
                 today_open += 1
             continue
 
+        # Market resolved AND some shares still held → settle remainder via winner
         n_resolved += 1
         if winner == our_o:
-            pnl = shares - cost          # each winning share pays $1
+            pnl = (unsold_shares * 1.0) + sold_proceeds - cost
             n_wins += 1
         else:
-            pnl = -cost
+            pnl = sold_proceeds - cost   # losers pay $0; only the proceeds from any partial TP exit count
         total_pnl  += pnl
         total_cost += cost
 
@@ -134,9 +182,13 @@ def main():
             today_resolved += 1
             today_pnl += pnl
 
-        out_rows.append({**o, "status": "WIN" if pnl > 0 else "LOSS",
-                         "realized_pnl": round(pnl, 4),
-                         "cost_usd": round(cost, 4)})
+        out_rows.append({**o,
+            "status": "WIN" if pnl > 0 else "LOSS",
+            "realized_pnl": round(pnl, 4),
+            "cost_usd":     round(cost, 4),
+            "sold_shares":  round(sold_shares, 4),
+            "sold_proceeds": round(sold_proceeds, 4),
+        })
 
     # Atomic write of per-order results
     if out_rows:

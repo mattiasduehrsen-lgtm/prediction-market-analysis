@@ -138,12 +138,13 @@ def main():
     print("\nPlacing SELL orders...")
     from py_clob_client_v2 import OrderArgs, OrderType
     from py_clob_client_v2.order_builder.constants import SELL
+    import json as _json
+
+    live_orders_path = ROOT / "output" / "esports_fade" / "live_orders.jsonl"
 
     sent = 0
     for c in candidates:
-        # Round size to 2 decimals (CTF token min unit)
-        sell_size = round(c["size"], 2)
-        # Round price to 2 decimals — Polymarket grid is cent-resolution
+        sell_size  = round(c["size"], 2)
         sell_price = round(c["sell_price"], 2)
         try:
             args_o = OrderArgs(price=sell_price, size=sell_size, side=SELL, token_id=c["token_id"])
@@ -153,6 +154,20 @@ def main():
             status = (resp or {}).get("status", "")
             print(f"  SELL {sell_size}@{sell_price} {c['outcome'][:20]:>20}  id={oid[:18]}... status={status}")
             sent += 1
+            # Log to live_orders.jsonl so evaluator can compute realized PnL
+            with live_orders_path.open("a", encoding="utf-8") as fh:
+                fh.write(_json.dumps({
+                    "ts":         time.time(),
+                    "side":       "SELL",
+                    "order_id":   oid,
+                    "status":     status,
+                    "price":      sell_price,
+                    "shares":     sell_size,
+                    "cost_usd":   round(sell_price * sell_size, 4),  # proceeds for SELL
+                    "token_id":   c["token_id"],
+                    "our_outcome": c.get("outcome", ""),
+                    "tp_reason":  "manual_sweep",
+                }) + "\n")
         except Exception as e:
             print(f"  SELL FAILED for {c['outcome']}: {e}")
         time.sleep(0.5)

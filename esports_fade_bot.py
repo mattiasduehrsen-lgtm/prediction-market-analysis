@@ -548,6 +548,7 @@ class FadeBot:
         with self.live_orders_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({
                 "ts": time.time(),
+                "side": "BUY",
                 "order_id": order_id,
                 "status": final_status,
                 "price": final_avg_price,
@@ -632,6 +633,23 @@ class FadeBot:
                 self.write_event({"type": "tp_sell_placed", "order_id": oid, "status": status,
                                   "price": sell_price, "shares": sell_size,
                                   "token_id": str(tid), "outcome": outcome})
+                # Log to live_orders.jsonl so evaluate_live.py can match BUY+SELL
+                # pairs and compute realized PnL = proceeds - cost.
+                with self.live_orders_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "ts": time.time(),
+                        "side": "SELL",
+                        "order_id": oid,
+                        "status": status,
+                        "price": sell_price,
+                        "shares": sell_size,
+                        "cost_usd": round(sell_price * sell_size, 4),  # for SELLs this is PROCEEDS
+                        "token_id": str(tid),
+                        "fade_condition": p.get("conditionId") or "",
+                        "fade_slug": p.get("slug") or "",
+                        "our_outcome": outcome,
+                        "tp_reason": "auto_sweep",
+                    }) + "\n")
             except Exception as e:
                 print(f"[fade-bot]   TP SELL FAILED for {p.get('outcome','?')}: {e}")
 

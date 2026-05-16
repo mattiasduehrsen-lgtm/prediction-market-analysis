@@ -1056,7 +1056,8 @@ def api_esports_live():
 
     n_total     = len(orders)
     n_filled    = sum(1 for o in orders if str(o.get("status", "")).lower() == "matched")
-    n_cancelled = sum(1 for o in orders if str(o.get("status", "")).lower() == "cancelled")
+    # Polymarket returns "canceled" (one L); accept both spellings just in case
+    n_cancelled = sum(1 for o in orders if str(o.get("status", "")).lower() in ("cancelled", "canceled"))
     total_cost  = sum(float(o.get("cost_usd") or 0) for o in orders)
 
     daily = {}

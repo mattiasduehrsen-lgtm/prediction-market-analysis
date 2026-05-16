@@ -1137,7 +1137,7 @@ async function refreshEsports() {
           let stCell, pnlCell;
           if (status === 'matched' || status === 'live' || status === 'delayed') {
             stCell  = `<td style="text-align:center; color:#00c853">${status}</td>`;
-          } else if (status === 'cancelled') {
+          } else if (status === 'cancelled' || status === 'canceled') {
             stCell  = `<td style="text-align:center; color:#888">cancel</td>`;
           } else {
             stCell  = `<td style="text-align:center; color:#aaa">${status||'-'}</td>`;

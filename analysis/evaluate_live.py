@@ -165,6 +165,18 @@ def main():
             consumed[tid]["proceeds"] += sold_proceeds
         unsold_shares = max(0.0, shares - sold_shares)
 
+        # CANCELLED BUYs (or zero-share rows) aren't real positions — skip.
+        bo_status = str(o.get("status", "")).lower()
+        if shares < 0.01 or bo_status in ("cancelled", "canceled"):
+            out_rows.append({**o,
+                "status":        "CANCELLED",
+                "realized_pnl":  "",
+                "cost_usd":      round(cost, 4),
+                "sold_shares":   0,
+                "sold_proceeds": 0,
+            })
+            continue
+
         if shares > 0 and unsold_shares < 0.01 and sold_shares > 0:
             # Fully closed via TP SELL — realized PnL = proceeds - cost
             pnl = sold_proceeds - cost

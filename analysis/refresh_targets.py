@@ -18,6 +18,7 @@ Idempotent and safe to interrupt — each step is resumable.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -26,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ES_DIR = ROOT / "cowork_snapshot" / "esports"
 PY = ROOT / ".venv" / "Scripts" / "python.exe"
+LOCK = ROOT / "output" / "esports_fade" / "refresh.lock"
 
 
 def run(name: str, args: list[str], must_succeed: bool = True) -> int:
@@ -40,7 +42,35 @@ def run(name: str, args: list[str], must_succeed: bool = True) -> int:
 
 
 def main():
-    print(f"[refresh-targets] start {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    # Single-instance lock — if a previous refresh is still running, bail.
+    # Lockfile contains pid + start time; stale locks (>2h) auto-cleared.
+    if LOCK.exists():
+        try:
+            content = LOCK.read_text(encoding="utf-8").strip()
+            pid_str, ts_str = (content.split("|", 1) + [""])[:2]
+            start = float(ts_str) if ts_str else 0
+            age = time.time() - start
+            if age < 2 * 3600:
+                print(f"[refresh-targets] previous run still active "
+                      f"(pid={pid_str}, age={age:.0f}s) — exit", flush=True)
+                return
+            print(f"[refresh-targets] stale lock (age={age:.0f}s) — overriding", flush=True)
+        except Exception:
+            pass
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    LOCK.write_text(f"{os.getpid()}|{time.time()}", encoding="utf-8")
+
+    try:
+        print(f"[refresh-targets] start {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+        _run_pipeline()
+    finally:
+        try:
+            LOCK.unlink()
+        except Exception:
+            pass
+
+
+def _run_pipeline():
     # 1 — rebuild index (skips markets it already has via cursor; cheap if no churn)
     run("build_clob_index", ["analysis/build_clob_index.py"])
 

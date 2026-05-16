@@ -1068,11 +1068,16 @@ def api_esports_live():
                 except Exception:
                     continue
 
-    n_total     = len(orders)
-    n_filled    = sum(1 for o in orders if str(o.get("status", "")).lower() == "matched")
-    # Polymarket returns "canceled" (one L); accept both spellings just in case
-    n_cancelled = sum(1 for o in orders if str(o.get("status", "")).lower() in ("cancelled", "canceled"))
-    total_cost  = sum(float(o.get("cost_usd") or 0) for o in orders)
+    # BUYs cost us $; SELLs return $. Old rows pre-side-tag are assumed BUY.
+    def _is_buy(o):  return str(o.get("side", "BUY")).upper() == "BUY"
+    def _is_sell(o): return str(o.get("side", "BUY")).upper() == "SELL"
+
+    n_total     = sum(1 for o in orders if _is_buy(o))
+    n_filled    = sum(1 for o in orders if _is_buy(o) and str(o.get("status","")).lower() == "matched")
+    n_cancelled = sum(1 for o in orders if _is_buy(o) and str(o.get("status","")).lower() in ("cancelled","canceled"))
+    total_cost  = sum(float(o.get("cost_usd") or 0) for o in orders if _is_buy(o))
+    n_sells     = sum(1 for o in orders if _is_sell(o))
+    total_proceeds = sum(float(o.get("cost_usd") or 0) for o in orders if _is_sell(o))
 
     daily = {}
     if ES_LIVE_DAILY_PNL.exists():
@@ -1104,12 +1109,14 @@ def api_esports_live():
             r["end_date_iso"]    = info.get("end_date_iso") or ""
 
     return jsonify({
-        "orders_total":     n_total,
-        "orders_filled":    n_filled,
-        "orders_cancelled": n_cancelled,
-        "total_cost_usd":   round(total_cost, 2),
-        "daily":            daily,
-        "recent":           recent,
+        "orders_total":      n_total,
+        "orders_filled":     n_filled,
+        "orders_cancelled":  n_cancelled,
+        "total_cost_usd":    round(total_cost, 2),
+        "early_sells":       n_sells,
+        "early_proceeds_usd": round(total_proceeds, 2),
+        "daily":             daily,
+        "recent":            recent,
     })
 
 

@@ -410,11 +410,12 @@
   <!-- LIVE order panel — only renders content once LIVE has been enabled -->
   <section id="es-live-section" style="margin-top:20px; display:none;">
     <h2 style="font-size:13px; color:#ffab40; margin-top:0;">🟢 LIVE orders</h2>
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom:12px;">
-      <div class="es-card"><div class="es-label">ORDERS TOTAL</div><div class="es-value" id="es-live-total">—</div></div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-bottom:12px;">
+      <div class="es-card"><div class="es-label">BUYS TOTAL</div><div class="es-value" id="es-live-total">—</div></div>
       <div class="es-card"><div class="es-label">FILLED</div><div class="es-value" id="es-live-filled" style="color:#00c853;">—</div></div>
       <div class="es-card"><div class="es-label">CANCELLED</div><div class="es-value" id="es-live-cancelled" style="color:#888;">—</div></div>
-      <div class="es-card"><div class="es-label">COST (TOTAL)</div><div class="es-value" id="es-live-cost">—</div></div>
+      <div class="es-card"><div class="es-label">COST (BUYS)</div><div class="es-value" id="es-live-cost">—</div></div>
+      <div class="es-card"><div class="es-label">EARLY TP SELLS</div><div class="es-value" id="es-live-sells" style="color:#69f0ae; font-size:14px;">—</div></div>
       <div class="es-card"><div class="es-label">TODAY PNL</div><div class="es-value" id="es-live-today-pnl">—</div></div>
       <div class="es-card"><div class="es-label">TODAY OPEN</div><div class="es-value" id="es-live-today-open">—</div></div>
     </div>
@@ -1164,6 +1165,7 @@ async function refreshEsports() {
       $('es-live-filled').textContent    = live.orders_filled || 0;
       $('es-live-cancelled').textContent = live.orders_cancelled || 0;
       $('es-live-cost').textContent      = '$' + (live.total_cost_usd || 0).toFixed(2);
+      $('es-live-sells').textContent     = (live.early_sells || 0) + ' / $' + (live.early_proceeds_usd || 0).toFixed(2);
 
       const d = live.daily || {};
       const pnl = parseFloat(d.realized_pnl_usd || 0);

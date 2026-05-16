@@ -407,6 +407,34 @@
     <div class="es-card"><div class="es-label">RESULTS AGE</div><div class="es-value" id="es-results-age">—</div></div>
   </section>
 
+  <!-- LIVE order panel — only renders content once LIVE has been enabled -->
+  <section id="es-live-section" style="margin-top:20px; display:none;">
+    <h2 style="font-size:13px; color:#ffab40; margin-top:0;">🟢 LIVE orders</h2>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom:12px;">
+      <div class="es-card"><div class="es-label">ORDERS TOTAL</div><div class="es-value" id="es-live-total">—</div></div>
+      <div class="es-card"><div class="es-label">FILLED</div><div class="es-value" id="es-live-filled" style="color:#00c853;">—</div></div>
+      <div class="es-card"><div class="es-label">CANCELLED</div><div class="es-value" id="es-live-cancelled" style="color:#888;">—</div></div>
+      <div class="es-card"><div class="es-label">COST (TOTAL)</div><div class="es-value" id="es-live-cost">—</div></div>
+      <div class="es-card"><div class="es-label">TODAY PNL</div><div class="es-value" id="es-live-today-pnl">—</div></div>
+      <div class="es-card"><div class="es-label">TODAY OPEN</div><div class="es-value" id="es-live-today-open">—</div></div>
+    </div>
+    <table>
+      <thead>
+        <tr style="font-size:11px; color:#888;">
+          <th style="text-align:left">Slug</th>
+          <th style="text-align:left">Strat</th>
+          <th style="text-align:left">Outcome</th>
+          <th style="text-align:right">Price</th>
+          <th style="text-align:right">Shares</th>
+          <th style="text-align:right">Cost</th>
+          <th style="text-align:center">Status</th>
+          <th style="text-align:right">PnL</th>
+        </tr>
+      </thead>
+      <tbody id="es-live-tbody"></tbody>
+    </table>
+  </section>
+
   <section>
     <h2 style="font-size:13px; color:#aaa; margin-top:20px;">Recent fade signals</h2>
     <table>
@@ -1056,6 +1084,68 @@ async function refreshEsports() {
   try {
     const s = await fetch('/api/esports/status').then(r => r.json());
     $('es-log').textContent = s.log_tail || '(no log yet)';
+  } catch (e) { /* ignore */ }
+
+  // LIVE order panel — only show section if any orders have been placed
+  try {
+    const live = await fetch('/api/esports/live').then(r => r.json());
+    const sect = $('es-live-section');
+    if ((live.orders_total || 0) > 0) {
+      sect.style.display = 'block';
+      $('es-live-total').textContent     = live.orders_total || 0;
+      $('es-live-filled').textContent    = live.orders_filled || 0;
+      $('es-live-cancelled').textContent = live.orders_cancelled || 0;
+      $('es-live-cost').textContent      = '$' + (live.total_cost_usd || 0).toFixed(2);
+
+      const d = live.daily || {};
+      const pnl = parseFloat(d.realized_pnl_usd || 0);
+      const pnlEl = $('es-live-today-pnl');
+      pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
+      pnlEl.style.color = pnl > 0 ? '#00c853' : pnl < 0 ? '#ff5252' : '#fff';
+      $('es-live-today-open').textContent = (d.n_open || 0) + ' open / ' + (d.n_resolved || 0) + ' done';
+
+      const tb = $('es-live-tbody');
+      if (!live.recent.length) {
+        tb.innerHTML = '<tr><td colspan="8" style="color:#666; padding:8px;">No orders yet</td></tr>';
+      } else {
+        tb.innerHTML = live.recent.map(o => {
+          const slug   = (o.fade_slug || '').slice(0, 32);
+          const strat  = (o.strategy || 'fade').toUpperCase();
+          const stratColor = strat === 'FOLLOW' ? '#69f0ae' : '#ff8a80';
+          const status = (o.status || '').toLowerCase();
+          const price  = parseFloat(o.price || 0).toFixed(3);
+          const shares = parseFloat(o.shares || 0).toFixed(2);
+          const cost   = parseFloat(o.cost_usd || 0).toFixed(2);
+          const pnlVal = o.realized_pnl;
+          let stCell, pnlCell;
+          if (status === 'matched' || status === 'live' || status === 'delayed') {
+            stCell  = `<td style="text-align:center; color:#00c853">${status}</td>`;
+          } else if (status === 'cancelled') {
+            stCell  = `<td style="text-align:center; color:#888">cancel</td>`;
+          } else {
+            stCell  = `<td style="text-align:center; color:#aaa">${status||'-'}</td>`;
+          }
+          if (pnlVal !== undefined && pnlVal !== '' && pnlVal !== null) {
+            const p = parseFloat(pnlVal);
+            pnlCell = `<td style="text-align:right; color:${p>0?'#00c853':'#ff5252'}; font-weight:600">${p>=0?'+':''}$${p.toFixed(2)}</td>`;
+          } else {
+            pnlCell = '<td style="text-align:right; color:#666">—</td>';
+          }
+          return `<tr style="font-size:11px;">
+            <td style="color:#bbb">${slug}</td>
+            <td style="text-align:center; color:${stratColor}; font-weight:600; font-size:10px;">${strat}</td>
+            <td style="color:#4fc3f7">${o.our_outcome || ''}</td>
+            <td style="text-align:right">${price}</td>
+            <td style="text-align:right">${shares}</td>
+            <td style="text-align:right">$${cost}</td>
+            ${stCell}
+            ${pnlCell}
+          </tr>`;
+        }).join('');
+      }
+    } else {
+      sect.style.display = 'none';
+    }
   } catch (e) { /* ignore */ }
 }
 

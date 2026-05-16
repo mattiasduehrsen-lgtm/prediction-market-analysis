@@ -55,8 +55,11 @@ ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-")
 
 
 class FadeBot:
-    def __init__(self, live: bool = False):
+    def __init__(self, live: bool = False, dry_live: bool = False):
+        # dry_live exercises the LIVE init path (auth, client) and the cap
+        # arithmetic, but place_live_order returns before submitting.
         self.live = live
+        self.dry_live = dry_live
         self.target_wallets = self._load_targets()
         self.seen_tx = deque(maxlen=10000)  # dedup
         self.seen_tx_set = set()
@@ -65,7 +68,7 @@ class FadeBot:
         self.events_path = OUT_DIR / "fade_events.jsonl"
         self.live_orders_path = OUT_DIR / "live_orders.jsonl"
         self.client = None
-        if live:
+        if live or dry_live:
             from src.bot.clob_auth import get_client
             self.client = get_client()
         self.daily_pnl = 0.0
@@ -431,6 +434,17 @@ class FadeBot:
 
         if self.live:
             self.place_live_order(trade)
+        elif self.dry_live:
+            # Exercise the same arithmetic without submitting an order.
+            price = round(min(MAX_ENTRY_PRICE, trade["our_entry"] + ENTRY_SLIPPAGE), 2)
+            shares = round(trade["our_bet"] / max(price, 0.01), 2)
+            print(f"[fade-bot]   DRY-LIVE would post BUY {price}x{shares} "
+                  f"token={trade.get('our_token_id')}")
+            self.write_event({"type": "dry_live_order", "price": price, "shares": shares,
+                              "token_id": str(trade.get("our_token_id")),
+                              "fade_condition": trade.get("fade_condition"),
+                              "our_outcome": trade.get("our_outcome"),
+                              "tx": trade.get("tx_hash")})
 
     def place_live_order(self, trade: dict):
         """Place a GTC BUY on Polymarket CLOB, then poll for fill / cancel on timeout.
@@ -573,8 +587,12 @@ class FadeBot:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="Place real orders (blocked by default)")
+    ap.add_argument("--dry-live", action="store_true",
+                    help="Initialize LIVE client + run all guards, but DON'T submit orders. Pre-flight test mode.")
     args = ap.parse_args()
-    FadeBot(live=args.live).run()
+    if args.live and args.dry_live:
+        ap.error("--live and --dry-live are mutually exclusive")
+    FadeBot(live=args.live, dry_live=args.dry_live).run()
 
 
 if __name__ == "__main__":

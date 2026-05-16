@@ -844,6 +844,9 @@ ES_TRADES_CSV   = OUT_ESPORTS / "paper_trades.csv"
 ES_RESULTS_CSV  = OUT_ESPORTS / "paper_results.csv"
 ES_BOT_LOG      = OUT_ESPORTS / "bot.log"
 ES_WATCHDOG_LOG = Path(__file__).resolve().parents[2] / "watchdog_esports.log"
+ES_LIVE_ORDERS_JSONL = OUT_ESPORTS / "live_orders.jsonl"
+ES_LIVE_RESULTS_CSV  = OUT_ESPORTS / "live_results.csv"
+ES_LIVE_DAILY_PNL    = OUT_ESPORTS / "live_daily_pnl.json"
 
 
 def _es_signal_rows() -> list[dict]:
@@ -965,6 +968,57 @@ def api_esports_recent():
     rows = rows[-n:]
     rows.reverse()
     return jsonify(rows)
+
+
+@app.route("/api/esports/live")
+def api_esports_live():
+    """LIVE bot order snapshot: total orders, fills, today's PnL, recent orders.
+
+    Returns empty/zero values if the bot has never run in LIVE mode (no
+    live_orders.jsonl yet).
+    """
+    orders = []
+    if ES_LIVE_ORDERS_JSONL.exists():
+        with open(ES_LIVE_ORDERS_JSONL, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    orders.append(json.loads(line))
+                except Exception:
+                    continue
+
+    n_total     = len(orders)
+    n_filled    = sum(1 for o in orders if str(o.get("status", "")).lower() == "matched")
+    n_cancelled = sum(1 for o in orders if str(o.get("status", "")).lower() == "cancelled")
+    total_cost  = sum(float(o.get("cost_usd") or 0) for o in orders)
+
+    daily = {}
+    if ES_LIVE_DAILY_PNL.exists():
+        try:
+            daily = json.loads(ES_LIVE_DAILY_PNL.read_text(encoding="utf-8"))
+        except Exception:
+            daily = {}
+
+    # Recent live orders + their resolved PnL (if eval has run)
+    recent = []
+    if ES_LIVE_RESULTS_CSV.exists():
+        with open(ES_LIVE_RESULTS_CSV, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                recent.append({k: v for k, v in r.items() if k is not None})
+        recent = recent[-15:][::-1]
+    else:
+        recent = orders[-15:][::-1]
+
+    return jsonify({
+        "orders_total":     n_total,
+        "orders_filled":    n_filled,
+        "orders_cancelled": n_cancelled,
+        "total_cost_usd":   round(total_cost, 2),
+        "daily":            daily,
+        "recent":           recent,
+    })
 
 
 @app.route("/api/esports/status")

@@ -47,9 +47,16 @@ MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 LIVE_FILL_POLL_INTERVAL = 2.0 # seconds between fill checks
 LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
-TP_MIN_PRICE = 0.95           # take-profit: SELL open positions when best bid >= this
-TP_SELL_CAP_CENTS = 99        # cap the actual SELL price at this many cents
-TP_SWEEP_INTERVAL = 60.0      # seconds between take-profit sweeps
+# Take-profit sweep: DISABLED by default.
+# At a threshold like 0.95 the EV of selling = 0.95 = EV of holding (0.95 * 1),
+# but selling gives up the last ~5c × shares when markets resolve fully in our
+# favor (which happens often on CS2 series-winners). The +110% live example
+# confirmed this: holding to resolution beat selling at TP.
+# Set TP_MIN_PRICE < 1.0 to re-enable. Useful if we ever start hitting the
+# daily risk cap and need to free capital sooner.
+TP_MIN_PRICE = 2.0            # 2.0 = disabled (no bid can exceed 1.0)
+TP_SELL_CAP_CENTS = 99
+TP_SWEEP_INTERVAL = 60.0
 
 # Games where per-game OOS backtest cleared ~+100% ROI on a real sample:
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).

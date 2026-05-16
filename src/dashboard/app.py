@@ -928,12 +928,28 @@ def api_esports_summary():
 
 @app.route("/api/esports/recent")
 def api_esports_recent():
-    """Last N signals, newest first."""
+    """Last N signals, newest first, with realized PnL/status when available.
+
+    Prefers paper_results.csv (has status + realized_pnl). Falls back to
+    paper_trades.csv if results haven't been computed yet.
+    """
     try:
         n = int(request.args.get("n", "25"))
     except ValueError:
         n = 25
-    rows = _es_signal_rows()[-n:]
+
+    # Prefer the results CSV — it has every row from paper_trades.csv plus
+    # status (WIN/LOSS/UNRESOLVED) and realized_pnl.
+    if ES_RESULTS_CSV.exists():
+        rows = []
+        with open(ES_RESULTS_CSV, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                rows.append({k: v for k, v in r.items() if k is not None})
+    else:
+        rows = _es_signal_rows()
+
+    # The signal CSV is append-only chronologically; tail then reverse for newest-first.
+    rows = rows[-n:]
     rows.reverse()
     return jsonify(rows)
 

@@ -418,6 +418,8 @@
           <th style="text-align:left">Our outcome</th>
           <th style="text-align:right">Our entry</th>
           <th style="text-align:right">Bet</th>
+          <th style="text-align:center">Status</th>
+          <th style="text-align:right">PnL</th>
         </tr>
       </thead>
       <tbody id="es-recent-tbody"></tbody>
@@ -1005,7 +1007,28 @@ async function refreshEsports() {
         const dt = ts ? new Date(ts*1000).toISOString().replace('T',' ').replace(/\..*/,'') : '—';
         const wallet = (r.target_wallet || '').slice(0, 10) + '…';
         const slug = (r.fade_slug || '').slice(0, 36);
-        return `<tr style="font-size:11px;">
+
+        // Status & PnL columns (present only when paper_results.csv has been written)
+        const status = r.status || '';
+        const pnl    = (r.realized_pnl === undefined || r.realized_pnl === '') ? null : parseFloat(r.realized_pnl);
+        let statusCell, pnlCell, rowBg;
+        if (status === 'WIN') {
+          statusCell = '<td style="text-align:center; color:#00c853; font-weight:600;">WIN</td>';
+          pnlCell    = `<td style="text-align:right; color:#00c853; font-weight:600;">+$${pnl.toFixed(2)}</td>`;
+          rowBg      = 'background:rgba(0,200,83,0.05);';
+        } else if (status === 'LOSS') {
+          statusCell = '<td style="text-align:center; color:#ff5252; font-weight:600;">LOSS</td>';
+          pnlCell    = `<td style="text-align:right; color:#ff5252; font-weight:600;">${pnl.toFixed(2).replace(/^/, pnl < 0 ? '-$' : '$').replace('--', '-').replace('-$-', '-$')}</td>`;
+          // Cleaner: just use absolute formatting
+          pnlCell    = `<td style="text-align:right; color:#ff5252; font-weight:600;">-$${Math.abs(pnl).toFixed(2)}</td>`;
+          rowBg      = 'background:rgba(255,82,82,0.05);';
+        } else {
+          statusCell = '<td style="text-align:center; color:#888;">open</td>';
+          pnlCell    = '<td style="text-align:right; color:#666;">—</td>';
+          rowBg      = '';
+        }
+
+        return `<tr style="font-size:11px; ${rowBg}">
           <td style="color:#999">${dt}</td>
           <td><code style="color:#ce93d8">${wallet}</code></td>
           <td style="color:#bbb">${slug}</td>
@@ -1014,6 +1037,8 @@ async function refreshEsports() {
           <td style="color:#4fc3f7">${r.our_outcome}</td>
           <td style="text-align:right; color:#4fc3f7">${parseFloat(r.our_entry).toFixed(3)}</td>
           <td style="text-align:right">$${parseFloat(r.our_bet).toFixed(0)}</td>
+          ${statusCell}
+          ${pnlCell}
         </tr>`;
       }).join('');
     }

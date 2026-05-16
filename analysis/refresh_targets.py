@@ -80,8 +80,11 @@ def _run_pipeline():
     # 3 — re-resolve outcomes (no API calls — reads from index parquet)
     run("resolve_outcomes", ["analysis/resolve_outcomes.py"])
 
-    # 4 — refresh active fade targets
+    # 4 — refresh active fade targets (losers to fade)
     run("identify_active_targets", ["analysis/identify_active_targets.py"])
+
+    # 5 — refresh follow targets (winners to copy)
+    run("identify_active_winners", ["analysis/identify_active_winners.py"])
 
     # Verify final file looks sane
     p = ES_DIR / "fade_targets.json"

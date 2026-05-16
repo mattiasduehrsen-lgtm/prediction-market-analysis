@@ -382,18 +382,20 @@
     <div style="background:#1a1d29; border:1px solid #2a2d3a; border-left:3px solid #9c27b0; padding:12px 16px; border-radius:4px; margin-bottom:16px;">
       <div style="color:#888; font-size:11px; margin-bottom:4px;">SEPARATE BOT</div>
       <div style="font-size:13px;">
-        <strong style="color:#ce93d8;">Esports Fade Bot</strong> — fades 481 persistently-losing CS2 traders on Polymarket.
-        Backtested at <strong>+110% ROI</strong> OOS. Runs as its own process (<code>PolyBotEsports</code>),
-        independent of the 15m crypto bot. PAPER mode only until validation completes.
+        <strong style="color:#ce93d8;">Esports Bot</strong> — two strategies on CS2 + LoL Polymarket markets:
+        <strong style="color:#ff5252;">FADE</strong> persistent losers (+133% OOS backtest) and
+        <strong style="color:#00c853;">FOLLOW</strong> top winners (+255% OOS backtest).
+        Runs as <code>PolyBotEsports</code>, independent of the 15m crypto bot. PAPER until validated.
       </div>
     </div>
   </section>
 
   <section style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
     <div class="es-card"><div class="es-label">MODE</div><div class="es-value" id="es-mode">—</div></div>
-    <div class="es-card"><div class="es-label">TARGET WALLETS</div><div class="es-value" id="es-targets">—</div></div>
+    <div class="es-card"><div class="es-label">FADE WALLETS</div><div class="es-value" id="es-fade-targets" style="color:#ff8a80;">—</div></div>
+    <div class="es-card"><div class="es-label">FOLLOW WALLETS</div><div class="es-value" id="es-follow-targets" style="color:#69f0ae;">—</div></div>
     <div class="es-card"><div class="es-label">SIGNALS TODAY</div><div class="es-value" id="es-today">—</div></div>
-    <div class="es-card"><div class="es-label">SIGNALS TOTAL</div><div class="es-value" id="es-total">—</div></div>
+    <div class="es-card"><div class="es-label">FADE / FOLLOW TOT</div><div class="es-value" id="es-split" style="font-size:14px;">—</div></div>
     <div class="es-card"><div class="es-label">LAST SIGNAL</div><div class="es-value" id="es-last">—</div></div>
   </section>
 
@@ -411,6 +413,7 @@
       <thead>
         <tr style="font-size:11px; color:#888;">
           <th style="text-align:left">Time (UTC)</th>
+          <th style="text-align:center">Strat</th>
           <th style="text-align:left">Target</th>
           <th style="text-align:left">Slug</th>
           <th style="text-align:left">Their side</th>
@@ -972,9 +975,10 @@ async function refreshEsports() {
   try {
     const s = await fetch('/api/esports/summary').then(r => r.json());
     $('es-mode').textContent     = s.mode || '—';
-    $('es-targets').textContent  = s.target_wallet_count || 0;
+    $('es-fade-targets').textContent   = s.fade_wallet_count   || 0;
+    $('es-follow-targets').textContent = s.follow_wallet_count || 0;
     $('es-today').textContent    = s.signals_today_utc || 0;
-    $('es-total').textContent    = s.signals_total || 0;
+    $('es-split').innerHTML      = `<span style="color:#ff8a80">${s.fade_signals_total||0}</span> / <span style="color:#69f0ae">${s.follow_signals_total||0}</span>`;
     $('es-last').textContent     = fmtAge(s.last_signal_age_sec);
 
     $('es-resolved').textContent = s.resolved || 0;
@@ -1028,8 +1032,12 @@ async function refreshEsports() {
           rowBg      = '';
         }
 
+        const strat = (r.strategy || 'fade').toUpperCase();
+        const stratColor = strat === 'FOLLOW' ? '#69f0ae' : '#ff8a80';
+
         return `<tr style="font-size:11px; ${rowBg}">
           <td style="color:#999">${dt}</td>
+          <td style="text-align:center; color:${stratColor}; font-weight:600; font-size:10px;">${strat}</td>
           <td><code style="color:#ce93d8">${wallet}</code></td>
           <td style="color:#bbb">${slug}</td>
           <td style="color:#888">${r.their_side} ${r.their_outcome}</td>

@@ -1,10 +1,13 @@
 """
-Identify the active losing wallets to track for the live fade strategy.
+Identify the active winning wallets to COPY (follow-top strategy).
 
-Filters bottom-1000 from full historical to: still trading recently AND
-losing on recent trades AND on CS2 markets specifically.
+Counterpart to identify_active_targets.py — instead of bottom-N losers,
+ranks the top wallets by realized PnL on recent resolved trades. The bot
+then copies their trades instead of fading them.
 
-Output: cowork_snapshot/esports/fade_targets.json
+Backtest signal: copy-top-10 wallets in CS2 = +255% ROI OOS on 9.5k trades.
+
+Output: cowork_snapshot/esports/follow_targets.json
 """
 import json
 import glob
@@ -47,22 +50,16 @@ def main():
     df["pnl"] = pnl_for_price(df["price"], df["won"].values)
     df["game"] = df["mkt_slug"].fillna("").str.split("-").str[0]
 
-    # Games where per-game OOS backtest cleared ~+100% ROI on a real sample.
-    # cs2: +144% ROI on 176k trades (1000 targets)
-    # league: +127% ROI on 4,955 trades (109 targets)
-    # dota/valorant samples too small to trust right now.
     GAMES = ["cs2", "league"]
     sub = df[df["game"].isin(GAMES)].copy()
     print(f"Resolved trades in {GAMES}: {len(sub):,}")
 
-    # Most recent 60 days
     latest_ts = sub["timestamp"].max()
     recent_cutoff = latest_ts - 60 * 24 * 3600
     recent = sub[sub["timestamp"] >= recent_cutoff]
-    print(f"Recent 60d slice: {len(recent):,} trades ending {pd.Timestamp(latest_ts, unit='s').date()}")
+    very_recent = latest_ts - 14 * 24 * 3600
 
-    # Rank wallets per-game (so a CS2 grinder and a LoL grinder can both appear)
-    all_targets = []
+    all_followers = []
     for game in GAMES:
         gdf = recent[recent["game"] == game]
         if not len(gdf):
@@ -71,7 +68,6 @@ def main():
             trades=("pnl", "size"),
             wins=("won", "sum"),
             pnl=("pnl", "sum"),
-            total_volume_usd=("size", "sum"),
             last_ts=("timestamp", "max"),
         ).reset_index()
         g["game"]    = game
@@ -79,42 +75,42 @@ def main():
         g["roi"]     = (g["pnl"] / (g["trades"] * BET) * 100).round(2)
         g["avg_pnl"] = (g["pnl"] / g["trades"]).round(3)
 
-        very_recent = latest_ts - 14 * 24 * 3600
-        # Lower trade-count floor for LoL since its volume is much smaller
-        min_trades = 30 if game == "cs2" else 15
-        tg = g[(g["trades"] >= min_trades) & (g["roi"] < -5) & (g["last_ts"] >= very_recent)]
-        tg = tg.sort_values("pnl").reset_index(drop=True)
-        print(f"\n[{game}] active losing wallets (n>={min_trades}, ROI<-5%, last 14d): {len(tg)}")
+        # Stricter filter for winners: need genuine edge, not lucky variance.
+        # Higher min-trades and positive ROI cutoff.
+        min_trades = 50 if game == "cs2" else 25
+        tg = g[(g["trades"] >= min_trades) & (g["roi"] > 5) & (g["last_ts"] >= very_recent)]
+        tg = tg.sort_values("pnl", ascending=False).reset_index(drop=True)
+        print(f"\n[{game}] active winning wallets (n>={min_trades}, ROI>+5%, last 14d): {len(tg)}")
         print(tg.head(10)[["proxyWallet", "trades", "wr", "pnl", "roi", "avg_pnl"]].to_string(index=False))
-        # Top-K per game — CS2 gets 500, LoL gets 200 (smaller pool, fewer truly persistent losers)
-        per_game_cap = 500 if game == "cs2" else 200
-        all_targets.append(tg.head(per_game_cap))
 
-    if not all_targets:
-        print("\nNo targets found — aborting")
+        # Backtest used top-10 wallets — keep selection tight to preserve edge.
+        per_game_cap = 25 if game == "cs2" else 10
+        all_followers.append(tg.head(per_game_cap))
+
+    if not all_followers:
+        print("\nNo follow targets found — aborting")
         return
-    targets = pd.concat(all_targets, ignore_index=True).sort_values("pnl").reset_index(drop=True)
+    followers = pd.concat(all_followers, ignore_index=True).sort_values("pnl", ascending=False).reset_index(drop=True)
 
-    # Deduplicate — a wallet active in multiple games appears once
+    # Deduplicate
     seen = set()
-    unique_wallets = []
-    for _, r in targets.iterrows():
-        w = r["proxyWallet"]
-        if w in seen:
+    unique = []
+    for _, r in followers.iterrows():
+        if r["proxyWallet"] in seen:
             continue
-        seen.add(w)
-        unique_wallets.append(w)
+        seen.add(r["proxyWallet"])
+        unique.append(r["proxyWallet"])
 
     out = {
         "generated_at": pd.Timestamp.utcnow().isoformat(),
         "data_through": pd.Timestamp(latest_ts, unit="s").isoformat(),
         "games":          GAMES,
-        "target_wallets": unique_wallets,
-        "target_meta":    targets.to_dict(orient="records"),
+        "target_wallets": unique,
+        "target_meta":    followers.to_dict(orient="records"),
     }
-    path = ES_DIR / "fade_targets.json"
+    path = ES_DIR / "follow_targets.json"
     path.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
-    print(f"\nSaved {len(unique_wallets)} unique target wallets across {GAMES}: {path}")
+    print(f"\nSaved {len(unique)} unique follow wallets across {GAMES}: {path}")
 
 
 if __name__ == "__main__":

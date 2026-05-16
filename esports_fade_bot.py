@@ -44,8 +44,10 @@ ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pat
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)
 MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 
-# Only consider CS2 (the signal we validated)
-ESPORTS_PREFIXES = ("cs2-", "csgo-")
+# Games where per-game OOS backtest cleared ~+100% ROI on a real sample:
+#   cs2/csgo (+144%), league-of-legends / league- (+127%).
+# Dota/Valorant samples too small to trust right now — add later.
+ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-")
 
 
 class FadeBot:
@@ -122,37 +124,65 @@ class FadeBot:
             print(f"[fade-bot] market fetch error {condition_id[:10]}: {e}")
         return None
 
-    TARGETS_PATH = ES_DIR / "fade_targets.json"
+    FADE_PATH   = ES_DIR / "fade_targets.json"
+    FOLLOW_PATH = ES_DIR / "follow_targets.json"
+    TARGETS_PATH = FADE_PATH  # back-compat for any external reference
+
+    def _load_wallets(self, path: Path) -> tuple[set[str], float]:
+        if not path.exists():
+            return set(), 0.0
+        d = json.loads(path.read_text(encoding="utf-8"))
+        wallets = set(w.lower() for w in (d.get("target_wallets") or []))
+        return wallets, path.stat().st_mtime
 
     def _load_targets(self) -> set[str]:
-        d = json.loads(self.TARGETS_PATH.read_text(encoding="utf-8"))
-        self.targets_mtime = self.TARGETS_PATH.stat().st_mtime
-        return set(w.lower() for w in d["target_wallets"])
+        """Load fade targets + follow targets. Returns fade set for back-compat."""
+        fade, self.fade_mtime = self._load_wallets(self.FADE_PATH)
+        self.follow_wallets, self.follow_mtime = self._load_wallets(self.FOLLOW_PATH)
+        # Back-compat
+        self.targets_mtime = self.fade_mtime
+        print(f"[fade-bot] loaded {len(fade)} fade + {len(self.follow_wallets)} follow wallets")
+        return fade
 
     def maybe_reload_targets(self):
-        """Hot-reload fade_targets.json if it's been refreshed on disk.
+        """Hot-reload fade_targets.json AND follow_targets.json on mtime change.
 
-        Lets the refresh-targets task update wallet list without restarting bot.
+        Lets refresh-targets task update lists without restarting the bot.
         """
         try:
-            cur_mtime = self.TARGETS_PATH.stat().st_mtime
+            fade_mtime = self.FADE_PATH.stat().st_mtime if self.FADE_PATH.exists() else 0
+            follow_mtime = self.FOLLOW_PATH.stat().st_mtime if self.FOLLOW_PATH.exists() else 0
         except OSError:
             return
-        if cur_mtime <= getattr(self, "targets_mtime", 0):
-            return
-        try:
-            d = json.loads(self.TARGETS_PATH.read_text(encoding="utf-8"))
-            new_targets = set(w.lower() for w in d["target_wallets"])
-            added = len(new_targets - self.target_wallets)
-            removed = len(self.target_wallets - new_targets)
-            self.target_wallets = new_targets
-            self.targets_mtime = cur_mtime
-            print(f"[fade-bot] reloaded {len(new_targets)} targets "
-                  f"(+{added} new, -{removed} dropped)")
-            self.write_event({"type": "targets_reloaded", "count": len(new_targets),
-                              "added": added, "removed": removed})
-        except Exception as e:
-            print(f"[fade-bot] targets reload failed: {e}")
+
+        if fade_mtime > getattr(self, "fade_mtime", 0):
+            try:
+                wallets, _ = self._load_wallets(self.FADE_PATH)
+                added = len(wallets - self.target_wallets)
+                removed = len(self.target_wallets - wallets)
+                self.target_wallets = wallets
+                self.fade_mtime = fade_mtime
+                self.targets_mtime = fade_mtime
+                print(f"[fade-bot] reloaded {len(wallets)} fade targets "
+                      f"(+{added} new, -{removed} dropped)")
+                self.write_event({"type": "fade_targets_reloaded",
+                                  "count": len(wallets), "added": added, "removed": removed})
+            except Exception as e:
+                print(f"[fade-bot] fade reload failed: {e}")
+
+        if follow_mtime > getattr(self, "follow_mtime", 0):
+            try:
+                wallets, _ = self._load_wallets(self.FOLLOW_PATH)
+                added = len(wallets - self.follow_wallets)
+                removed = len(self.follow_wallets - wallets)
+                self.follow_wallets = wallets
+                self.follow_mtime = follow_mtime
+                print(f"[fade-bot] reloaded {len(wallets)} follow targets "
+                      f"(+{added} new, -{removed} dropped)")
+                self.write_event({"type": "follow_targets_reloaded",
+                                  "count": len(wallets), "added": added, "removed": removed})
+            except Exception as e:
+                print(f"[fade-bot] follow reload failed: {e}")
 
     def poll(self):
         """Pull recent trades and filter to target wallets."""
@@ -169,16 +199,19 @@ class FadeBot:
             print(f"[fade-bot] poll error: {e}")
             return []
 
-    def is_cs2(self, slug: str) -> bool:
+    def is_target_game(self, slug: str) -> bool:
         s = (slug or "").lower()
         return any(s.startswith(p) for p in ESPORTS_PREFIXES)
+
+    # Backwards-compat alias (name was CS2-only before)
+    is_cs2 = is_target_game
 
     def write_event(self, ev: dict):
         with self.events_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(ev) + "\n")
 
     def write_paper_trade(self, trade: dict):
-        cols = ["timestamp","target_wallet","fade_condition","fade_slug",
+        cols = ["timestamp","strategy","target_wallet","fade_condition","fade_slug",
                 "their_side","their_outcome","their_price","their_size",
                 "our_side","our_outcome","our_entry","our_bet","our_shares_est",
                 "our_token_id","tx_hash"]
@@ -203,11 +236,17 @@ class FadeBot:
             self.seen_tx = deque(list(self.seen_tx)[-5000:], maxlen=10000)
 
         wallet = (t.get("proxyWallet") or "").lower()
-        if wallet not in self.target_wallets:
+        # Pick strategy by wallet membership. Follow wins if a wallet is both
+        # (rare — a winner takes precedence over a loser ranking).
+        if wallet in self.follow_wallets:
+            strategy = "follow"
+        elif wallet in self.target_wallets:
+            strategy = "fade"
+        else:
             return
 
         slug = t.get("slug") or t.get("eventSlug") or ""
-        if not self.is_cs2(slug):
+        if not self.is_target_game(slug):
             return
 
         # Build fade
@@ -227,15 +266,25 @@ class FadeBot:
             return
         other = [o for o in mkt["outcomes"] if o != their_outcome][0]
 
-        # FADE LOGIC: we BUY the opposite outcome's token.
-        #   target BUY X @ p  -> we BUY Y @ (1 - p)
-        #   target SELL X @ p (exiting / going short X) -> we BUY X @ (1 - p)
-        if their_side == "BUY":
-            our_outcome = other
-        else:
-            our_outcome = their_outcome
+        # STRATEGY ROUTING
+        # FADE:   we BUY the opposite outcome's token (target loses → we win)
+        # FOLLOW: we BUY the same outcome's token at the same price (target wins → we win)
+        if strategy == "fade":
+            if their_side == "BUY":
+                our_outcome = other
+            else:
+                # target SELL = exiting / shorting their_outcome → fade = buy what they sold
+                our_outcome = their_outcome
+            our_entry = round(1 - their_price, 4)
+        else:  # follow
+            if their_side == "BUY":
+                our_outcome = their_outcome
+                our_entry = round(their_price, 4)
+            else:
+                # target SELL = exiting their_outcome → follow = buy the other side
+                our_outcome = other
+                our_entry = round(1 - their_price, 4)
         our_token_id = mkt["tokens"].get(our_outcome)
-        our_entry = round(1 - their_price, 4)
 
         bet = LIVE_BET_USD if self.live else PAPER_BET_USD
 
@@ -279,6 +328,7 @@ class FadeBot:
 
         trade = {
             "timestamp":      t.get("timestamp"),
+            "strategy":       strategy,
             "target_wallet":  wallet,
             "fade_condition": t.get("conditionId"),
             "fade_slug":      slug,
@@ -303,7 +353,7 @@ class FadeBot:
         self.write_paper_trade(trade)
         self.write_event({"type": "fade_signal", **trade})
         print(f"[fade-bot] {datetime.utcnow().isoformat(timespec='seconds')}Z  "
-              f"FADE {wallet[:10]}...  their {their_side} {their_outcome}@{their_price}  "
+              f"{strategy.upper():>6} {wallet[:10]}...  their {their_side} {their_outcome}@{their_price}  "
               f"-> our BUY {our_outcome}@{our_entry}  bet ${bet}  slug={slug[:50]}")
 
         if self.live:

@@ -901,17 +901,30 @@ def api_esports_summary():
         except (TypeError, ValueError):
             continue
 
-    target_count = 0
+    fade_count = 0
+    follow_count = 0
     try:
-        target_path = Path(__file__).resolve().parents[2] / "cowork_snapshot" / "esports" / "fade_targets.json"
-        if target_path.exists():
-            target_count = len(json.loads(target_path.read_text(encoding="utf-8")).get("target_wallets") or [])
+        es_dir = Path(__file__).resolve().parents[2] / "cowork_snapshot" / "esports"
+        fade_path = es_dir / "fade_targets.json"
+        if fade_path.exists():
+            fade_count = len(json.loads(fade_path.read_text(encoding="utf-8")).get("target_wallets") or [])
+        follow_path = es_dir / "follow_targets.json"
+        if follow_path.exists():
+            follow_count = len(json.loads(follow_path.read_text(encoding="utf-8")).get("target_wallets") or [])
     except Exception:
         pass
 
+    # Per-strategy signal counts
+    fade_total = sum(1 for r in rows if (r.get("strategy") or "fade") == "fade")
+    follow_total = sum(1 for r in rows if r.get("strategy") == "follow")
+
     return jsonify({
         "mode":                "PAPER",  # bot is currently always paper from dashboard's POV
-        "target_wallet_count": target_count,
+        "target_wallet_count": fade_count + follow_count,
+        "fade_wallet_count":   fade_count,
+        "follow_wallet_count": follow_count,
+        "fade_signals_total":  fade_total,
+        "follow_signals_total":follow_total,
         "signals_total":       len(rows),
         "signals_today_utc":   signals_today,
         "last_signal_age_sec": (now - last_signal_ts) if last_signal_ts else None,

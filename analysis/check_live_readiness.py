@@ -124,10 +124,14 @@ def main():
     print()
     if all_ok:
         print("ALL CHECKS PASSED — system is ready for LIVE.")
-        print("To flip: edit watch_esports_fade.bat to add --live to the python line, then restart PolyBotEsports.")
+        print("To flip: run  go_live.bat  on the laptop.")
         sys.exit(0)
     else:
         print("ONE OR MORE CHECKS FAILED — do not enable LIVE until fixed.")
+        print("\nLikely remediation:")
+        print("  - balance < $50      : send USDC to the funder wallet (POLYMARKET_PROXY_ADDRESS in .env)")
+        print("  - allowance < $50    : run  .venv\\Scripts\\python.exe analysis\\setup_live_allowances.py --confirm")
+        print("  - missing env vars   : verify .env on laptop has CLOB credentials (see DEPLOY_ESPORTS_FADE.md)")
         sys.exit(1)
 
 

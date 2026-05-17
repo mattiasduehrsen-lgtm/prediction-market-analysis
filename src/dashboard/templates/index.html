@@ -1319,25 +1319,23 @@ async function refreshEsports() {
       return tb2 - ta;
     });
 
-    // Closed-trades summary cards
-    let wins = 0, losses = 0, totalPnl = 0, totalCost = 0;
-    for (const o of merged) {
-      const st = (o.status || '').toLowerCase();
-      if (st === 'win' || st === 'tp_sold') wins++;
-      else if (st === 'loss' || st === 'tp_loss') losses++;
-      else continue;
-      totalPnl  += parseFloat(o.realized_pnl || 0);
-      totalCost += parseFloat(o.cost_usd || o.total_cost || 0);
-    }
+    // Closed-trades summary — use SERVER-side aggregate over the full results
+    // file (not just the last 25 rows we display, which can all be CANCELLED).
+    const cs = live.closed_stats || {};
+    const wins = cs.wins || 0;
+    const losses = cs.losses || 0;
     const resolved = wins + losses;
+    const totalPnl = parseFloat(cs.realized_pnl_usd || 0);
+    const totalCost = parseFloat(cs.cost_usd || 0);
+    const roi = cs.roi_pct;
+
     $('es-closed-count').textContent  = resolved ? '(' + resolved + ' resolved)' : '';
     $('es-closed-wins').textContent   = wins;
     $('es-closed-losses').textContent = losses;
-    $('es-closed-wr').textContent     = resolved ? (wins/resolved*100).toFixed(1) + '%' : '—';
+    $('es-closed-wr').textContent     = cs.win_rate_pct != null ? cs.win_rate_pct.toFixed(1) + '%' : '—';
     const pnlEl2 = $('es-closed-pnl');
     pnlEl2.textContent = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(2);
     pnlEl2.style.color = totalPnl > 0 ? '#00c853' : totalPnl < 0 ? '#ff5252' : '#fff';
-    const roi = totalCost > 0 ? (totalPnl / totalCost * 100) : null;
     const roiEl2 = $('es-closed-roi');
     roiEl2.textContent = roi != null ? ((roi >= 0 ? '+' : '') + roi.toFixed(1) + '%') : '—';
     roiEl2.style.color = roi != null && roi > 0 ? '#00c853' : roi != null && roi < 0 ? '#ff5252' : '#fff';

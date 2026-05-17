@@ -1294,21 +1294,47 @@ def api_esports_live():
 
     # Recent CLOSED (resolved + cancelled) orders only — open positions live in
     # the dedicated /api/esports/live/open endpoint now.
-    recent = []
+    all_closed = []
     if ES_LIVE_RESULTS_CSV.exists():
         with open(ES_LIVE_RESULTS_CSV, newline="", encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 row = {k: v for k, v in r.items() if k is not None}
-                # Skip currently-open positions (they're in the OPEN endpoint)
                 if row.get("status") in ("UNRESOLVED", "open"):
                     continue
-                # Skip SELLs (folded into BUY pairing in evaluator)
                 if str(row.get("side", "BUY")).upper() == "SELL":
                     continue
-                recent.append(row)
-        recent = recent[-25:][::-1]
+                all_closed.append(row)
     else:
-        recent = [o for o in orders if str(o.get("side", "BUY")).upper() != "SELL"][-25:][::-1]
+        all_closed = [o for o in orders if str(o.get("side", "BUY")).upper() != "SELL"]
+
+    # Aggregate stats over ALL closed rows (not just the displayed last 25 —
+    # which can all happen to be CANCELLED during a cancel burst, making the
+    # cards show zero W/L when there ARE wins/losses in older rows).
+    n_wins = sum(1 for r in all_closed if r.get("status") in ("WIN", "TP_SOLD"))
+    n_losses = sum(1 for r in all_closed if r.get("status") in ("LOSS", "TP_LOSS"))
+    n_cancelled_closed = sum(1 for r in all_closed if r.get("status") == "CANCELLED")
+    realized_total = 0.0
+    cost_total = 0.0
+    for r in all_closed:
+        if r.get("status") not in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS"):
+            continue
+        try:
+            realized_total += float(r.get("realized_pnl") or 0)
+            cost_total     += float(r.get("cost_usd") or 0)
+        except (TypeError, ValueError):
+            pass
+    n_resolved = n_wins + n_losses
+    closed_stats = {
+        "wins":            n_wins,
+        "losses":          n_losses,
+        "cancelled":       n_cancelled_closed,
+        "resolved":        n_resolved,
+        "realized_pnl_usd": round(realized_total, 2),
+        "cost_usd":        round(cost_total, 2),
+        "win_rate_pct":    round(n_wins / n_resolved * 100, 2) if n_resolved else None,
+        "roi_pct":         round(realized_total / cost_total * 100, 2) if cost_total > 0 else None,
+    }
+    recent = all_closed[-25:][::-1]
 
     # Enrich each recent live order with the market question (for "Vitality wins
     # Map 1"-style displays) and resolution deadline.
@@ -1330,6 +1356,7 @@ def api_esports_live():
         "early_sells":       n_sells,
         "early_proceeds_usd": round(total_proceeds, 2),
         "daily":             daily,
+        "closed_stats":      closed_stats,
         "recent":            recent,
     })
 

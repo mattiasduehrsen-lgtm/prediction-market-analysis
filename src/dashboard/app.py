@@ -1049,6 +1049,166 @@ def api_esports_recent():
     return jsonify(rows)
 
 
+# ── Orderbook bid cache (30s TTL) — many positions can be priced in one render
+_bid_cache: dict[str, tuple[float, float]] = {}   # token_id -> (best_bid, fetched_at)
+_BID_TTL = 30.0
+_clob_client_for_bids = None
+
+
+def _get_best_bid(token_id: str) -> float | None:
+    """Cached best-bid lookup for a token_id. Returns None on error."""
+    global _clob_client_for_bids
+    if not token_id:
+        return None
+    now = time.time()
+    cached = _bid_cache.get(token_id)
+    if cached and (now - cached[1]) < _BID_TTL:
+        return cached[0]
+    if _clob_client_for_bids is None:
+        try:
+            if not _CLOB_IMPORTS_OK:
+                return None
+            _clob_client_for_bids = _get_clob_client()
+        except Exception:
+            return None
+    try:
+        ob = _clob_client_for_bids.get_order_book(str(token_id)) or {}
+        bids = ob.get("bids") if isinstance(ob, dict) else []
+        if not bids:
+            best = 0.0
+        else:
+            last = bids[-1]
+            best = float(last.get("price") if isinstance(last, dict) else 0)
+        _bid_cache[token_id] = (best, now)
+        return best
+    except Exception:
+        # On error, return stale cache if we have it, else None
+        return cached[0] if cached else None
+
+
+@app.route("/api/esports/live/open")
+def api_esports_live_open():
+    """Currently-open LIVE positions, aggregated per (token_id) with live best
+    bid + unrealized PnL. The dashboard's 'Open Positions' table reads this.
+
+    A position is OPEN when:
+      - it has at least one matched BUY
+      - the cumulative SELLs are < cumulative BUYs (some shares still owned)
+      - the market hasn't resolved (no winner yet)
+    """
+    orders = []
+    if ES_LIVE_ORDERS_JSONL.exists():
+        with open(ES_LIVE_ORDERS_JSONL, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    orders.append(json.loads(line))
+                except Exception:
+                    continue
+
+    # Aggregate matched orders per token_id
+    from collections import defaultdict
+    pos = defaultdict(lambda: {
+        "buy_shares": 0.0, "buy_cost": 0.0, "buy_count": 0,
+        "sell_shares": 0.0, "sell_proceeds": 0.0,
+        "first_ts": None, "last_ts": None,
+        "slug": "", "outcome": "", "strategy": "", "condition_id": "", "target_wallet": "",
+    })
+    for o in orders:
+        if str(o.get("status", "")).lower() != "matched":
+            continue
+        tid = str(o.get("token_id") or "")
+        if not tid:
+            continue
+        p = pos[tid]
+        side = str(o.get("side", "BUY")).upper()
+        shares = float(o.get("shares") or 0)
+        cost   = float(o.get("cost_usd") or 0)
+        ts     = float(o.get("ts") or 0)
+        if side == "BUY":
+            p["buy_shares"] += shares
+            p["buy_cost"]   += cost
+            p["buy_count"]  += 1
+            if not p["slug"]:
+                p["slug"]         = o.get("fade_slug", "")
+                p["outcome"]      = o.get("our_outcome", "")
+                p["strategy"]     = o.get("strategy", "fade")
+                p["condition_id"] = o.get("fade_condition", "")
+                p["target_wallet"] = o.get("target_wallet", "")
+            if p["first_ts"] is None or ts < p["first_ts"]:
+                p["first_ts"] = ts
+            if p["last_ts"] is None or ts > p["last_ts"]:
+                p["last_ts"] = ts
+        else:  # SELL
+            p["sell_shares"]   += shares
+            p["sell_proceeds"] += cost
+
+    # Filter to actually-open (have unsold shares + market not resolved)
+    open_rows = []
+    now = time.time()
+    for tid, p in pos.items():
+        unsold = p["buy_shares"] - p["sell_shares"]
+        if unsold < 0.01 or p["buy_shares"] < 0.01:
+            continue
+        # Check market resolution
+        meta = _get_market_meta(p["condition_id"]) if p["condition_id"] else None
+        end_iso = (meta or {}).get("end_date_iso", "")
+        game_start = (meta or {}).get("game_start_time", "")
+        question   = (meta or {}).get("question", "")
+
+        # Current best bid for our outcome — drives unrealized PnL
+        best_bid = _get_best_bid(tid)
+        unrealized = None
+        if best_bid is not None:
+            current_value = unsold * best_bid
+            # Already-collected proceeds offset what we paid
+            unrealized = current_value + p["sell_proceeds"] - p["buy_cost"]
+
+        avg_cost = (p["buy_cost"] / p["buy_shares"]) if p["buy_shares"] else 0
+        held_for = (now - p["first_ts"]) if p["first_ts"] else 0
+
+        open_rows.append({
+            "token_id":       tid,
+            "condition_id":   p["condition_id"],
+            "fade_slug":      p["slug"],
+            "question":       question,
+            "our_outcome":    p["outcome"],
+            "strategy":       p["strategy"],
+            "target_wallet":  p["target_wallet"],
+            "buy_count":      p["buy_count"],
+            "shares_owned":   round(unsold, 4),
+            "avg_cost":       round(avg_cost, 4),
+            "total_cost":     round(p["buy_cost"], 2),
+            "sold_shares":    round(p["sell_shares"], 4),
+            "sold_proceeds":  round(p["sell_proceeds"], 2),
+            "current_bid":    round(best_bid, 4) if best_bid is not None else None,
+            "unrealized_pnl": round(unrealized, 2) if unrealized is not None else None,
+            "first_buy_ts":   p["first_ts"],
+            "held_seconds":   round(held_for),
+            "game_start_time": game_start,
+            "end_date_iso":   end_iso,
+        })
+
+    # Sort: highest current value first (most exposure)
+    open_rows.sort(key=lambda r: r["total_cost"], reverse=True)
+
+    total_cost   = sum(r["total_cost"] for r in open_rows)
+    total_value  = sum((r["shares_owned"] * (r["current_bid"] or 0)) for r in open_rows)
+    total_unreal = sum((r["unrealized_pnl"] or 0) for r in open_rows)
+
+    return jsonify({
+        "open_positions":         open_rows,
+        "summary": {
+            "n_positions":        len(open_rows),
+            "total_cost_usd":     round(total_cost, 2),
+            "current_value_usd":  round(total_value, 2),
+            "unrealized_pnl_usd": round(total_unreal, 2),
+        },
+    })
+
+
 @app.route("/api/esports/live")
 def api_esports_live():
     """LIVE bot order snapshot: total orders, fills, today's PnL, recent orders.
@@ -1086,15 +1246,23 @@ def api_esports_live():
         except Exception:
             daily = {}
 
-    # Recent live orders + their resolved PnL (if eval has run)
+    # Recent CLOSED (resolved + cancelled) orders only — open positions live in
+    # the dedicated /api/esports/live/open endpoint now.
     recent = []
     if ES_LIVE_RESULTS_CSV.exists():
         with open(ES_LIVE_RESULTS_CSV, newline="", encoding="utf-8") as f:
             for r in csv.DictReader(f):
-                recent.append({k: v for k, v in r.items() if k is not None})
-        recent = recent[-15:][::-1]
+                row = {k: v for k, v in r.items() if k is not None}
+                # Skip currently-open positions (they're in the OPEN endpoint)
+                if row.get("status") in ("UNRESOLVED", "open"):
+                    continue
+                # Skip SELLs (folded into BUY pairing in evaluator)
+                if str(row.get("side", "BUY")).upper() == "SELL":
+                    continue
+                recent.append(row)
+        recent = recent[-25:][::-1]
     else:
-        recent = orders[-15:][::-1]
+        recent = [o for o in orders if str(o.get("side", "BUY")).upper() != "SELL"][-25:][::-1]
 
     # Enrich each recent live order with the market question (for "Vitality wins
     # Map 1"-style displays) and resolution deadline.

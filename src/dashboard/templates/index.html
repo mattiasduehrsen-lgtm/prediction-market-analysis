@@ -1280,11 +1280,27 @@ async function refreshEsports() {
     }
 
     // ── HISTORY (closed / cancelled) ─────────────────────────────────────
+    // Merge: results.csv entries (rolled-up by evaluator) + just_resolved
+    // (markets that resolved since the last eval task run, computed inline).
+    // De-dupe by (fade_slug, our_outcome) — the evaluator's view is preferred.
+    const seen = new Set(live.recent.map(o => (o.fade_slug||'') + '|' + (o.our_outcome||'')));
+    const merged = [...live.recent];
+    for (const jr of (openData.just_resolved || [])) {
+      const key = (jr.fade_slug||'') + '|' + (jr.our_outcome||'');
+      if (!seen.has(key)) merged.push(jr);
+    }
+    // Sort: newest realized first; fall back to ts/timestamp fields
+    merged.sort((a, b) => {
+      const ta = parseFloat(a.resolved_at_ts || a.ts || a.timestamp || 0);
+      const tb2 = parseFloat(b.resolved_at_ts || b.ts || b.timestamp || 0);
+      return tb2 - ta;
+    });
+
     const tb = $('es-live-tbody');
-    if (!live.recent.length) {
+    if (!merged.length) {
       tb.innerHTML = '<tr><td colspan="7" style="color:#666; padding:10px; text-align:center;">No closed orders yet</td></tr>';
     } else {
-      tb.innerHTML = live.recent.map(o => {
+      tb.innerHTML = merged.map(o => {
         const slug     = o.fade_slug || '';
         const question = o.question  || '';
         const matchLbl = shortMatch(slug, question);

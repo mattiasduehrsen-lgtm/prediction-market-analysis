@@ -881,8 +881,13 @@ def _get_market_meta(condition_id: str) -> dict | None:
       - end_date_iso    : market resolution deadline
       - question        : human-readable market question (e.g.,
         "Counter-Strike: Natus Vincere vs Vitality - Map 1 Winner")
+      - winner          : outcome string that won, or "" if not yet resolved
+      - resolved        : bool
 
-    Cache persisted to ES_MARKET_TIMES.
+    Cache policy:
+      - Resolved markets (winner set) cached permanently
+      - Unresolved markets re-checked on every call (the cached times stay,
+        only the resolution state is re-queried)
     """
     global _MARKET_TIMES_MEM, _MARKET_TIMES_LOADED
     if not _MARKET_TIMES_LOADED:
@@ -891,18 +896,28 @@ def _get_market_meta(condition_id: str) -> dict | None:
     if not condition_id:
         return None
     cached = _MARKET_TIMES_MEM.get(condition_id)
-    # Backfill question for entries that were cached before this field was added.
-    if cached and "question" in cached:
+    # Once a market is RESOLVED in cache, we can trust it forever.
+    if cached and cached.get("resolved"):
         return cached
+
+    # Re-fetch — either no cache yet, or cached but not yet resolved
     try:
         r = _requests.get(f"https://clob.polymarket.com/markets/{condition_id}", timeout=4)
         if r.status_code != 200:
-            return cached  # keep stale cache rather than wiping
+            return cached
         j = r.json()
+        winner_outcome = ""
+        closed = bool(j.get("closed"))
+        for t in (j.get("tokens") or []):
+            if t.get("winner"):
+                winner_outcome = t.get("outcome", "")
+                break
         info = {
-            "game_start_time": j.get("game_start_time") or "",
-            "end_date_iso":    j.get("end_date_iso") or "",
-            "question":        j.get("question") or "",
+            "game_start_time": j.get("game_start_time") or (cached or {}).get("game_start_time", ""),
+            "end_date_iso":    j.get("end_date_iso")    or (cached or {}).get("end_date_iso", ""),
+            "question":        j.get("question")        or (cached or {}).get("question", ""),
+            "winner":          winner_outcome,
+            "resolved":        bool(closed and winner_outcome),
         }
         _MARKET_TIMES_MEM[condition_id] = info
         _save_market_times_cache(_MARKET_TIMES_MEM)
@@ -1145,29 +1160,57 @@ def api_esports_live_open():
             p["sell_shares"]   += shares
             p["sell_proceeds"] += cost
 
-    # Filter to actually-open (have unsold shares + market not resolved)
+    # Classify each token: OPEN (held shares + market unresolved) vs
+    # JUST_RESOLVED (held shares + market resolved — show in history immediately,
+    # don't wait for the next eval task run).
     open_rows = []
+    just_resolved = []
     now = time.time()
     for tid, p in pos.items():
         unsold = p["buy_shares"] - p["sell_shares"]
         if unsold < 0.01 or p["buy_shares"] < 0.01:
             continue
-        # Check market resolution
         meta = _get_market_meta(p["condition_id"]) if p["condition_id"] else None
-        end_iso = (meta or {}).get("end_date_iso", "")
+        end_iso    = (meta or {}).get("end_date_iso", "")
         game_start = (meta or {}).get("game_start_time", "")
         question   = (meta or {}).get("question", "")
+        winner     = (meta or {}).get("winner", "")
+        resolved   = bool((meta or {}).get("resolved"))
 
-        # Current best bid for our outcome — drives unrealized PnL
+        avg_cost = (p["buy_cost"] / p["buy_shares"]) if p["buy_shares"] else 0
+        held_for = (now - p["first_ts"]) if p["first_ts"] else 0
+
+        # Resolved positions: compute realized PnL inline and emit to a separate
+        # bucket so the History UI can render them immediately (no 15-min wait
+        # for the evaluator task).
+        if resolved:
+            if winner == p["outcome"]:
+                # We won: unsold shares pay $1 each
+                realized = unsold * 1.0 + p["sell_proceeds"] - p["buy_cost"]
+            else:
+                # We lost: shares pay $0
+                realized = p["sell_proceeds"] - p["buy_cost"]
+            just_resolved.append({
+                "fade_slug":     p["slug"],
+                "question":      question,
+                "our_outcome":   p["outcome"],
+                "strategy":      p["strategy"],
+                "buy_count":     p["buy_count"],
+                "total_cost":    round(p["buy_cost"], 2),
+                "sold_proceeds": round(p["sell_proceeds"], 2),
+                "winner":        winner,
+                "status":        "WIN" if realized > 0 else "LOSS",
+                "realized_pnl":  round(realized, 2),
+                "resolved_at_ts": now,   # approx — best we have without CLOB resolution timestamp
+            })
+            continue
+
+        # Truly open: live unrealized PnL via orderbook bid
         best_bid = _get_best_bid(tid)
         unrealized = None
         if best_bid is not None:
             current_value = unsold * best_bid
-            # Already-collected proceeds offset what we paid
             unrealized = current_value + p["sell_proceeds"] - p["buy_cost"]
-
-        avg_cost = (p["buy_cost"] / p["buy_shares"]) if p["buy_shares"] else 0
-        held_for = (now - p["first_ts"]) if p["first_ts"] else 0
 
         open_rows.append({
             "token_id":       tid,
@@ -1200,6 +1243,9 @@ def api_esports_live_open():
 
     return jsonify({
         "open_positions":         open_rows,
+        "just_resolved":          just_resolved,    # markets that resolved but
+                                                    # haven't been picked up by
+                                                    # the eval task yet
         "summary": {
             "n_positions":        len(open_rows),
             "total_cost_usd":     round(total_cost, 2),

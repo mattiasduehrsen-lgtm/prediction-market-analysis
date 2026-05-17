@@ -129,7 +129,8 @@ def main():
 
     import os
     now_iso  = pd.Timestamp.utcnow().isoformat()
-    data_iso = pd.Timestamp(latest_ts, unit="s").isoformat()
+    # Global latest_ts across the dataset (used as "data_through" label)
+    data_iso = pd.Timestamp(sub["timestamp"].max(), unit="s").isoformat()
 
     # ── Write PAPER targets (wider list, used for detection by the bot) ────
     paper_out = {

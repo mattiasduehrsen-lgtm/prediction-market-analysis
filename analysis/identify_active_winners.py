@@ -110,7 +110,7 @@ def main():
 
     out = {
         "generated_at": pd.Timestamp.utcnow().isoformat(),
-        "data_through": pd.Timestamp(latest_ts, unit="s").isoformat(),
+        "data_through": pd.Timestamp(sub["timestamp"].max(), unit="s").isoformat(),
         "games":          GAMES,
         "target_wallets": unique,
         "target_meta":    followers.to_dict(orient="records"),

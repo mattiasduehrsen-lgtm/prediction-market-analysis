@@ -83,8 +83,10 @@ def main():
         print(f"\n[{game}] active winning wallets (n>={min_trades}, ROI>+5%, last 14d): {len(tg)}")
         print(tg.head(10)[["proxyWallet", "trades", "wr", "pnl", "roi", "avg_pnl"]].to_string(index=False))
 
-        # Backtest used top-10 wallets — keep selection tight to preserve edge.
-        per_game_cap = 25 if game == "cs2" else 10
+        # Expanded follow set: CS2 top-50, LoL top-20. Backtest used top-10
+        # for CS2 (+255% ROI); going to 50 trades off some edge per-wallet for
+        # ~2x more signal volume to validate the strategy faster.
+        per_game_cap = 50 if game == "cs2" else 20
         all_followers.append(tg.head(per_game_cap))
 
     if not all_followers:

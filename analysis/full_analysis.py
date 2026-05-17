@@ -103,7 +103,7 @@ for d in sorted(by_day.keys()):
     v = by_day[d]
     roi = v["pnl"]/v["cost"]*100 if v["cost"] > 0 else 0
     running += v["pnl"]
-    arrow = "▲" if v["pnl"] > 0 else ("▼" if v["pnl"] < 0 else " ")
+    arrow = "+" if v["pnl"] > 0 else ("-" if v["pnl"] < 0 else " ")
     print(f"  {d}  {v['signals']:>4}  {v['resolved']:>4}  {v['wins']:>3} {v['resolved']-v['wins']:>3}  ${v['cost']:>7.2f}  ${v['pnl']:>+7.2f} {arrow}  {roi:>+5.1f}%  (cum ${running:+.2f})")
 
 
@@ -223,7 +223,7 @@ if PAPER.exists():
             paper_by_day[d] += 1
     print()
     for d in sorted(paper_by_day.keys()):
-        bar = "█" * min(50, paper_by_day[d] // 2)
+        bar = "#" * min(50, paper_by_day[d] // 2)
         print(f"  {d}  {paper_by_day[d]:>4}  {bar}")
 
 

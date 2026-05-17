@@ -54,16 +54,21 @@ def main():
     sub = df[df["game"].isin(GAMES)].copy()
     print(f"Resolved trades in {GAMES}: {len(sub):,}")
 
-    latest_ts = sub["timestamp"].max()
-    recent_cutoff = latest_ts - 60 * 24 * 3600
-    recent = sub[sub["timestamp"] >= recent_cutoff]
-    very_recent = latest_ts - 14 * 24 * 3600
+    # Per-game windows — see identify_active_targets.py for rationale.
+    # LoL is offseason-dormant so its data + recency cutoff must be generous.
+    GAME_DATA_WINDOW_DAYS   = {"cs2":  60, "league": 240}
+    GAME_RECENT_WINDOW_DAYS = {"cs2":  14, "league": 180}
 
     all_followers = []
     for game in GAMES:
-        gdf = recent[recent["game"] == game]
-        if not len(gdf):
+        gdf_all = sub[sub["game"] == game]
+        if not len(gdf_all):
             continue
+        g_latest = gdf_all["timestamp"].max()
+        data_cutoff   = g_latest - GAME_DATA_WINDOW_DAYS[game] * 86400
+        recent_cutoff = g_latest - GAME_RECENT_WINDOW_DAYS[game] * 86400
+        gdf = gdf_all[gdf_all["timestamp"] >= data_cutoff]
+
         g = gdf.groupby("proxyWallet").agg(
             trades=("pnl", "size"),
             wins=("won", "sum"),
@@ -78,7 +83,7 @@ def main():
         # Stricter filter for winners: need genuine edge, not lucky variance.
         # Higher min-trades and positive ROI cutoff.
         min_trades = 50 if game == "cs2" else 25
-        tg = g[(g["trades"] >= min_trades) & (g["roi"] > 5) & (g["last_ts"] >= very_recent)]
+        tg = g[(g["trades"] >= min_trades) & (g["roi"] > 5) & (g["last_ts"] >= recent_cutoff)]
         tg = tg.sort_values("pnl", ascending=False).reset_index(drop=True)
         print(f"\n[{game}] active winning wallets (n>={min_trades}, ROI>+5%, last 14d): {len(tg)}")
         print(tg.head(10)[["proxyWallet", "trades", "wr", "pnl", "roi", "avg_pnl"]].to_string(index=False))

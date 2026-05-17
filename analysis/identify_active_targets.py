@@ -55,18 +55,34 @@ def main():
     sub = df[df["game"].isin(GAMES)].copy()
     print(f"Resolved trades in {GAMES}: {len(sub):,}")
 
-    # Most recent 60 days
-    latest_ts = sub["timestamp"].max()
-    recent_cutoff = latest_ts - 60 * 24 * 3600
-    recent = sub[sub["timestamp"] >= recent_cutoff]
-    print(f"Recent 60d slice: {len(recent):,} trades ending {pd.Timestamp(latest_ts, unit='s').date()}")
+    # Per-game recency windows. Each game uses its OWN latest_ts so an off-season
+    # game (like LoL between Worlds and MSI) still produces a usable target list
+    # — its wallets will fire when the next tournament starts and they resume
+    # trading. CS2 trades 24/7 so its window stays tight; LoL/Dota get more
+    # generous windows.
+    GAME_RECENT_WINDOW_DAYS = {
+        "cs2":    14,   # CS2 trades continuously; require very-recent activity
+        "league": 180,  # LoL plays in ~6-month chunks (Spring/MSI/Summer/Worlds)
+    }
+    GAME_DATA_WINDOW_DAYS = {
+        "cs2":    60,
+        "league": 240,  # capture last full LoL season for the wallet sample
+    }
 
     # Rank wallets per-game (so a CS2 grinder and a LoL grinder can both appear)
     all_targets = []
     for game in GAMES:
-        gdf = recent[recent["game"] == game]
-        if not len(gdf):
+        gdf_all = sub[sub["game"] == game]
+        if not len(gdf_all):
             continue
+        # Per-game latest_ts (NOT global) for both data window and recency cutoff
+        g_latest = gdf_all["timestamp"].max()
+        data_cutoff = g_latest - GAME_DATA_WINDOW_DAYS[game] * 24 * 3600
+        recent_cutoff = g_latest - GAME_RECENT_WINDOW_DAYS[game] * 24 * 3600
+        gdf = gdf_all[gdf_all["timestamp"] >= data_cutoff]
+        print(f"  [{game}] sample window: {GAME_DATA_WINDOW_DAYS[game]}d -> {len(gdf):,} trades "
+              f"ending {pd.Timestamp(g_latest, unit='s').date()}")
+
         g = gdf.groupby("proxyWallet").agg(
             trades=("pnl", "size"),
             wins=("won", "sum"),
@@ -79,15 +95,16 @@ def main():
         g["roi"]     = (g["pnl"] / (g["trades"] * BET) * 100).round(2)
         g["avg_pnl"] = (g["pnl"] / g["trades"]).round(3)
 
-        very_recent = latest_ts - 14 * 24 * 3600
         # Lower trade-count floor for LoL since its volume is much smaller
         min_trades = 30 if game == "cs2" else 15
-        tg = g[(g["trades"] >= min_trades) & (g["roi"] < -5) & (g["last_ts"] >= very_recent)]
+        tg = g[(g["trades"] >= min_trades) & (g["roi"] < -5) & (g["last_ts"] >= recent_cutoff)]
         tg = tg.sort_values("pnl").reset_index(drop=True)
         print(f"\n[{game}] active losing wallets (n>={min_trades}, ROI<-5%, last 14d): {len(tg)}")
         print(tg.head(10)[["proxyWallet", "trades", "wr", "pnl", "roi", "avg_pnl"]].to_string(index=False))
-        # Top-K per game — CS2 gets 500, LoL gets 200 (smaller pool, fewer truly persistent losers)
-        per_game_cap = 500 if game == "cs2" else 200
+        # Wider top-K per game for PAPER detection — we collect signals on the
+        # full pool. LIVE order placement is gated separately on a tighter subset.
+        # CS2 gets 1000, LoL gets 400 for paper (signal collection).
+        per_game_cap = 1000 if game == "cs2" else 400
         all_targets.append(tg.head(per_game_cap))
 
     if not all_targets:
@@ -105,21 +122,44 @@ def main():
         seen.add(w)
         unique_wallets.append(w)
 
-    out = {
-        "generated_at": pd.Timestamp.utcnow().isoformat(),
-        "data_through": pd.Timestamp(latest_ts, unit="s").isoformat(),
+    # LIVE subset = top losers by absolute PnL. Keeping LIVE tight (500) limits
+    # daily $ exposure to the highest-conviction targets. PAPER (full 1000+)
+    # captures the wider signal pool for ROI validation across more samples.
+    live_subset = unique_wallets[:500]
+
+    import os
+    now_iso  = pd.Timestamp.utcnow().isoformat()
+    data_iso = pd.Timestamp(latest_ts, unit="s").isoformat()
+
+    # ── Write PAPER targets (wider list, used for detection by the bot) ────
+    paper_out = {
+        "generated_at": now_iso,
+        "data_through": data_iso,
         "games":          GAMES,
+        "scope":          "paper_detection",
         "target_wallets": unique_wallets,
         "target_meta":    targets.to_dict(orient="records"),
     }
-    # Atomic write: write to .tmp then os.replace() so the bot's hot-reload
-    # never reads a partially-written JSON file.
-    import os
-    path = ES_DIR / "fade_targets.json"
-    tmp  = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
-    os.replace(tmp, path)
-    print(f"\nSaved {len(unique_wallets)} unique target wallets across {GAMES}: {path}")
+    paper_path = ES_DIR / "fade_targets_paper.json"
+    tmp = paper_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(paper_out, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, paper_path)
+    print(f"\nSaved {len(unique_wallets)} PAPER target wallets across {GAMES}: {paper_path}")
+
+    # ── Write LIVE subset (used by bot to gate place_live_order) ───────────
+    live_out = {
+        "generated_at": now_iso,
+        "data_through": data_iso,
+        "games":          GAMES,
+        "scope":          "live_subset",
+        "target_wallets": live_subset,
+        "target_meta":    targets.head(500).to_dict(orient="records"),
+    }
+    live_path = ES_DIR / "fade_targets.json"   # name kept for back-compat
+    tmp = live_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(live_out, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, live_path)
+    print(f"Saved {len(live_subset)} LIVE-subset target wallets: {live_path}")
 
 
 if __name__ == "__main__":

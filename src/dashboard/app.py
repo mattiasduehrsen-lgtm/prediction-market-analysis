@@ -1334,7 +1334,12 @@ def api_esports_live():
         "win_rate_pct":    round(n_wins / n_resolved * 100, 2) if n_resolved else None,
         "roi_pct":         round(realized_total / cost_total * 100, 2) if cost_total > 0 else None,
     }
-    recent = all_closed[-25:][::-1]
+    # Display table: only show RESOLVED trades (WIN/LOSS/TP_SOLD/TP_LOSS).
+    # CANCELLED rows are excluded from the table per user request but still
+    # counted in closed_stats above so we know how many we cancelled.
+    resolved_only = [r for r in all_closed
+                     if r.get("status") in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS")]
+    recent = resolved_only[-25:][::-1]
 
     # Enrich each recent live order with the market question (for "Vitality wins
     # Map 1"-style displays) and resolution deadline.

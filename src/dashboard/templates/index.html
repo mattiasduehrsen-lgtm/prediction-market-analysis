@@ -1242,7 +1242,13 @@ async function refreshEsports() {
     // ── OPEN POSITIONS section ───────────────────────────────────────────
     const opens = openData.open_positions || [];
     const opSum = openData.summary || {};
-    $('es-open-count').textContent = opens.length ? '(' + opens.length + ')' : '';
+    const nDead   = opens.filter(p => p.current_bid != null && p.current_bid <= 0.03).length;
+    const nLocked = opens.filter(p => p.current_bid != null && p.current_bid >= 0.95).length;
+    let countSuffix = opens.length ? '(' + opens.length : '';
+    if (nDead)   countSuffix += ', ' + nDead + ' dead';
+    if (nLocked) countSuffix += ', ' + nLocked + ' locked';
+    if (opens.length) countSuffix += ')';
+    $('es-open-count').textContent = countSuffix;
     $('es-open-n').textContent     = opens.length;
     $('es-open-cost').textContent  = '$' + (opSum.total_cost_usd || 0).toFixed(2);
     $('es-open-value').textContent = '$' + (opSum.current_value_usd || 0).toFixed(2);
@@ -1283,9 +1289,25 @@ async function refreshEsports() {
         } else {
           unrealCell = '<td style="text-align:right; color:#666">—</td>';
         }
-        // Highlight rows where unrealized is significantly negative (warning)
-        const rowBg = unreal != null && unreal < -2 ? 'background:rgba(255,82,82,0.06);'
-                    : unreal != null && unreal > 2 ? 'background:rgba(0,200,83,0.06);' : '';
+        // Decided-but-not-yet-closed: best bid near zero = essentially worthless
+        // (we've lost; market just waiting on oracle finalization). Mark clearly.
+        const effectivelyDead   = (p.current_bid != null && p.current_bid <= 0.03);
+        const effectivelyLocked = (p.current_bid != null && p.current_bid >= 0.95);
+        // Highlight rows: dead = solid red, locked-in = solid green, drift = faint
+        let rowBg = '';
+        if (effectivelyDead) {
+          rowBg = 'background:rgba(255,82,82,0.18); opacity:0.85;';
+        } else if (effectivelyLocked) {
+          rowBg = 'background:rgba(0,200,83,0.18);';
+        } else if (unreal != null && unreal < -2) {
+          rowBg = 'background:rgba(255,82,82,0.06);';
+        } else if (unreal != null && unreal > 2) {
+          rowBg = 'background:rgba(0,200,83,0.06);';
+        }
+        // Status badge on the price cell
+        const priceBadge = effectivelyDead   ? ' <span style="color:#ff5252; font-weight:700; font-size:10px;">DEAD</span>'
+                        : effectivelyLocked ? ' <span style="color:#00c853; font-weight:700; font-size:10px;">LOCKED</span>'
+                        : '';
         return `<tr style="font-size:11px; ${rowBg}">
           <td style="color:#bbb" title="${p.fade_slug || ''}">${matchLbl}</td>
           <td style="color:#4fc3f7"><strong>${position}</strong></td>
@@ -1294,7 +1316,7 @@ async function refreshEsports() {
           <td style="text-align:right">${p.shares_owned.toFixed(2)}</td>
           <td style="text-align:right; color:#bbb">${p.avg_cost.toFixed(3)}</td>
           <td style="text-align:right">$${p.total_cost.toFixed(2)}</td>
-          <td style="text-align:right; color:#ffab40">${curBid}</td>
+          <td style="text-align:right; color:#ffab40">${curBid}${priceBadge}</td>
           ${unrealCell}
           <td style="font-size:10px; color:#9ccc65">${fmtUtcShort(p.game_start_time)}</td>
           <td style="font-size:10px; color:#888">${fmtAgeShort(p.held_seconds)}</td>

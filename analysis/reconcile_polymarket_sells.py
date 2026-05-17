@@ -134,7 +134,7 @@ def main():
     existing = load_existing_sells()
     buy_ctx  = load_existing_buys()
     print(f"Already-recorded SELL buckets in live_orders.jsonl: {len(existing)}")
-    print(f"BUY context entries (token_id → match meta): {len(buy_ctx)}\n")
+    print(f"BUY context entries (token_id -> match meta): {len(buy_ctx)}\n")
 
     missing = []
     for t in sells:
@@ -189,7 +189,7 @@ def main():
         slug    = (m.get("fade_slug") or "")[:36]
         outcome = (m.get("our_outcome") or "")[:14]
         ts_iso  = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(m["ts"]))
-        print(f"  {ts_iso}  {slug:>36}  {outcome:>14}  {m['shares']:>6.2f}sh @ ${m['price']:.3f}  → ${m['cost_usd']:.2f}")
+        print(f"  {ts_iso}  {slug:>36}  {outcome:>14}  {m['shares']:>6.2f}sh @ ${m['price']:.3f}  -> ${m['cost_usd']:.2f}")
         total_proceeds += m["cost_usd"]
     print(f"\n  total proceeds: ${total_proceeds:,.2f}")
 

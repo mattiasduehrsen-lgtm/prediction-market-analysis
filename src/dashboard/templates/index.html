@@ -84,7 +84,8 @@
   <button class="tab-btn" onclick="showTab('ev')">EV Analysis</button>
   <button class="tab-btn" onclick="showTab('live')">🔴 Live Trading</button>
   <button class="tab-btn" onclick="showTab('equity')">Equity</button>
-  <button class="tab-btn" onclick="showTab('esports')" style="margin-left: 24px; border-left: 1px solid #2a2d3a; padding-left: 18px;">🎮 Esports Fade <span style="color:#888; font-size:11px;">(separate bot)</span></button>
+  <button class="tab-btn" onclick="showTab('esports-paper')" style="margin-left: 24px; border-left: 1px solid #2a2d3a; padding-left: 18px;">🎮 Esports — Paper</button>
+  <button class="tab-btn" onclick="showTab('esports-live')">🟢 Esports — Live</button>
 </div>
 
 <!-- ══ OVERVIEW TAB ══ -->
@@ -375,17 +376,20 @@
 </div><!-- end tab-equity -->
 
 <!-- ══ ESPORTS FADE TAB ══ -->
-<!-- Fully independent CS2 fade-trading bot. Not connected to the 15m crypto bot. -->
-<div id="tab-esports" class="tab-pane">
+<!-- ══ ESPORTS — PAPER TAB ══════════════════════════════════════════════════ -->
+<!-- All signals the bot has detected (placed orders for, in PAPER mode). -->
+<div id="tab-esports-paper" class="tab-pane">
 
   <section style="padding-top:16px;">
     <div style="background:#1a1d29; border:1px solid #2a2d3a; border-left:3px solid #9c27b0; padding:12px 16px; border-radius:4px; margin-bottom:16px;">
-      <div style="color:#888; font-size:11px; margin-bottom:4px;">SEPARATE BOT</div>
+      <div style="color:#888; font-size:11px; margin-bottom:4px;">PAPER (signal collection)</div>
       <div style="font-size:13px;">
-        <strong style="color:#ce93d8;">Esports Bot</strong> — two strategies on CS2 + LoL Polymarket markets:
-        <strong style="color:#ff5252;">FADE</strong> persistent losers (+133% OOS backtest) and
-        <strong style="color:#00c853;">FOLLOW</strong> top winners (+255% OOS backtest).
-        Runs as <code>PolyBotEsports</code>, independent of the 15m crypto bot. PAPER until validated.
+        <strong style="color:#ce93d8;">Esports Bot — Paper</strong>: every fade/follow signal the bot detects gets
+        logged here regardless of whether LIVE is on. PAPER never gets paused — it's our data source for
+        validation. Strategy:
+        <strong style="color:#ff5252;">FADE</strong> persistent losers (+133% OOS backtest) +
+        <strong style="color:#00c853;">FOLLOW</strong> top winners (+255% OOS backtest)
+        on CS2 + LoL Polymarket markets.
       </div>
     </div>
   </section>
@@ -407,72 +411,8 @@
     <div class="es-card"><div class="es-label">RESULTS AGE</div><div class="es-value" id="es-results-age">—</div></div>
   </section>
 
-  <!-- LIVE panel — appears once any LIVE order has been placed -->
-  <section id="es-live-section" style="margin-top:20px; display:none;">
-    <h2 style="font-size:14px; color:#ffab40; margin-top:0; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
-      🟢 LIVE — overview
-    </h2>
-    <!-- Top-level KPIs split into two rows: lifetime + today + open exposure -->
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:10px 0 16px;">
-      <div class="es-card"><div class="es-label">BUYS PLACED</div><div class="es-value" id="es-live-total">—</div></div>
-      <div class="es-card"><div class="es-label">FILLED</div><div class="es-value" id="es-live-filled" style="color:#00c853;">—</div></div>
-      <div class="es-card"><div class="es-label">CANCELLED</div><div class="es-value" id="es-live-cancelled" style="color:#888;">—</div></div>
-      <div class="es-card"><div class="es-label">TOTAL COST</div><div class="es-value" id="es-live-cost">—</div></div>
-      <div class="es-card"><div class="es-label">EARLY TP SELLS</div><div class="es-value" id="es-live-sells" style="color:#69f0ae; font-size:14px;">—</div></div>
-      <div class="es-card"><div class="es-label">TODAY REALIZED</div><div class="es-value" id="es-live-today-pnl">—</div></div>
-    </div>
-
-    <!-- ── OPEN POSITIONS — what we currently hold + live unrealized PnL ── -->
-    <h2 style="font-size:13px; color:#69f0ae; margin-top:18px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
-      📈 Open positions <span id="es-open-count" style="color:#888; font-size:11px;"></span>
-    </h2>
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:10px 0 12px;">
-      <div class="es-card"><div class="es-label">POSITIONS</div><div class="es-value" id="es-open-n">—</div></div>
-      <div class="es-card"><div class="es-label">COST</div><div class="es-value" id="es-open-cost">—</div></div>
-      <div class="es-card"><div class="es-label">CURRENT VALUE</div><div class="es-value" id="es-open-value">—</div></div>
-      <div class="es-card"><div class="es-label">UNREALIZED PNL</div><div class="es-value" id="es-open-unreal">—</div></div>
-    </div>
-    <table>
-      <thead>
-        <tr style="font-size:11px; color:#888;">
-          <th style="text-align:left">Match</th>
-          <th style="text-align:left">Our position</th>
-          <th style="text-align:center">Strat</th>
-          <th style="text-align:right" title="Number of underlying $5 BUYs at this side">#</th>
-          <th style="text-align:right">Shares</th>
-          <th style="text-align:right" title="Average cost per share">Avg</th>
-          <th style="text-align:right">Cost</th>
-          <th style="text-align:right" title="Best bid right now">Now</th>
-          <th style="text-align:right">Unreal</th>
-          <th style="text-align:left">Game start</th>
-          <th style="text-align:left">Held</th>
-        </tr>
-      </thead>
-      <tbody id="es-open-tbody"></tbody>
-    </table>
-
-    <!-- ── HISTORY — closed (TP_SOLD / WIN / LOSS / CANCELLED) ── -->
-    <h2 style="font-size:13px; color:#aaa; margin-top:22px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
-      📜 Closed / cancelled
-    </h2>
-    <table>
-      <thead>
-        <tr style="font-size:11px; color:#888;">
-          <th style="text-align:left">Match</th>
-          <th style="text-align:left">Our position</th>
-          <th style="text-align:center">Strat</th>
-          <th style="text-align:right">Cost</th>
-          <th style="text-align:right" title="Proceeds from early SELL, if any">Sold</th>
-          <th style="text-align:center">Status</th>
-          <th style="text-align:right">PnL</th>
-        </tr>
-      </thead>
-      <tbody id="es-live-tbody"></tbody>
-    </table>
-  </section>
-
   <section>
-    <h2 style="font-size:13px; color:#aaa; margin-top:20px;">Recent fade signals</h2>
+    <h2 style="font-size:13px; color:#aaa; margin-top:20px;">Recent paper signals</h2>
     <table>
       <thead>
         <tr style="font-size:11px; color:#888;">
@@ -500,7 +440,95 @@
     <pre id="es-log" style="background:#0f1117; border:1px solid #2a2d3a; color:#bbb; padding:10px; font-size:11px; overflow-x:auto; white-space:pre-wrap;">loading…</pre>
   </section>
 
-</div><!-- end tab-esports -->
+</div><!-- end tab-esports-paper -->
+
+
+<!-- ══ ESPORTS — LIVE TAB ═══════════════════════════════════════════════════ -->
+<!-- Only the LIVE bot's real-money orders, positions, and closed trades. -->
+<div id="tab-esports-live" class="tab-pane">
+
+  <section id="es-live-section" style="padding-top:16px;">
+
+    <!-- ── Banner ───────────────────────────────────────────────────────── -->
+    <div style="background:#1a1d29; border:1px solid #2a2d3a; border-left:3px solid #ffab40; padding:12px 16px; border-radius:4px; margin-bottom:16px;">
+      <div style="color:#888; font-size:11px; margin-bottom:4px;">LIVE (real money on Polymarket)</div>
+      <div style="font-size:13px;">
+        <strong style="color:#ffab40;">Esports Bot — Live</strong>: $5/trade, $10 max per (market, side),
+        $50/day risk cap. <strong>Hold-to-resolution</strong> by default — TP sweep disabled. Only the LIVE
+        bot's real orders appear here. Paper signals are on the Paper tab.
+      </div>
+    </div>
+
+    <!-- ── LIFETIME KPIs ─────────────────────────────────────────────────── -->
+    <h2 style="font-size:14px; color:#ffab40; margin-top:8px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
+      Lifetime
+    </h2>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:10px 0 16px;">
+      <div class="es-card"><div class="es-label">BUYS PLACED</div><div class="es-value" id="es-live-total">—</div></div>
+      <div class="es-card"><div class="es-label">FILLED</div><div class="es-value" id="es-live-filled" style="color:#00c853;">—</div></div>
+      <div class="es-card"><div class="es-label">CANCELLED</div><div class="es-value" id="es-live-cancelled" style="color:#888;">—</div></div>
+      <div class="es-card"><div class="es-label">TOTAL COST</div><div class="es-value" id="es-live-cost">—</div></div>
+      <div class="es-card"><div class="es-label">EARLY TP SELLS</div><div class="es-value" id="es-live-sells" style="color:#69f0ae; font-size:14px;">—</div></div>
+      <div class="es-card"><div class="es-label">TODAY REALIZED</div><div class="es-value" id="es-live-today-pnl">—</div></div>
+    </div>
+
+    <!-- ── OPEN POSITIONS — what we currently hold + live unrealized PnL ── -->
+    <h2 style="font-size:14px; color:#69f0ae; margin-top:24px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
+      📈 Open positions <span id="es-open-count" style="color:#888; font-size:12px;"></span>
+    </h2>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:10px 0 12px;">
+      <div class="es-card"><div class="es-label">POSITIONS</div><div class="es-value" id="es-open-n">—</div></div>
+      <div class="es-card"><div class="es-label">COST</div><div class="es-value" id="es-open-cost">—</div></div>
+      <div class="es-card"><div class="es-label">CURRENT VALUE</div><div class="es-value" id="es-open-value">—</div></div>
+      <div class="es-card"><div class="es-label">UNREALIZED PNL</div><div class="es-value" id="es-open-unreal">—</div></div>
+    </div>
+    <table>
+      <thead>
+        <tr style="font-size:11px; color:#888;">
+          <th style="text-align:left">Match</th>
+          <th style="text-align:left">Our position</th>
+          <th style="text-align:center">Strat</th>
+          <th style="text-align:right" title="Number of underlying $5 BUYs at this side">#</th>
+          <th style="text-align:right">Shares</th>
+          <th style="text-align:right" title="Average cost per share">Avg</th>
+          <th style="text-align:right">Cost</th>
+          <th style="text-align:right" title="Best bid right now">Now</th>
+          <th style="text-align:right">Unreal</th>
+          <th style="text-align:left">Game start</th>
+          <th style="text-align:left">Held</th>
+        </tr>
+      </thead>
+      <tbody id="es-open-tbody"></tbody>
+    </table>
+
+    <!-- ── CLOSED TRADES — WIN / LOSS / TP_SOLD / CANCELLED ─────────────── -->
+    <h2 style="font-size:14px; color:#bbb; margin-top:28px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
+      📜 Closed trades <span id="es-closed-count" style="color:#888; font-size:12px;"></span>
+    </h2>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:10px 0 12px;">
+      <div class="es-card"><div class="es-label">WINS</div><div class="es-value" id="es-closed-wins" style="color:#00c853;">—</div></div>
+      <div class="es-card"><div class="es-label">LOSSES</div><div class="es-value" id="es-closed-losses" style="color:#ff5252;">—</div></div>
+      <div class="es-card"><div class="es-label">WIN RATE</div><div class="es-value" id="es-closed-wr">—</div></div>
+      <div class="es-card"><div class="es-label">TOTAL REALIZED</div><div class="es-value" id="es-closed-pnl">—</div></div>
+      <div class="es-card"><div class="es-label">ROI</div><div class="es-value" id="es-closed-roi">—</div></div>
+    </div>
+    <table>
+      <thead>
+        <tr style="font-size:11px; color:#888;">
+          <th style="text-align:left">Match</th>
+          <th style="text-align:left">Our position</th>
+          <th style="text-align:center">Strat</th>
+          <th style="text-align:right">Cost</th>
+          <th style="text-align:right" title="Proceeds from early SELL, if any">Sold</th>
+          <th style="text-align:center">Status</th>
+          <th style="text-align:right">PnL</th>
+        </tr>
+      </thead>
+      <tbody id="es-live-tbody"></tbody>
+    </table>
+  </section>
+
+</div><!-- end tab-esports-live -->
 
 <style>
 .es-card { background:#1a1d29; border:1px solid #2a2d3a; padding:10px 14px; border-radius:4px; }
@@ -1196,12 +1224,7 @@ async function refreshEsports() {
       fetch('/api/esports/live').then(r => r.json()),
       fetch('/api/esports/live/open').then(r => r.json()),
     ]);
-    const sect = $('es-live-section');
-    if ((live.orders_total || 0) === 0 && (openData.open_positions || []).length === 0) {
-      sect.style.display = 'none';
-      return;
-    }
-    sect.style.display = 'block';
+    // Live section is always visible in its own tab; populate even when empty
 
     // ── Top KPIs (lifetime + today) ─────────────────────────────────────
     $('es-live-total').textContent     = live.orders_total || 0;
@@ -1295,6 +1318,29 @@ async function refreshEsports() {
       const tb2 = parseFloat(b.resolved_at_ts || b.ts || b.timestamp || 0);
       return tb2 - ta;
     });
+
+    // Closed-trades summary cards
+    let wins = 0, losses = 0, totalPnl = 0, totalCost = 0;
+    for (const o of merged) {
+      const st = (o.status || '').toLowerCase();
+      if (st === 'win' || st === 'tp_sold') wins++;
+      else if (st === 'loss' || st === 'tp_loss') losses++;
+      else continue;
+      totalPnl  += parseFloat(o.realized_pnl || 0);
+      totalCost += parseFloat(o.cost_usd || o.total_cost || 0);
+    }
+    const resolved = wins + losses;
+    $('es-closed-count').textContent  = resolved ? '(' + resolved + ' resolved)' : '';
+    $('es-closed-wins').textContent   = wins;
+    $('es-closed-losses').textContent = losses;
+    $('es-closed-wr').textContent     = resolved ? (wins/resolved*100).toFixed(1) + '%' : '—';
+    const pnlEl2 = $('es-closed-pnl');
+    pnlEl2.textContent = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(2);
+    pnlEl2.style.color = totalPnl > 0 ? '#00c853' : totalPnl < 0 ? '#ff5252' : '#fff';
+    const roi = totalCost > 0 ? (totalPnl / totalCost * 100) : null;
+    const roiEl2 = $('es-closed-roi');
+    roiEl2.textContent = roi != null ? ((roi >= 0 ? '+' : '') + roi.toFixed(1) + '%') : '—';
+    roiEl2.style.color = roi != null && roi > 0 ? '#00c853' : roi != null && roi < 0 ? '#ff5252' : '#fff';
 
     const tb = $('es-live-tbody');
     if (!merged.length) {

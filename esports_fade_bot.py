@@ -36,8 +36,14 @@ POLL_INTERVAL = 2.0           # seconds between API polls
 RECENT_TRADES_LIMIT = 500     # how many recent trades to scan each poll
 PAPER_BET_USD = 5.0           # bet size (PAPER)
 LIVE_BET_USD = 5.0            # bet size (LIVE)
-DAILY_LOSS_CAP = 50.0         # halt for the day if REALIZED losses exceed this (LIVE; future — see daily_risk_cap)
-DAILY_RISK_CAP_USD = 150.0    # halt for the day after we've bet this much $ (LIVE, immediate)
+DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
+                              # exceed this $ amount (LIVE; uses live_daily_pnl.json
+                              # which the eval_live cron refreshes every 10 min).
+                              # Replaces the older immediate-risk cap so we can
+                              # keep trading on winning days regardless of $ deployed.
+DAILY_RISK_CAP_USD = 500.0    # SAFETY BACKSTOP only — halts if we've placed $500
+                              # in orders today. Should never fire unless realized-PnL
+                              # tracking breaks (cron stops, file corrupt, etc).
 MAX_PER_MARKET_USD = 10.0     # cumulative bet cap per (market, our_outcome)
 MAX_FADES_PER_DAY = 100       # sanity ceiling on daily signal count
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
@@ -379,15 +385,17 @@ class FadeBot:
             self.fades_today = 0
             self.last_signal_ts.clear()
 
-        # Daily LOSS cap (LIVE only) — uses realized PnL. Currently dormant
-        # because LIVE PnL tracking isn't wired yet (no resolution-watch loop).
-        # The RISK cap below is the active hard guard.
+        # Daily LOSS cap (LIVE only) — PRIMARY stop. Halts new entries once
+        # today's realized losses pass DAILY_LOSS_CAP. daily_pnl is refreshed
+        # from live_daily_pnl.json (eval_live cron, every 10 min) so this lags
+        # the on-chain truth by up to ~10 min — acceptable for a stop-loss.
         if self.live and self.daily_pnl <= -DAILY_LOSS_CAP:
-            self.write_event({"type": "skip_daily_loss_cap", "tx": tx, "daily_pnl": self.daily_pnl})
+            self.write_event({"type": "skip_daily_loss_cap", "tx": tx,
+                              "daily_pnl": self.daily_pnl, "cap": DAILY_LOSS_CAP})
             return
 
-        # Daily RISK cap (LIVE only) — bounds total $ bet per UTC day.
-        # This is what actually fires until realized-PnL tracking exists.
+        # Daily RISK cap (LIVE only) — SAFETY BACKSTOP. Only fires if we've
+        # somehow placed $500+ in orders without the loss-PnL feed catching up.
         if self.live and self.daily_risk_usd + bet > DAILY_RISK_CAP_USD:
             self.write_event({"type": "skip_daily_risk_cap", "tx": tx,
                               "spent_today": self.daily_risk_usd, "cap": DAILY_RISK_CAP_USD})

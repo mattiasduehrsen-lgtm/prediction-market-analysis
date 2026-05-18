@@ -90,7 +90,12 @@ def usdc_balance(rpc: str, holder: str) -> float | None:
 
 
 def polymarket_position_value(addr: str) -> float | None:
-    """Authoritative open-position value from Polymarket's data-api."""
+    """Authoritative open-position value from Polymarket's data-api.
+
+    Note: this only counts UNRESOLVED positions at current mid price.
+    Resolved-winning positions (CTF tokens redeemable for $1 each) show as
+    $0 here — use polymarket_redeemable_cash() for those.
+    """
     try:
         r = requests.get(f"https://data-api.polymarket.com/value?user={addr}",
                          timeout=10)
@@ -100,6 +105,40 @@ def polymarket_position_value(addr: str) -> float | None:
     except Exception:
         return None
     return None
+
+
+def polymarket_redeemable_cash(addr: str) -> tuple[float, int] | None:
+    """Sum of shares in RESOLVED WINNING markets — each worth $1 once redeemed.
+
+    This is the gap between "USDC at proxy" and "cash shown in Polymarket UI".
+    The UI counts redeemable winning shares as cash because you can convert
+    them 1:1 with a click; on-chain they're still ERC-1155 tokens.
+    """
+    try:
+        r = requests.get(f"https://data-api.polymarket.com/positions"
+                         f"?user={addr}&sizeThreshold=0.01&limit=500",
+                         timeout=10)
+        positions = r.json()
+    except Exception:
+        return None
+    if not isinstance(positions, list):
+        return None
+    total_shares_winning_resolved = 0.0
+    count = 0
+    for p in positions:
+        # Polymarket marks resolved positions with `redeemable=true` (winning)
+        # or `redeemable=false` + cur_price=0 (lost / nothing to redeem).
+        redeemable = bool(p.get("redeemable", False))
+        if not redeemable:
+            continue
+        try:
+            shares = float(p.get("size", 0) or 0)
+        except (TypeError, ValueError):
+            shares = 0.0
+        if shares > 0:
+            total_shares_winning_resolved += shares
+            count += 1
+    return (total_shares_winning_resolved, count)
 
 
 def run_refresh() -> dict:
@@ -165,13 +204,19 @@ def main():
                   f"= ~{spread*2/60:.1f}min lag worst-vs-best)")
         cash = usdc_balance(rpc_url, PROXY) if PROXY else None
 
-    # ── 3. Position value via Polymarket data-api ──────────────────────────
-    print("\nQuerying Polymarket data-api for live position value...")
+    # ── 3. Position value + redeemable winnings via Polymarket data-api ────
+    print("\nQuerying Polymarket data-api for live position value...", flush=True)
     pos_val = polymarket_position_value(PROXY) if PROXY else None
     if pos_val is not None:
-        print(f"  Open positions value: ${pos_val:.2f}")
+        print(f"  Open (unresolved) positions value: ${pos_val:.2f}", flush=True)
     else:
-        print(f"  WARN: data-api /value returned nothing.")
+        print(f"  WARN: data-api /value returned nothing.", flush=True)
+
+    redeemable = polymarket_redeemable_cash(PROXY) if PROXY else None
+    if redeemable is not None:
+        shares, count = redeemable
+        print(f"  Redeemable winning shares: {shares:.2f} across {count} markets "
+              f"(= ${shares:.2f} cash once redeemed)", flush=True)
 
     # ── 4. Daily PnL (just written by eval_live above) ────────────────────
     daily = {}
@@ -182,24 +227,37 @@ def main():
             pass
 
     # ── 5. Wallet snapshot ────────────────────────────────────────────────
+    redeem_shares = redeemable[0] if redeemable else 0.0
+    redeem_count  = redeemable[1] if redeemable else 0
+    ui_cash = (cash or 0.0) + redeem_shares  # matches what Polymarket UI shows
+
     print()
-    print("=" * 72)
-    print("WALLET SNAPSHOT  (fresh as of right now)")
-    print("=" * 72)
-    print(f"  Proxy address     : {PROXY}")
-    print(f"  Cash (USDC.e)     : ${cash:.4f}" if cash is not None else "  Cash (USDC.e)     : <RPC failed>")
-    print(f"  Open position val : ${pos_val:.2f}" if pos_val is not None else "  Open position val : <API failed>")
-    if cash is not None and pos_val is not None:
-        print(f"  TOTAL on-platform : ${cash + pos_val:.2f}")
+    print("=" * 72, flush=True)
+    print("WALLET SNAPSHOT  (fresh as of right now)", flush=True)
+    print("=" * 72, flush=True)
+    print(f"  Proxy address     : {PROXY}", flush=True)
+    if cash is not None:
+        print(f"  USDC.e on-chain   : ${cash:.4f}", flush=True)
+    else:
+        print(f"  USDC.e on-chain   : <RPC failed>", flush=True)
+    if redeemable is not None:
+        print(f"  Redeemable shares : {redeem_shares:.2f} = ${redeem_shares:.2f} "
+              f"(across {redeem_count} resolved winning markets)", flush=True)
+    print(f"  >>> UI 'cash' est : ${ui_cash:.2f}  "
+          f"(this is what Polymarket UI shows as cash)", flush=True)
+    if pos_val is not None:
+        print(f"  Open position val : ${pos_val:.2f}  (unresolved markets, current mid)", flush=True)
+    print(f"  >>> TOTAL on-plat : ${ui_cash + (pos_val or 0):.2f}", flush=True)
     if daily:
         print(f"  Today's realized  : ${daily.get('today_pnl', 0):.2f}  "
               f"({daily.get('today_resolved', 0)} resolved, "
-              f"{daily.get('today_open', 0)} open)")
+              f"{daily.get('today_open', 0)} open)", flush=True)
 
-    print(f"\n  Refresh took {time.time() - t_start:.1f}s")
+    print(f"\n  Refresh took {time.time() - t_start:.1f}s", flush=True)
+    sys.stdout.flush()  # ensure all of above lands before subprocess writes
 
     # ── 6. Defer to the existing full analysis for breakdowns ─────────────
-    print()
+    print(flush=True)
     full = ROOT / "analysis" / "full_analysis.py"
     if full.exists():
         venv_py = ROOT / ".venv" / "Scripts" / "python.exe"

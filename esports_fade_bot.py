@@ -44,8 +44,8 @@ DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
 DAILY_RISK_CAP_USD = 500.0    # SAFETY BACKSTOP only — halts if we've placed $500
                               # in orders today. Should never fire unless realized-PnL
                               # tracking breaks (cron stops, file corrupt, etc).
-MAX_PER_MARKET_USD = 10.0     # cumulative bet cap per (market, our_outcome)
-MAX_FADES_PER_DAY = 100       # sanity ceiling on daily signal count
+MAX_PER_MARKET_USD = 25.0     # cumulative bet cap per (market, our_outcome) — raised from $10 (2026-05-18)
+MAX_FADES_PER_DAY = 500       # sanity ceiling on daily signal count — raised from 100 (2026-05-18)
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)

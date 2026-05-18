@@ -250,6 +250,6 @@ if live_rows:
        we're at {wr:.0f}%).
 
   Statistical note: at {len(resolved_live)} trades, 95% confidence interval on the
-  observed ROI is roughly ±{200/max(len(resolved_live), 1):.0f}pp wide. Wait for ≥100
+  observed ROI is roughly +/-{200/max(len(resolved_live), 1):.0f}pp wide. Wait for >=100
   resolved before drawing strong conclusions.
 """)

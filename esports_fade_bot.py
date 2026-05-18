@@ -44,6 +44,13 @@ MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)
 MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
+# LIVE-only quality filter. Live data through 2026-05-18 showed 0/5 WR at
+# our_entry in [0.20, 0.40), vs 67-91% WR at [0.40, 0.80]. The 20-40c bucket
+# is where the fade is most often "right, but the market knows" — target is
+# selling into bad news, we're catching the falling knife at a price the
+# crowd has already moved past. Cut it on LIVE only; PAPER keeps collecting
+# so we can keep validating the rule.
+LIVE_MIN_OUR_ENTRY = 0.40
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 LIVE_FILL_POLL_INTERVAL = 2.0 # seconds between fill checks
 LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
@@ -429,13 +436,13 @@ class FadeBot:
             "tx_hash":        tx,
         }
 
-        # Update exposure trackers
+        # Update exposure trackers (paper-side counters always; live-risk only
+        # when we'll actually place an order — see entry-price filter below)
         self.market_exposure[exp_key] = prior + bet
         self.fades_today += 1
-        if self.live:
-            self.daily_risk_usd += bet
 
-        # Paper: log only
+        # Paper: log every signal (entry-price filter is LIVE-only so PAPER
+        # keeps collecting unbiased samples to keep validating the rule).
         self.write_paper_trade(trade)
         self.write_event({"type": "fade_signal", **trade})
         print(f"[fade-bot] {datetime.utcnow().isoformat(timespec='seconds')}Z  "
@@ -443,6 +450,15 @@ class FadeBot:
               f"-> our BUY {our_outcome}@{our_entry}  bet ${bet}  slug={slug[:50]}")
 
         if self.live:
+            # LIVE-only entry-price floor. Live data through 2026-05-18 showed
+            # 0/5 WR at our_entry in [0.20, 0.40). Skip BEFORE bumping the
+            # daily-risk counter so a screened signal doesn't eat into the cap.
+            if our_entry < LIVE_MIN_OUR_ENTRY:
+                self.write_event({"type": "skip_entry_price_floor", "tx": tx,
+                                  "our_entry": our_entry, "floor": LIVE_MIN_OUR_ENTRY,
+                                  "strategy": strategy, "slug": slug})
+                return
+            self.daily_risk_usd += bet
             self.place_live_order(trade)
         elif self.dry_live:
             # Exercise the same arithmetic without submitting an order.

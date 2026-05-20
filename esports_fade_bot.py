@@ -34,8 +34,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL = 2.0           # seconds between API polls
 RECENT_TRADES_LIMIT = 500     # how many recent trades to scan each poll
-PAPER_BET_USD = 5.0           # bet size (PAPER)
-LIVE_BET_USD = 5.0            # bet size (LIVE)
+PAPER_BET_USD = 5.0           # bet size (PAPER) — kept at $5 for backtest continuity
+LIVE_BET_USD = 10.0           # bet size (LIVE) — raised from $5 (2026-05-19) for first scaling step
 DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
                               # exceed this $ amount (LIVE; uses live_daily_pnl.json
                               # which the eval_live cron refreshes every 10 min).
@@ -44,7 +44,7 @@ DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
 DAILY_RISK_CAP_USD = 500.0    # SAFETY BACKSTOP only — halts if we've placed $500
                               # in orders today. Should never fire unless realized-PnL
                               # tracking breaks (cron stops, file corrupt, etc).
-MAX_PER_MARKET_USD = 25.0     # cumulative bet cap per (market, our_outcome) — raised from $10 (2026-05-18)
+MAX_PER_MARKET_USD = 50.0     # cumulative bet cap per (market, our_outcome) — raised from $25 (2026-05-19) to preserve 5-fill stacking at $10 bet size
 MAX_FADES_PER_DAY = 500       # sanity ceiling on daily signal count — raised from 100 (2026-05-18)
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)

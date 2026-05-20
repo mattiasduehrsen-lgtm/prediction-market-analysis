@@ -1366,6 +1366,90 @@ def api_esports_live():
     })
 
 
+@app.route("/api/esports/live/calendar")
+def api_esports_live_calendar():
+    """Daily PnL grid for the GitHub-style heatmap on the LIVE tab.
+
+    Returns the last `weeks` * 7 days (default 12 weeks = 84 days), one cell per
+    UTC day. Each cell aggregates resolved trades that day. Empty days (no
+    resolved trades) get pnl=0, trades=0 — the frontend renders these grey to
+    visually distinguish "no activity" from "broke even."
+    """
+    from datetime import datetime, timezone, timedelta
+
+    weeks = int(request.args.get("weeks", 12))
+    weeks = max(4, min(weeks, 52))  # clamp 4..52
+    n_days = weeks * 7
+
+    today = datetime.now(timezone.utc).date()
+    # Last column should be the current week. Find the most recent Sunday so
+    # we end on a full week boundary.
+    days_until_week_end = (6 - today.weekday()) % 7  # 0=Mon..6=Sun in py; want Sat=last col
+    end_date = today + timedelta(days=days_until_week_end)
+    start_date = end_date - timedelta(days=n_days - 1)
+
+    # Pre-fill all days with zeros so the grid is never sparse.
+    by_day: dict[str, dict] = {}
+    d = start_date
+    while d <= end_date:
+        by_day[d.isoformat()] = {"date": d.isoformat(), "pnl": 0.0,
+                                  "trades": 0, "wins": 0, "losses": 0,
+                                  "cost": 0.0}
+        d += timedelta(days=1)
+
+    # Aggregate live_results.csv resolved rows by UTC date.
+    if ES_LIVE_RESULTS_CSV.exists():
+        with open(ES_LIVE_RESULTS_CSV, newline="", encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get("side", "BUY")).upper() == "SELL":
+                    continue
+                status = r.get("status", "")
+                if status not in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS"):
+                    continue
+                try:
+                    ts = float(r.get("ts") or r.get("timestamp") or 0)
+                    if not ts:
+                        continue
+                    day_iso = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+                except (TypeError, ValueError):
+                    continue
+                if day_iso not in by_day:
+                    continue
+                cell = by_day[day_iso]
+                try:
+                    cell["pnl"]    += float(r.get("realized_pnl") or 0)
+                    cell["cost"]   += float(r.get("cost_usd") or 0)
+                except (TypeError, ValueError):
+                    pass
+                cell["trades"] += 1
+                if status in ("WIN", "TP_SOLD"):
+                    cell["wins"] += 1
+                else:
+                    cell["losses"] += 1
+
+    days = list(by_day.values())
+    days.sort(key=lambda x: x["date"])
+    for c in days:
+        c["pnl"]  = round(c["pnl"], 2)
+        c["cost"] = round(c["cost"], 2)
+
+    # Summary stats for the legend
+    populated = [c for c in days if c["trades"] > 0]
+    best  = max(populated, key=lambda c: c["pnl"]) if populated else None
+    worst = min(populated, key=lambda c: c["pnl"]) if populated else None
+    total_pnl = round(sum(c["pnl"] for c in populated), 2)
+    return jsonify({
+        "days":       days,
+        "weeks":      weeks,
+        "start_date": start_date.isoformat(),
+        "end_date":   end_date.isoformat(),
+        "best_day":   best,
+        "worst_day":  worst,
+        "total_pnl":  total_pnl,
+        "active_days": len(populated),
+    })
+
+
 @app.route("/api/esports/status")
 def api_esports_status():
     """Bot process liveness via log file freshness."""

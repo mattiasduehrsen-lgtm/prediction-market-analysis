@@ -86,6 +86,7 @@
   <button class="tab-btn" onclick="showTab('equity')">Equity</button>
   <button class="tab-btn" onclick="showTab('esports-paper')" style="margin-left: 24px; border-left: 1px solid #2a2d3a; padding-left: 18px;">🎮 Esports — Paper</button>
   <button class="tab-btn" onclick="showTab('esports-live')">🟢 Esports — Live</button>
+  <button class="tab-btn" onclick="showTab('pnl-calendar')">📅 PnL Calendar</button>
 </div>
 
 <!-- ══ OVERVIEW TAB ══ -->
@@ -472,35 +473,6 @@
       <div class="es-card"><div class="es-label">TODAY REALIZED</div><div class="es-value" id="es-live-today-pnl">—</div></div>
     </div>
 
-    <!-- ── DAILY PNL CALENDAR (GitHub-style heatmap) ──────────────────────── -->
-    <h2 style="font-size:14px; color:#ffab40; margin-top:24px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
-      🗓️ Daily realized PnL
-      <span id="es-cal-summary" style="color:#888; font-size:11px; float:right; font-weight:normal;"></span>
-    </h2>
-    <div class="es-cal-wrap">
-      <div class="es-cal-dow">
-        <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
-      </div>
-      <div id="es-cal-grid" class="es-cal-grid"></div>
-    </div>
-    <div class="es-cal-legend">
-      <span style="color:#666;">Less</span>
-      <span class="es-cal-cell" data-tier="loss-4"></span>
-      <span class="es-cal-cell" data-tier="loss-3"></span>
-      <span class="es-cal-cell" data-tier="loss-2"></span>
-      <span class="es-cal-cell" data-tier="loss-1"></span>
-      <span class="es-cal-cell" data-tier="zero"></span>
-      <span class="es-cal-cell" data-tier="profit-1"></span>
-      <span class="es-cal-cell" data-tier="profit-2"></span>
-      <span class="es-cal-cell" data-tier="profit-3"></span>
-      <span class="es-cal-cell" data-tier="profit-4"></span>
-      <span style="color:#666;">More</span>
-      <span style="color:#444; margin-left:14px;">|</span>
-      <span class="es-cal-cell" data-tier="empty"></span>
-      <span style="color:#666;">No trades</span>
-    </div>
-    <div id="es-cal-tooltip" class="es-cal-tooltip"></div>
-
     <!-- ── OPEN POSITIONS — what we currently hold + live unrealized PnL ── -->
     <h2 style="font-size:14px; color:#69f0ae; margin-top:24px; border-bottom:1px solid #2a2d3a; padding-bottom:6px;">
       📈 Open positions <span id="es-open-count" style="color:#888; font-size:12px;"></span>
@@ -559,6 +531,66 @@
 
 </div><!-- end tab-esports-live -->
 
+
+<!-- ══ PNL CALENDAR TAB ═════════════════════════════════════════════════════ -->
+<div id="tab-pnl-calendar" class="tab-pane">
+  <section style="padding-top:16px; max-width:1100px; margin:0 auto;">
+
+    <div style="background:#1a1d29; border:1px solid #2a2d3a; border-left:3px solid #ffab40; padding:12px 16px; border-radius:4px; margin-bottom:20px;">
+      <div style="color:#888; font-size:11px; margin-bottom:4px;">LIVE BOT REALIZED PNL</div>
+      <div style="font-size:13px;">
+        Daily profit/loss from the <strong style="color:#ffab40;">esports fade bot</strong>.
+        Click the month header arrows to navigate. Green = profit days, red = losses.
+        Color intensity scales with magnitude relative to the worst/best day in view.
+      </div>
+    </div>
+
+    <!-- Month navigator + summary -->
+    <div class="cal-nav">
+      <button class="cal-btn" onclick="changeCalMonth(-1)">‹ Prev</button>
+      <div class="cal-title" id="cal-title">—</div>
+      <button class="cal-btn" onclick="changeCalMonth(1)">Next ›</button>
+      <button class="cal-btn" onclick="goToCalToday()" style="margin-left:auto;">Today</button>
+    </div>
+
+    <!-- Day-of-week header -->
+    <div class="cal-dow">
+      <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+    </div>
+
+    <!-- The 7×N grid -->
+    <div id="cal-grid" class="cal-grid"></div>
+
+    <!-- Summary footer -->
+    <div class="cal-summary" id="cal-summary">
+      <div class="cal-stat">
+        <div class="cal-stat-label">MONTH TOTAL</div>
+        <div class="cal-stat-value" id="cal-month-total">—</div>
+      </div>
+      <div class="cal-stat">
+        <div class="cal-stat-label">TRADING DAYS</div>
+        <div class="cal-stat-value" id="cal-month-active">—</div>
+      </div>
+      <div class="cal-stat">
+        <div class="cal-stat-label">BEST DAY</div>
+        <div class="cal-stat-value" id="cal-month-best" style="color:#69f0ae;">—</div>
+      </div>
+      <div class="cal-stat">
+        <div class="cal-stat-label">WORST DAY</div>
+        <div class="cal-stat-value" id="cal-month-worst" style="color:#ff8a80;">—</div>
+      </div>
+      <div class="cal-stat">
+        <div class="cal-stat-label">TOTAL TRADES</div>
+        <div class="cal-stat-value" id="cal-month-trades">—</div>
+      </div>
+      <div class="cal-stat">
+        <div class="cal-stat-label">WIN RATE</div>
+        <div class="cal-stat-value" id="cal-month-wr">—</div>
+      </div>
+    </div>
+  </section>
+</div><!-- end tab-pnl-calendar -->
+
 <style>
 .es-card { background:#1a1d29; border:1px solid #2a2d3a; padding:10px 14px; border-radius:4px; }
 .es-label { color:#666; font-size:10px; letter-spacing:0.08em; margin-bottom:4px; }
@@ -566,53 +598,103 @@
 .es-value.pos { color:#00c853; }
 .es-value.neg { color:#ff5252; }
 
-/* ── GitHub-style PnL calendar ──────────────────────────────────────────── */
-.es-cal-wrap {
-  display: flex; gap: 6px; margin: 12px 0 8px;
-  background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 4px;
-  padding: 14px; overflow-x: auto;
+/* ── Month-grid PnL calendar (its own tab) ──────────────────────────────── */
+.cal-nav {
+  display: flex; align-items: center; gap: 16px;
+  margin-bottom: 12px; padding: 14px 18px;
+  background: #1a1d29; border: 1px solid #2a2d3a; border-radius: 6px;
 }
-.es-cal-dow {
-  display: grid; grid-template-rows: repeat(7, 14px); gap: 3px;
-  font-size: 10px; color: #666; padding-top: 1px; line-height: 14px;
+.cal-title {
+  font-size: 22px; font-weight: 600; color: #fff;
+  min-width: 220px; text-align: center; letter-spacing: 0.02em;
 }
-.es-cal-grid {
-  display: grid; grid-auto-flow: column;
-  grid-template-rows: repeat(7, 14px); gap: 3px;
-}
-.es-cal-cell {
-  width: 14px; height: 14px; border-radius: 2px;
-  background: #1a1d29; border: 1px solid #2a2d3a;
-  cursor: default; transition: outline-color 0.1s;
-}
-.es-cal-cell:hover { outline: 1px solid #ffab40; outline-offset: 1px; }
-/* Empty (no trades that day) — dark, subtle */
-.es-cal-cell[data-tier="empty"]    { background: #1a1d29; border-color: #232634; }
-/* Resolved-but-broke-even */
-.es-cal-cell[data-tier="zero"]     { background: #2a2d3a; border-color: #3a3d4a; }
-/* Profit tiers — light to dark green (GitHub palette tuned for dark mode) */
-.es-cal-cell[data-tier="profit-1"] { background: #0e4429; border-color: #0e4429; }
-.es-cal-cell[data-tier="profit-2"] { background: #006d32; border-color: #006d32; }
-.es-cal-cell[data-tier="profit-3"] { background: #26a641; border-color: #26a641; }
-.es-cal-cell[data-tier="profit-4"] { background: #39d353; border-color: #39d353; }
-/* Loss tiers — light to dark red */
-.es-cal-cell[data-tier="loss-1"]   { background: #4a1414; border-color: #4a1414; }
-.es-cal-cell[data-tier="loss-2"]   { background: #7a1f1f; border-color: #7a1f1f; }
-.es-cal-cell[data-tier="loss-3"]   { background: #c0392b; border-color: #c0392b; }
-.es-cal-cell[data-tier="loss-4"]   { background: #ff5252; border-color: #ff5252; }
-/* Today */
-.es-cal-cell[data-today="1"]       { outline: 1px solid #ffab40; outline-offset: 1px; }
-.es-cal-legend {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 11px; color: #888; margin: 6px 0 4px; flex-wrap: wrap;
-}
-.es-cal-legend .es-cal-cell { cursor: default; }
-.es-cal-tooltip {
-  position: fixed; pointer-events: none; z-index: 9999;
+.cal-btn {
   background: #2a2d3a; color: #fff; border: 1px solid #3a3d4a;
-  padding: 6px 10px; border-radius: 4px; font-size: 12px;
-  display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); white-space: nowrap;
+  padding: 8px 16px; border-radius: 4px; cursor: pointer;
+  font-size: 14px; font-weight: 500; transition: background 0.1s;
 }
+.cal-btn:hover { background: #3a3d4a; border-color: #4a4d5a; }
+.cal-btn:active { background: #1a1d29; }
+
+.cal-dow {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+  margin-bottom: 6px;
+}
+.cal-dow > div {
+  text-align: center; font-size: 12px; font-weight: 600;
+  color: #aaa; padding: 6px 0; letter-spacing: 0.08em;
+}
+
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 100px; gap: 6px;
+}
+
+/* Each day cell */
+.cal-cell {
+  background: #f5f5f5; color: #1a1d29;
+  border-radius: 6px; padding: 8px 10px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  cursor: pointer; transition: transform 0.08s, box-shadow 0.08s;
+  border: 2px solid transparent;
+  position: relative; overflow: hidden;
+}
+.cal-cell:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.cal-cell-date {
+  font-size: 14px; font-weight: 700; line-height: 1; color: inherit;
+}
+.cal-cell-pnl  {
+  font-size: 18px; font-weight: 700; line-height: 1.1; letter-spacing: -0.01em;
+}
+.cal-cell-wl   {
+  font-size: 11px; font-weight: 500; opacity: 0.85; letter-spacing: 0.02em;
+}
+
+/* States */
+.cal-cell[data-state="empty"] {
+  background: #2a2d3a; color: #555;
+}
+.cal-cell[data-state="empty"] .cal-cell-date { color: #888; }
+
+.cal-cell[data-state="other-month"] {
+  background: #14161e; color: #3a3d4a;
+  cursor: default;
+}
+.cal-cell[data-state="other-month"]:hover { transform: none; box-shadow: none; }
+
+.cal-cell[data-state="zero"] {
+  background: #e0e0e0; color: #555;
+}
+
+/* Profit tiers — light, vibrant, readable (dark text on light backgrounds) */
+.cal-cell[data-state="profit-1"] { background: #c8e6c9; color: #1b5e20; }
+.cal-cell[data-state="profit-2"] { background: #81c784; color: #1b5e20; }
+.cal-cell[data-state="profit-3"] { background: #4caf50; color: #ffffff; }
+.cal-cell[data-state="profit-4"] { background: #2e7d32; color: #ffffff; }
+
+/* Loss tiers — light to deep red */
+.cal-cell[data-state="loss-1"]   { background: #ffcdd2; color: #b71c1c; }
+.cal-cell[data-state="loss-2"]   { background: #ef9a9a; color: #b71c1c; }
+.cal-cell[data-state="loss-3"]   { background: #ef5350; color: #ffffff; }
+.cal-cell[data-state="loss-4"]   { background: #c62828; color: #ffffff; }
+
+/* Today indicator */
+.cal-cell[data-today="1"] {
+  border-color: #ffab40;
+  box-shadow: 0 0 0 1px #ffab40;
+}
+
+/* Summary footer cards */
+.cal-summary {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px; margin-top: 20px;
+}
+.cal-stat {
+  background: #1a1d29; border: 1px solid #2a2d3a;
+  border-radius: 6px; padding: 12px 14px;
+}
+.cal-stat-label { color: #888; font-size: 10px; letter-spacing: 0.08em; margin-bottom: 6px; }
+.cal-stat-value { color: #fff; font-size: 18px; font-weight: 600; }
 </style>
 
 <script>
@@ -624,6 +706,8 @@ function showTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
+  // Lazy-refresh the calendar when its tab is opened
+  if (name === 'pnl-calendar') fetchAndRenderCal();
 }
 
 
@@ -1187,15 +1271,39 @@ function shortMatch(slug, question) {
   return (slug || '').slice(0, 32);
 }
 
-// ── Daily PnL calendar (GitHub-contribution-style) ─────────────────────────
+// ── Month-grid PnL calendar (own tab) ──────────────────────────────────────
+// State: which month is currently displayed (YYYY-MM)
+let calCurrentMonth = (() => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+})();
+
+function changeCalMonth(delta) {
+  const [y, m] = calCurrentMonth.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  calCurrentMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  fetchAndRenderCal();
+}
+function goToCalToday() {
+  const d = new Date();
+  calCurrentMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  fetchAndRenderCal();
+}
+
+async function fetchAndRenderCal() {
+  try {
+    const r = await fetch(`/api/esports/live/calendar?month=${calCurrentMonth}`);
+    const data = await r.json();
+    renderMonthCalendar(data);
+  } catch (e) {
+    console.error('cal fetch error', e);
+  }
+}
+
 function pnlTier(pnl, trades, maxAbs) {
-  // No trades that day -> empty cell
   if (trades === 0) return 'empty';
-  // Resolved trades but exactly $0 -> zero
-  if (pnl === 0) return 'zero';
-  // Tier by magnitude (relative to current observed maximum so the scale auto-adjusts)
-  const mag = Math.abs(pnl);
-  const ratio = maxAbs > 0 ? (mag / maxAbs) : 0;
+  if (pnl === 0)    return 'zero';
+  const ratio = maxAbs > 0 ? (Math.abs(pnl) / maxAbs) : 0;
   let level;
   if      (ratio > 0.66) level = 4;
   else if (ratio > 0.33) level = 3;
@@ -1204,83 +1312,73 @@ function pnlTier(pnl, trades, maxAbs) {
   return (pnl > 0 ? 'profit-' : 'loss-') + level;
 }
 
-function renderPnlCalendar(cal) {
-  if (!cal || !cal.days) return;
-  const grid = $('es-cal-grid');
+function fmtMoney(x) {
+  if (x === 0 || x === null || x === undefined) return '$0';
+  const s = x >= 0 ? '+' : '−';
+  return s + '$' + Math.abs(x).toFixed(2);
+}
+
+function renderMonthCalendar(data) {
+  if (!data || !data.days) return;
+  const grid = $('cal-grid');
   if (!grid) return;
   grid.innerHTML = '';
 
-  // Find the largest |pnl| in the window so the heatmap auto-scales.
-  const maxAbs = cal.days.reduce((m, d) => Math.max(m, Math.abs(d.pnl)), 0);
+  // Title
+  const [y, m] = calCurrentMonth.split('-').map(Number);
+  const monthNames = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+  $('cal-title').textContent = `${monthNames[m-1]} ${y}`;
+
+  // The backend returns the full grid range (first Mon ≤ month start through last Sun ≥ month end).
+  // Auto-scale color intensity to the worst/best magnitude *within this month only*.
+  const inMonth = data.days.filter(d => d.date.startsWith(calCurrentMonth));
+  const maxAbs = inMonth.reduce((m, d) => Math.max(m, Math.abs(d.pnl)), 0);
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  // The CSS uses grid-auto-flow: column, so cells must be appended row-first
-  // within each column (= each week). Our backend returns chronological days.
-  // Reorder so within a 7-day chunk, Mon is first row (matches GitHub style).
-  // JS Date.getUTCDay(): 0=Sun..6=Sat. Convert to Mon-first: (d+6)%7 -> 0=Mon..6=Sun.
-  cal.days.forEach(day => {
-    const dt = new Date(day.date + 'T00:00:00Z');
-    const dow = (dt.getUTCDay() + 6) % 7;  // 0=Mon..6=Sun
-    const cell = document.createElement('span');
-    cell.className = 'es-cal-cell';
-    cell.dataset.tier = pnlTier(day.pnl, day.trades, maxAbs);
-    cell.style.gridRow = String(dow + 1);
+  data.days.forEach(day => {
+    const cell = document.createElement('div');
+    cell.className = 'cal-cell';
+    const inThisMonth = day.date.startsWith(calCurrentMonth);
+    if (!inThisMonth) {
+      cell.dataset.state = 'other-month';
+    } else {
+      cell.dataset.state = pnlTier(day.pnl, day.trades, maxAbs);
+    }
     if (day.date === todayIso) cell.dataset.today = '1';
-    cell.dataset.date = day.date;
-    cell.dataset.pnl  = day.pnl;
-    cell.dataset.trades = day.trades;
-    cell.dataset.wins   = day.wins;
-    cell.dataset.losses = day.losses;
-    cell.addEventListener('mouseenter', e => showCalTip(e, day));
-    cell.addEventListener('mouseleave', hideCalTip);
-    cell.addEventListener('mousemove',  e => moveCalTip(e));
+
+    const dayNum = parseInt(day.date.slice(-2), 10);
+    const inner = [`<div class="cal-cell-date">${dayNum}</div>`];
+    if (inThisMonth && day.trades > 0) {
+      inner.push(`<div class="cal-cell-pnl">${fmtMoney(day.pnl)}</div>`);
+      inner.push(`<div class="cal-cell-wl">${day.wins}W · ${day.losses}L</div>`);
+    } else if (inThisMonth && day.trades === 0) {
+      inner.push(`<div class="cal-cell-wl" style="opacity:0.4">no trades</div>`);
+    }
+    cell.innerHTML = inner.join('');
     grid.appendChild(cell);
   });
 
-  // Summary line in the header
-  const sumEl = $('es-cal-summary');
-  if (sumEl) {
-    const tot = cal.total_pnl || 0;
-    const sign = tot >= 0 ? '+' : '−';
-    const color = tot > 0 ? '#00c853' : tot < 0 ? '#ff5252' : '#888';
-    let html = `<span style="color:${color}">${sign}$${Math.abs(tot).toFixed(2)}</span> across ${cal.active_days || 0} trading days`;
-    if (cal.best_day && cal.best_day.pnl !== 0) {
-      html += `  ·  best: <span style="color:#00c853">+$${cal.best_day.pnl.toFixed(2)}</span> on ${cal.best_day.date}`;
-    }
-    if (cal.worst_day && cal.worst_day.pnl < 0) {
-      html += `  ·  worst: <span style="color:#ff5252">−$${Math.abs(cal.worst_day.pnl).toFixed(2)}</span> on ${cal.worst_day.date}`;
-    }
-    sumEl.innerHTML = html;
-  }
-}
+  // Summary stats — month aggregate
+  const tot   = inMonth.reduce((s, d) => s + (d.pnl || 0), 0);
+  const trades = inMonth.reduce((s, d) => s + (d.trades || 0), 0);
+  const wins   = inMonth.reduce((s, d) => s + (d.wins   || 0), 0);
+  const losses = inMonth.reduce((s, d) => s + (d.losses || 0), 0);
+  const active = inMonth.filter(d => d.trades > 0).length;
+  const best   = inMonth.reduce((b, d) => (d.trades > 0 && (!b || d.pnl > b.pnl)) ? d : b, null);
+  const worst  = inMonth.reduce((b, d) => (d.trades > 0 && (!b || d.pnl < b.pnl)) ? d : b, null);
 
-function showCalTip(e, day) {
-  const tip = $('es-cal-tooltip');
-  if (!tip) return;
-  const pnl = parseFloat(day.pnl) || 0;
-  const sign = pnl >= 0 ? '+' : '−';
-  const color = pnl > 0 ? '#69f0ae' : pnl < 0 ? '#ff8a80' : '#bbb';
-  let txt;
-  if (day.trades === 0) {
-    txt = `<strong>${day.date}</strong><br><span style="color:#888">No trades resolved</span>`;
-  } else {
-    txt = `<strong>${day.date}</strong><br>` +
-          `<span style="color:${color}">${sign}$${Math.abs(pnl).toFixed(2)}</span> ` +
-          `· ${day.wins}W ${day.losses}L (${day.trades} resolved)`;
-  }
-  tip.innerHTML = txt;
-  tip.style.display = 'block';
-  moveCalTip(e);
-}
-function hideCalTip() {
-  const tip = $('es-cal-tooltip');
-  if (tip) tip.style.display = 'none';
-}
-function moveCalTip(e) {
-  const tip = $('es-cal-tooltip');
-  if (!tip) return;
-  tip.style.left = (e.clientX + 12) + 'px';
-  tip.style.top  = (e.clientY + 12) + 'px';
+  const totEl = $('cal-month-total');
+  totEl.textContent = fmtMoney(tot);
+  totEl.style.color = tot > 0 ? '#69f0ae' : tot < 0 ? '#ff8a80' : '#fff';
+
+  $('cal-month-active').textContent = active;
+  $('cal-month-best').textContent   = best  ? `${fmtMoney(best.pnl)}  (${best.date.slice(-2)})`   : '—';
+  $('cal-month-worst').textContent  = worst && worst.pnl < 0 ? `${fmtMoney(worst.pnl)}  (${worst.date.slice(-2)})` : '—';
+  $('cal-month-trades').textContent = trades || '—';
+  $('cal-month-wr').textContent     = (wins + losses) > 0
+    ? (wins / (wins + losses) * 100).toFixed(0) + '% (' + wins + 'W/' + losses + 'L)'
+    : '—';
 }
 
 async function refreshEsports() {
@@ -1391,14 +1489,12 @@ async function refreshEsports() {
     $('es-log').textContent = s.log_tail || '(no log yet)';
   } catch (e) { /* ignore */ }
 
-  // LIVE panel — fetches BOTH open positions + history + calendar
+  // LIVE panel — fetches BOTH open positions + history
   try {
-    const [live, openData, calData] = await Promise.all([
+    const [live, openData] = await Promise.all([
       fetch('/api/esports/live').then(r => r.json()),
       fetch('/api/esports/live/open').then(r => r.json()),
-      fetch('/api/esports/live/calendar?weeks=12').then(r => r.json()),
     ]);
-    renderPnlCalendar(calData);
     // Live section is always visible in its own tab; populate even when empty
 
     // ── Top KPIs (lifetime + today) ─────────────────────────────────────

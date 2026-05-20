@@ -1368,25 +1368,40 @@ def api_esports_live():
 
 @app.route("/api/esports/live/calendar")
 def api_esports_live_calendar():
-    """Daily PnL grid for the GitHub-style heatmap on the LIVE tab.
+    """Daily PnL grid for the PnL Calendar tab.
 
-    Returns the last `weeks` * 7 days (default 12 weeks = 84 days), one cell per
-    UTC day. Each cell aggregates resolved trades that day. Empty days (no
-    resolved trades) get pnl=0, trades=0 — the frontend renders these grey to
-    visually distinguish "no activity" from "broke even."
+    Two modes:
+      - `?month=YYYY-MM` — returns a full Mon-Sun calendar grid covering exactly
+        the month (includes leading/trailing days from adjacent months so the
+        grid is rectangular). Used by the dedicated PnL Calendar tab.
+      - default — returns the last 12 weeks (legacy heatmap mode).
+
+    Each day cell aggregates resolved trades on that UTC date. Empty days
+    (no resolved trades) get pnl=0, trades=0 — the frontend distinguishes
+    "no activity" from "broke even."
     """
     from datetime import datetime, timezone, timedelta
+    import calendar as _cal
 
-    weeks = int(request.args.get("weeks", 12))
-    weeks = max(4, min(weeks, 52))  # clamp 4..52
-    n_days = weeks * 7
-
-    today = datetime.now(timezone.utc).date()
-    # Last column should be the current week. Find the most recent Sunday so
-    # we end on a full week boundary.
-    days_until_week_end = (6 - today.weekday()) % 7  # 0=Mon..6=Sun in py; want Sat=last col
-    end_date = today + timedelta(days=days_until_week_end)
-    start_date = end_date - timedelta(days=n_days - 1)
+    month_param = request.args.get("month")  # YYYY-MM
+    if month_param:
+        try:
+            y, m = map(int, month_param.split("-"))
+            first = datetime(y, m, 1, tzinfo=timezone.utc).date()
+            last  = datetime(y, m, _cal.monthrange(y, m)[1], tzinfo=timezone.utc).date()
+            # Expand to full weeks: back to Monday, forward to Sunday
+            start_date = first - timedelta(days=first.weekday())          # Monday
+            end_date   = last + timedelta(days=(6 - last.weekday()))      # Sunday
+        except (ValueError, TypeError):
+            return jsonify({"error": "month must be YYYY-MM"}), 400
+    else:
+        weeks = int(request.args.get("weeks", 12))
+        weeks = max(4, min(weeks, 52))
+        n_days = weeks * 7
+        today = datetime.now(timezone.utc).date()
+        days_until_week_end = (6 - today.weekday()) % 7
+        end_date   = today + timedelta(days=days_until_week_end)
+        start_date = end_date - timedelta(days=n_days - 1)
 
     # Pre-fill all days with zeros so the grid is never sparse.
     by_day: dict[str, dict] = {}
@@ -1440,7 +1455,7 @@ def api_esports_live_calendar():
     total_pnl = round(sum(c["pnl"] for c in populated), 2)
     return jsonify({
         "days":       days,
-        "weeks":      weeks,
+        "month":      month_param,
         "start_date": start_date.isoformat(),
         "end_date":   end_date.isoformat(),
         "best_day":   best,

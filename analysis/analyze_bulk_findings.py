@@ -62,7 +62,7 @@ def main():
     print(f"Found {len(bulk_parts)} bulk part(s): {[p.name for p in bulk_parts]}")
     bulk = pd.concat([pd.read_parquet(p) for p in bulk_parts], ignore_index=True)
     print(f"  total bulk esports trades: {len(bulk):,}")
-    print(f"  date range: {bulk['datetime_utc'].min()} → {bulk['datetime_utc'].max()}")
+    print(f"  date range: {bulk['datetime_utc'].min()} -> {bulk['datetime_utc'].max()}")
     print(f"  unique markets: {bulk['condition_id'].nunique():,}")
     print(f"  unique participants (maker+taker): "
           f"{len(set(bulk['maker']).union(set(bulk['taker']))):,}")

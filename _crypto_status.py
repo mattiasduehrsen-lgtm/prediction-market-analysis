@@ -11,15 +11,15 @@ for asset in ("BTC", "ETH", "SOL"):
     rows = list(csv.DictReader(p.open(encoding="utf-8")))
 
     def fpnl(r):
-        try: return float(r.get("pnl") or r.get("realized_pnl") or 0)
+        try: return float(r.get("pnl_usd") or r.get("pnl") or 0)
         except (TypeError, ValueError): return 0.0
     def is_backfill(r):
-        return (str(r.get("order_id","")).startswith("BACKFILL")
-                or str(r.get("id","")).startswith("bf_"))
-    closed = [r for r in rows if r.get("status") in ("closed","TP_SOLD","LOSS","WIN")]
+        return (str(r.get("entry_order_id","")).startswith("BACKFILL")
+                or str(r.get("position_id","")).startswith("bf_"))
+    closed = [r for r in rows if r.get("state") in ("closed","TP_SOLD","LOSS","WIN")]
     bf = [r for r in closed if is_backfill(r)]
     real = [r for r in closed if not is_backfill(r)]
-    open_now = [r for r in rows if r.get("status") in ("open","pending_exit")]
+    open_now = [r for r in rows if r.get("state") in ("open","pending_exit")]
 
     print(f"== {asset} =====================")
     print(f"  total rows         : {len(rows)}")
@@ -35,7 +35,7 @@ for asset in ("BTC", "ETH", "SOL"):
             print(f"  REAL W/L           : {wins}W / {losses}L  ({wins/(wins+losses)*100:.0f}% WR)")
         # Latest real trade timestamp
         def get_ts(r):
-            try: return float(r.get("entry_ts") or r.get("window_start") or 0)
+            try: return float(r.get("opened_at") or r.get("entry_ts") or 0)
             except: return 0.0
         latest = max(real, key=get_ts)
         ts = get_ts(latest)
@@ -52,5 +52,5 @@ for asset in ("BTC", "ETH", "SOL"):
     if open_now:
         print(f"  open trades        :")
         for r in open_now[-3:]:
-            print(f"    {r.get('asset','?')} {r.get('direction','?'):<4} entry={r.get('entry_price','?')} status={r.get('status','?')}")
+            print(f"    {r.get('asset','?')} {r.get('side','?'):<4} entry={r.get('entry_price','?')} state={r.get('state','?')}")
     print()

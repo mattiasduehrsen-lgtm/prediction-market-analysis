@@ -310,6 +310,10 @@ class FadeBot:
             w.writerow({k: trade.get(k, "") for k in cols})
 
     def process_trade(self, t: dict):
+        # LATENCY INSTRUMENTATION: capture the wall-clock time we first saw
+        # this trade. Used by analysis/latency_report.py to measure how stale
+        # our view of the world was when we acted.
+        signal_seen_at = time.time()
         tx = t.get("transactionHash") or ""
         if tx in self.seen_tx_set:
             return
@@ -442,6 +446,10 @@ class FadeBot:
             "our_shares_est": shares_est,
             "our_token_id":   our_token_id,
             "tx_hash":        tx,
+            # LATENCY INSTRUMENTATION:
+            "their_fill_ts":   float(t.get("timestamp") or 0),
+            "signal_seen_at":  signal_seen_at,
+            "signal_lag_s":    round(signal_seen_at - float(t.get("timestamp") or signal_seen_at), 3),
         }
 
         # Update exposure trackers (paper-side counters always; live-risk only
@@ -501,12 +509,18 @@ class FadeBot:
             return
         shares = round(trade["our_bet"] / price, 2)
 
+        # LATENCY INSTRUMENTATION: time the signing + submission round-trip.
+        signal_seen_at = float(trade.get("signal_seen_at") or 0)
+        their_fill_ts  = float(trade.get("their_fill_ts") or 0)
+        submit_at = time.time()
         try:
             from py_clob_client_v2 import OrderArgs, OrderType
             from py_clob_client_v2.order_builder.constants import BUY
             args = OrderArgs(price=price, size=shares, side=BUY, token_id=str(token_id))
             signed = self.client.create_order(args)
+            sign_at = time.time()
             resp = self.client.post_order(signed, OrderType.GTC)
+            response_at = time.time()
             order_id  = (resp or {}).get("orderID") or (resp or {}).get("orderId") or ""
             init_stat = (resp or {}).get("status", "")
             print(f"[fade-bot]   LIVE order posted: id={order_id} status={init_stat} price={price} shares={shares}")
@@ -514,11 +528,28 @@ class FadeBot:
                               "status": init_stat, "price": price, "shares": shares,
                               "token_id": str(token_id), "tx": trade.get("tx_hash"),
                               "fade_condition": trade.get("fade_condition"),
-                              "our_outcome": trade.get("our_outcome")})
+                              "our_outcome": trade.get("our_outcome"),
+                              # Latency breakdown (all in seconds):
+                              "their_fill_ts":   their_fill_ts,
+                              "signal_seen_at":  signal_seen_at,
+                              "submit_at":       submit_at,
+                              "sign_at":         sign_at,
+                              "response_at":     response_at,
+                              "lag_signal_to_submit_s": round(submit_at - signal_seen_at, 3) if signal_seen_at else None,
+                              "lag_sign_s":            round(sign_at - submit_at, 3),
+                              "lag_post_s":            round(response_at - sign_at, 3),
+                              "lag_their_fill_to_submit_s": round(submit_at - their_fill_ts, 3) if their_fill_ts else None,
+                              })
         except Exception as e:
+            response_at = time.time()
             print(f"[fade-bot]   LIVE order POST FAILED: {e}")
             self.write_event({"type": "live_order_error", "error": str(e),
-                              "tx": trade.get("tx_hash")})
+                              "tx": trade.get("tx_hash"),
+                              "their_fill_ts": their_fill_ts,
+                              "signal_seen_at": signal_seen_at,
+                              "submit_at": submit_at,
+                              "response_at": response_at,
+                              "lag_to_failure_s": round(response_at - their_fill_ts, 3) if their_fill_ts else None})
             return
 
         # --- Poll for fill, cancel on timeout ---
@@ -566,13 +597,23 @@ class FadeBot:
                     self.write_event({"type": "live_order_cancel_error",
                                       "order_id": order_id, "error": str(e)})
 
+        final_at = time.time()
         cost = round(final_avg_price * final_matched, 4)
         print(f"[fade-bot]   LIVE final: id={order_id} status={final_status} "
               f"matched={final_matched:.2f}@{final_avg_price:.4f} cost=${cost}")
         self.write_event({"type": "live_order_final", "order_id": order_id,
                           "status": final_status, "matched": final_matched,
                           "avg_price": final_avg_price, "cost_usd": cost,
-                          "tx": trade.get("tx_hash")})
+                          "tx": trade.get("tx_hash"),
+                          # Latency breakdown (final state):
+                          "their_fill_ts":  their_fill_ts,
+                          "signal_seen_at": signal_seen_at,
+                          "submit_at":      submit_at,
+                          "response_at":    response_at,
+                          "final_at":       final_at,
+                          "lag_total_s":           round(final_at - their_fill_ts, 3) if their_fill_ts else None,
+                          "lag_signal_to_final_s": round(final_at - signal_seen_at, 3) if signal_seen_at else None,
+                          "lag_submit_to_final_s": round(final_at - response_at, 3)})
 
         # Append to live_orders.jsonl with the FINAL state — evaluate_live.py
         # uses this for PnL. Cost = avg_price * matched (actual $ spent).

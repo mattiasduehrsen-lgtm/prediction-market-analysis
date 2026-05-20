@@ -76,16 +76,31 @@ def best_block(rpcs: list[str]) -> tuple[str, int]:
 
 
 def usdc_balance(rpc: str, holder: str) -> float | None:
-    """balanceOf via a specific RPC."""
-    addr_padded = holder.lower().replace("0x", "").rjust(64, "0")
-    data = "0x70a08231" + addr_padded
-    res = rpc_call(rpc, "eth_call",
-                   [{"to": USDC_BRIDGED, "data": data}, "latest"])
-    if not res or res == "0x":
-        return None
+    """Authoritative collateral balance via the Polymarket CLOB SDK.
+
+    Polymarket migrated USDC.e -> pUSD (Polymarket-USD wrapper) before April 28,
+    2026. Querying the old USDC.e ERC20 contract directly returns $0 because all
+    funds are wrapped. The SDK's get_balance_allowance(COLLATERAL) returns
+    whatever the Exchange currently treats as collateral — which is the value
+    the bot itself uses for sizing decisions.
+
+    `rpc` is now unused (kept in the signature so callers don't break) — we hit
+    the CLOB API instead of the chain RPC. `holder` MUST match POLYMARKET_PROXY_ADDRESS
+    in .env (the SDK is authenticated for that single proxy).
+    """
     try:
-        return int(res, 16) / 1e6
-    except ValueError:
+        from py_clob_client_v2 import ClobClient, BalanceAllowanceParams, AssetType
+        client = ClobClient(
+            "https://clob.polymarket.com",
+            key=os.getenv("POLYMARKET_PRIVATE_KEY"),
+            chain_id=137,
+            signature_type=2,
+            funder=holder,
+        )
+        client.set_api_creds(client.create_or_derive_api_key())
+        b = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        return int(b.get("balance", 0)) / 1e6
+    except Exception:
         return None
 
 

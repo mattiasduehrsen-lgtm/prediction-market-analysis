@@ -16,7 +16,7 @@ client = ClobClient(
     signature_type=2,
     funder=os.getenv('POLYMARKET_PROXY_ADDRESS'),
 )
-client.set_api_creds(client.create_or_derive_api_creds())
+client.set_api_creds(client.create_or_derive_api_key())
 
 b = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
 print('CLOB COLLATERAL response:')

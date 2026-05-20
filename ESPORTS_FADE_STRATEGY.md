@@ -151,3 +151,59 @@ CS2 markets attract emotionally-attached bettors (favorite team fans, scene insi
 4. Token-id resolution: for each `(conditionId, our_outcome)`, look up the corresponding `token_id` from `clob_esports_markets.parquet`.
 5. Deploy under a new `PolyBotEsports` scheduled task on the laptop with its own watchdog. **Do not** entangle with `PolyBot` / `PolyBotPaper` lifecycle.
 6. Start with $5/trade, $50/day loss cap. Re-evaluate after 2 weeks.
+
+---
+
+## Live operation log
+
+### 2026-05-15 → 2026-05-19 (Phase 2 LIVE micro: $5/trade, observation)
+
+**Cumulative through 2026-05-19 23:00 UTC:**
+- 78 resolved trades, 57.7% WR, +$8.80 PnL on $389 cost = +2.3% ROI
+- FADE: 58 trades, 60.3% WR, +$15.62 = +5.4% ROI ✅
+- FOLLOW: 20 trades, 50% WR, -$6.83 = -6.8% ROI ⚠️ (watch)
+- Cancel rate: 41% (acting as quality filter, matches backtest assumption)
+- Entry-price bucket analysis revealed $0.20-0.40 was 0/10 WR, -$50 — single biggest drag
+
+**Key config changes 2026-05-18 → 2026-05-19:**
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-05-18 | Entry-price floor: skip if `our_entry < $0.40` (LIVE only) | 0/10 WR in that bucket = pure -$5 drain. PAPER continues unfiltered for ongoing validation. |
+| 2026-05-18 | Daily cap: $150 RISK → $150 LOSS | Bot was halting at $150 placed-bet count even on winning days. LOSS cap = halt only on actual realized -$150. RISK cap kept as $500 backstop. |
+| 2026-05-18 | `MAX_PER_MARKET_USD`: $10 → $25 | Capture consensus-signal stacking — when multiple wallets fade same market, all fills get placed. |
+| 2026-05-18 | `MAX_FADES_PER_DAY`: 100 → 500 | Non-binding sanity ceiling — was never going to fire at $5/trade. |
+| **2026-05-19** | **`LIVE_BET_USD`: $5 → $10** | **First scaling step. PAPER stays at $5 for backtest continuity.** |
+| **2026-05-19** | **`MAX_PER_MARKET_USD`: $25 → $50** | Preserve 5-fill stacking at the new $10 bet size. |
+
+### Infrastructure changes 2026-05-19
+- All 4 scheduled tasks (PolyBotPaper, PolyBot, PolyDashboard, PolyBotEsports) converted from
+  "Interactive only" → "Run whether user is logged on or not" via `schtasks /change /ru MSI\matti /rp <pw>`.
+  Root cause: laptop logoff/sleep on 2026-05-17 killed all 4 tasks for ~48h. Tasks now survive
+  logoff, sleep, reboot — anything short of laptop power-off.
+- pUSD balance bug in `analysis/fresh_analysis.py` fixed. Was querying old USDC.e contract
+  (`0x2791...`) which returns $0 since Polymarket migrated to pUSD before April 28. Now uses
+  CLOB SDK's `get_balance_allowance(COLLATERAL)` which is the authoritative path. All previous
+  "$0 USDC" reports during May were spurious — actual cash was always sitting in pUSD.
+
+### Open questions going into the next checkpoint (~n=100 resolved)
+
+1. Is the FADE/FOLLOW gap real or variance? Decide on FOLLOW cut at n=30+ for FOLLOW.
+2. Does slippage stay under 2¢ at $10/trade? If yes → headroom to $20.
+3. Does cancel rate hold under 50% at $10/trade? If yes → book depth not yet a problem.
+4. Does the entry-price filter prevent the $0.20-0.40 bleed from recurring on PAPER? (PAPER
+   should continue to show losses in that bucket as a validation that the filter is right.)
+
+### Current bot constants (esports_fade_bot.py)
+
+| Constant | Value | Notes |
+|---|---|---|
+| `PAPER_BET_USD` | $5 | Held at $5 for backtest continuity |
+| `LIVE_BET_USD` | $10 | Raised from $5 on 2026-05-19 |
+| `LIVE_MIN_OUR_ENTRY` | $0.40 | Entry-price floor (LIVE only) |
+| `DAILY_LOSS_CAP` | $150 | Primary stop (realized PnL) |
+| `DAILY_RISK_CAP_USD` | $500 | Safety backstop only |
+| `MAX_PER_MARKET_USD` | $50 | Up to 5 stacked fills per (market, outcome) |
+| `MAX_FADES_PER_DAY` | 500 | Sanity ceiling |
+| `POLL_INTERVAL` | 2.0s | Polymarket data-api polling cadence |
+| `ENTRY_SLIPPAGE` | $0.01 | +1¢ buffer on BUY (v1.9 pattern) |

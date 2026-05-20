@@ -89,16 +89,20 @@ def usdc_balance(rpc: str, holder: str) -> float | None:
     in .env (the SDK is authenticated for that single proxy).
     """
     try:
+        import contextlib, io
         from py_clob_client_v2 import ClobClient, BalanceAllowanceParams, AssetType
-        client = ClobClient(
-            "https://clob.polymarket.com",
-            key=os.getenv("POLYMARKET_PRIVATE_KEY"),
-            chain_id=137,
-            signature_type=2,
-            funder=holder,
-        )
-        client.set_api_creds(client.create_or_derive_api_key())
-        b = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        # SDK prints noisy "Could not create api key" to stderr even on success
+        # (it falls back to deriving from the key). Swallow it.
+        with contextlib.redirect_stderr(io.StringIO()):
+            client = ClobClient(
+                "https://clob.polymarket.com",
+                key=os.getenv("POLYMARKET_PRIVATE_KEY"),
+                chain_id=137,
+                signature_type=2,
+                funder=holder,
+            )
+            client.set_api_creds(client.create_or_derive_api_key())
+            b = client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
         return int(b.get("balance", 0)) / 1e6
     except Exception:
         return None
@@ -252,9 +256,9 @@ def main():
     print("=" * 72, flush=True)
     print(f"  Proxy address     : {PROXY}", flush=True)
     if cash is not None:
-        print(f"  USDC.e on-chain   : ${cash:.4f}", flush=True)
+        print(f"  pUSD (collateral) : ${cash:.4f}  (via CLOB SDK)", flush=True)
     else:
-        print(f"  USDC.e on-chain   : <RPC failed>", flush=True)
+        print(f"  pUSD (collateral) : <CLOB SDK failed>", flush=True)
     if redeemable is not None:
         print(f"  Redeemable shares : {redeem_shares:.2f} = ${redeem_shares:.2f} "
               f"(across {redeem_count} resolved winning markets)", flush=True)

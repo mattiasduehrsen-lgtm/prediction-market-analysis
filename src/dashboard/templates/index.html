@@ -564,8 +564,13 @@
     <!-- Summary footer -->
     <div class="cal-summary" id="cal-summary">
       <div class="cal-stat">
-        <div class="cal-stat-label">MONTH TOTAL</div>
+        <div class="cal-stat-label">REALIZED THIS MONTH</div>
         <div class="cal-stat-value" id="cal-month-total">—</div>
+      </div>
+      <div class="cal-stat" title="Realized PnL + current unrealized PnL on month-opened positions still live">
+        <div class="cal-stat-label">BANKROLL CHANGE</div>
+        <div class="cal-stat-value" id="cal-month-bankroll">—</div>
+        <div class="cal-stat-sub" id="cal-month-bankroll-sub" style="font-size:10px; color:#666; margin-top:4px;"></div>
       </div>
       <div class="cal-stat">
         <div class="cal-stat-label">TRADING DAYS</div>
@@ -1292,9 +1297,15 @@ function goToCalToday() {
 
 async function fetchAndRenderCal() {
   try {
-    const r = await fetch(`/api/esports/live/calendar?month=${calCurrentMonth}`);
-    const data = await r.json();
-    renderMonthCalendar(data);
+    // Fetch month grid + currently-open positions in parallel.
+    // Open positions provide unrealized PnL needed for the bankroll-change card.
+    const [calRes, openRes] = await Promise.all([
+      fetch(`/api/esports/live/calendar?month=${calCurrentMonth}`),
+      fetch('/api/esports/live/open'),
+    ]);
+    const data = await calRes.json();
+    const openData = await openRes.json();
+    renderMonthCalendar(data, openData);
   } catch (e) {
     console.error('cal fetch error', e);
   }
@@ -1318,7 +1329,7 @@ function fmtMoney(x) {
   return s + '$' + Math.abs(x).toFixed(2);
 }
 
-function renderMonthCalendar(data) {
+function renderMonthCalendar(data, openData) {
   if (!data || !data.days) return;
   const grid = $('cal-grid');
   if (!grid) return;
@@ -1348,12 +1359,19 @@ function renderMonthCalendar(data) {
     if (day.date === todayIso) cell.dataset.today = '1';
 
     const dayNum = parseInt(day.date.slice(-2), 10);
+    const newBuys = day.new_buys || 0;
     const inner = [`<div class="cal-cell-date">${dayNum}</div>`];
     if (inThisMonth && day.trades > 0) {
       inner.push(`<div class="cal-cell-pnl">${fmtMoney(day.pnl)}</div>`);
-      inner.push(`<div class="cal-cell-wl">${day.wins}W · ${day.losses}L</div>`);
-    } else if (inThisMonth && day.trades === 0) {
-      inner.push(`<div class="cal-cell-wl" style="opacity:0.4">no trades</div>`);
+      let wlText = `${day.wins}W · ${day.losses}L`;
+      if (newBuys > 0) wlText += `  ·  +${newBuys} new`;
+      inner.push(`<div class="cal-cell-wl">${wlText}</div>`);
+    } else if (inThisMonth && newBuys > 0) {
+      // No resolutions today, but new positions were opened — show those
+      inner.push(`<div class="cal-cell-pnl" style="font-size:14px;">+${newBuys} new</div>`);
+      inner.push(`<div class="cal-cell-wl">$${(day.new_buy_cost || 0).toFixed(2)} opened</div>`);
+    } else if (inThisMonth) {
+      inner.push(`<div class="cal-cell-wl" style="opacity:0.4">no activity</div>`);
     }
     cell.innerHTML = inner.join('');
     grid.appendChild(cell);
@@ -1368,9 +1386,38 @@ function renderMonthCalendar(data) {
   const best   = inMonth.reduce((b, d) => (d.trades > 0 && (!b || d.pnl > b.pnl)) ? d : b, null);
   const worst  = inMonth.reduce((b, d) => (d.trades > 0 && (!b || d.pnl < b.pnl)) ? d : b, null);
 
+  // Bankroll change = realized + unrealized on open positions OPENED in this month.
+  // Filter openData.open by first_buy_ts falling in the displayed month.
+  let unrealizedMonth = 0;
+  let openCountMonth = 0;
+  if (openData && Array.isArray(openData.open)) {
+    openData.open.forEach(p => {
+      const ts = p.first_buy_ts;
+      if (!ts) return;
+      const isoDate = new Date(ts * 1000).toISOString().slice(0, 7);  // YYYY-MM
+      if (isoDate === calCurrentMonth && p.unrealized_pnl !== null && p.unrealized_pnl !== undefined) {
+        unrealizedMonth += p.unrealized_pnl;
+        openCountMonth  += 1;
+      }
+    });
+  }
+  const bankrollChange = tot + unrealizedMonth;
+
   const totEl = $('cal-month-total');
   totEl.textContent = fmtMoney(tot);
   totEl.style.color = tot > 0 ? '#69f0ae' : tot < 0 ? '#ff8a80' : '#fff';
+
+  const brEl = $('cal-month-bankroll');
+  brEl.textContent = fmtMoney(bankrollChange);
+  brEl.style.color = bankrollChange > 0 ? '#69f0ae' : bankrollChange < 0 ? '#ff8a80' : '#fff';
+  const brSub = $('cal-month-bankroll-sub');
+  if (openCountMonth > 0) {
+    const unrealStr = unrealizedMonth >= 0
+      ? `+$${unrealizedMonth.toFixed(2)}` : `−$${Math.abs(unrealizedMonth).toFixed(2)}`;
+    brSub.textContent = `realized ${fmtMoney(tot)} + unrealized ${unrealStr} on ${openCountMonth} open`;
+  } else {
+    brSub.textContent = `realized only — no positions still open from this month`;
+  }
 
   $('cal-month-active').textContent = active;
   $('cal-month-best').textContent   = best  ? `${fmtMoney(best.pnl)}  (${best.date.slice(-2)})`   : '—';

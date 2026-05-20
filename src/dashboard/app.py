@@ -1409,8 +1409,39 @@ def api_esports_live_calendar():
     while d <= end_date:
         by_day[d.isoformat()] = {"date": d.isoformat(), "pnl": 0.0,
                                   "trades": 0, "wins": 0, "losses": 0,
-                                  "cost": 0.0}
+                                  "cost": 0.0, "new_buys": 0, "new_buy_cost": 0.0}
         d += timedelta(days=1)
+
+    # Count matched BUYs placed per day (from live_orders.jsonl) so the cell
+    # can show "+N new" on days with activity even if nothing resolved that day.
+    if ES_LIVE_ORDERS_JSONL.exists():
+        with open(ES_LIVE_ORDERS_JSONL, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if str(o.get("side", "BUY")).upper() != "BUY":
+                    continue
+                if str(o.get("status", "")).lower() != "matched":
+                    continue
+                try:
+                    ts = float(o.get("ts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not ts:
+                    continue
+                day_iso = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+                if day_iso not in by_day:
+                    continue
+                by_day[day_iso]["new_buys"] += 1
+                try:
+                    by_day[day_iso]["new_buy_cost"] += float(o.get("cost_usd") or 0)
+                except (TypeError, ValueError):
+                    pass
 
     # Aggregate live_results.csv resolved rows by UTC date.
     if ES_LIVE_RESULTS_CSV.exists():
@@ -1447,6 +1478,7 @@ def api_esports_live_calendar():
     for c in days:
         c["pnl"]  = round(c["pnl"], 2)
         c["cost"] = round(c["cost"], 2)
+        c["new_buy_cost"] = round(c["new_buy_cost"], 2)
 
     # Summary stats for the legend
     populated = [c for c in days if c["trades"] > 0]

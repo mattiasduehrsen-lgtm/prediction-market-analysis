@@ -24,55 +24,41 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "output" / "5m_live"
-GAMMA = "https://gamma-api.polymarket.com/markets"
+CLOB = "https://clob.polymarket.com/markets"
 
 
 def fetch_resolutions(condition_ids: list[str]) -> dict[str, dict]:
-    """Return {condition_id: {closed, winning_side ('UP'|'DOWN'|None), outcomePrices}}."""
+    """Return {condition_id: {closed, winning_side ('UP'|'DOWN'|None)}}.
+
+    Uses the CLOB API one-at-a-time because the batch gamma-api endpoint
+    returns empty results for these short-lived 15m markets after they close.
+    The CLOB endpoint preserves the resolved state with token-level `winner` flags.
+    """
     out = {}
-    # Batch 25 at a time
-    for i in range(0, len(condition_ids), 25):
-        batch = condition_ids[i:i + 25]
-        params = {"condition_ids": ",".join(batch)}
+    for cid in condition_ids:
         try:
-            r = requests.get(GAMMA, params=params, timeout=15)
-            data = r.json()
-        except Exception as e:
-            print(f"  gamma-api error: {e}")
-            continue
-        if not isinstance(data, list):
-            continue
-        for m in data:
-            cid = m.get("conditionId") or m.get("condition_id")
-            if not cid:
+            r = requests.get(f"{CLOB}/{cid}", timeout=10)
+            if r.status_code != 200:
                 continue
-            outcomes = m.get("outcomes")
-            prices = m.get("outcomePrices")
-            # outcomes/prices come as JSON-encoded strings in the API response
-            if isinstance(outcomes, str):
-                import json as _j
-                try: outcomes = _j.loads(outcomes)
-                except Exception: outcomes = []
-            if isinstance(prices, str):
-                import json as _j
-                try: prices = _j.loads(prices)
-                except Exception: prices = []
-            winning_side = None
-            if outcomes and prices and len(outcomes) == len(prices):
-                pairs = list(zip(outcomes, [float(p) for p in prices]))
-                # Find decisively-resolved outcome (>= 0.99)
-                winners = [o for o, p in pairs if p >= 0.99]
-                if len(winners) == 1:
-                    w = winners[0].upper()
-                    if w in ("UP", "DOWN", "YES", "NO"):
-                        # For Up/Down markets, outcome label matches our side directly.
-                        winning_side = "UP" if "UP" in w or w == "YES" else "DOWN"
-            out[cid] = {
-                "closed":        bool(m.get("closed", False)),
-                "winning_side":  winning_side,
-                "outcome_prices": prices,
-            }
-        time.sleep(0.2)  # be polite to the API
+            m = r.json()
+        except Exception as e:
+            print(f"  CLOB error for {cid[:10]}...: {e}")
+            continue
+        if not m or m.get("condition_id") != cid:
+            continue
+        closed = bool(m.get("closed", False))
+        winning_side = None
+        tokens = m.get("tokens") or []
+        winners = [t for t in tokens if t.get("winner")]
+        if len(winners) == 1:
+            outcome = (winners[0].get("outcome") or "").upper()
+            if outcome in ("UP", "DOWN"):
+                winning_side = outcome
+        out[cid] = {
+            "closed":       closed,
+            "winning_side": winning_side,
+        }
+        time.sleep(0.05)  # be polite — ~20 req/s max
     return out
 
 

@@ -1,10 +1,10 @@
 # Lock down Windows Update on this laptop.
 # Goal: NO automatic updates, NO forced restarts, EVER.
-# Microsoft has multiple resurrection mechanisms — this hits all of them.
+# Microsoft has multiple resurrection mechanisms - this hits all of them.
 #
 # 6 layers of defense:
-#   1. Group Policy registry — tells Windows "no auto updates"
-#   2. NoAutoRebootWithLoggedOnUsers — safety net for forced reboots
+#   1. Group Policy registry - tells Windows "no auto updates"
+#   2. NoAutoRebootWithLoggedOnUsers - safety net for forced reboots
 #   3. Disable Windows Update service (wuauserv)
 #   4. Disable Update Orchestrator service (UsoSvc)
 #   5. Disable Windows Update Medic (WaaSMedicSvc) via registry permission hack
@@ -14,10 +14,10 @@
 $ErrorActionPreference = 'Continue'
 Write-Host "=== Locking down Windows Update ===" -ForegroundColor Yellow
 
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # Layer 1: Group Policy registry keys
 # These are the same keys that gpedit.msc writes; Windows Update reads them.
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Host "`n[1/6] Setting Group Policy registry keys..." -ForegroundColor Cyan
 $auPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
 $wuPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
@@ -48,9 +48,9 @@ Set-ItemProperty -Path $uxPath -Name 'ActiveHoursEnd'   -Value 18 -Type DWord
 Set-ItemProperty -Path $uxPath -Name 'IsActiveHoursEnabled' -Value 1 -Type DWord
 Write-Host "  [OK] Active Hours set to 00:00-18:00 (max)" -ForegroundColor Green
 
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # Layer 2: Disable services
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Host "`n[2/6] Disabling update services..." -ForegroundColor Cyan
 $services = @(
     'wuauserv',      # Windows Update
@@ -69,11 +69,11 @@ foreach ($svc in $services) {
     }
 }
 
-# ────────────────────────────────────────────────────────────────────────────
-# Layer 3: WaaSMedicSvc — Microsoft made this immune to normal Set-Service.
+# ----------------------------------------------------------------------------
+# Layer 3: WaaSMedicSvc - Microsoft made this immune to normal Set-Service.
 # It will re-enable itself unless we tamper with its registry Start value AND
 # also nuke its "Failure Actions" so it can't auto-recover.
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Host "`n[3/6] Neutralizing WaaSMedicSvc (revival service)..." -ForegroundColor Cyan
 $medicPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc'
 try {
@@ -89,9 +89,9 @@ try {
     Write-Host "  [OK] WaaSMedicSvc failure-recovery actions cleared" -ForegroundColor Green
 } catch { }
 
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # Layer 4: Disable Update Orchestrator service in registry too (belt + braces)
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Host "`n[4/6] Reinforcing UsoSvc disable in registry..." -ForegroundColor Cyan
 $usoPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\UsoSvc'
 try {
@@ -101,9 +101,9 @@ try {
     Write-Host "  [WARN] UsoSvc registry: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # Layer 5: End + disable every reboot/update scheduled task
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Host "`n[5/6] Disabling reboot/update scheduled tasks..." -ForegroundColor Cyan
 $taskPaths = @(
     '\Microsoft\Windows\UpdateOrchestrator\',
@@ -128,10 +128,10 @@ foreach ($p in $taskPaths) {
 }
 Write-Host "  Total disabled: $count tasks" -ForegroundColor Cyan
 
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # Layer 6: Block Windows Update server endpoints via hosts file
 # (last-resort: even if a service comes back to life, it can't reach Microsoft)
-# ────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Host "`n[6/6] Blocking WU servers via hosts file..." -ForegroundColor Cyan
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
 $marker = "# === Block Windows Update servers ==="
@@ -159,4 +159,4 @@ $marker
 
 Write-Host "`n=== DONE ===" -ForegroundColor Yellow
 Write-Host "Windows Update is now disabled across 6 layers."
-Write-Host "To verify: try opening 'Settings > Windows Update' — it should error or be empty."
+Write-Host "To verify: try opening 'Settings > Windows Update' - it should error or be empty."

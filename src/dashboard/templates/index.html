@@ -1390,8 +1390,9 @@ function renderMonthCalendar(data, openData) {
   // Filter openData.open by first_buy_ts falling in the displayed month.
   let unrealizedMonth = 0;
   let openCountMonth = 0;
-  if (openData && Array.isArray(openData.open)) {
-    openData.open.forEach(p => {
+  const openList = (openData && (openData.open_positions || openData.open)) || [];
+  if (Array.isArray(openList)) {
+    openList.forEach(p => {
       const ts = p.first_buy_ts;
       if (!ts) return;
       const isoDate = new Date(ts * 1000).toISOString().slice(0, 7);  // YYYY-MM

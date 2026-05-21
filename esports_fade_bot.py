@@ -213,6 +213,42 @@ class FadeBot:
         print(f"[fade-bot] loaded {len(fade)} fade + {len(self.follow_wallets)} follow wallets")
         return fade
 
+    def refresh_daily_risk(self) -> None:
+        """Recompute today's daily_risk_usd from actual matched BUYs.
+
+        Sums cost_usd of all matched BUY orders in live_orders.jsonl since the
+        most recent UTC midnight. Source-of-truth approach: errors and cancels
+        no longer inflate the counter. Called from the heartbeat loop.
+        """
+        try:
+            today = datetime.now(timezone.utc).date()
+            midnight = datetime(today.year, today.month, today.day,
+                                tzinfo=timezone.utc).timestamp()
+            total = 0.0
+            if self.live_orders_path.exists():
+                with self.live_orders_path.open(encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            o = json.loads(line)
+                        except Exception:
+                            continue
+                        if str(o.get("side", "BUY")).upper() != "BUY":
+                            continue
+                        if str(o.get("status", "")).lower() != "matched":
+                            continue
+                        if (o.get("ts") or 0) < midnight:
+                            continue
+                        try:
+                            total += float(o.get("cost_usd") or 0)
+                        except (TypeError, ValueError):
+                            pass
+            self.daily_risk_usd = round(total, 2)
+        except Exception as e:
+            print(f"[fade-bot] daily_risk refresh failed: {e}")
+
     def maybe_reload_daily_pnl(self):
         """Refresh self.daily_pnl from live_daily_pnl.json if updated.
 
@@ -512,7 +548,10 @@ class FadeBot:
                                   "our_entry": our_entry, "floor": LIVE_MIN_OUR_ENTRY,
                                   "strategy": strategy, "slug": slug})
                 return
-            self.daily_risk_usd += bet
+            # NOTE: daily_risk_usd is now tracked by _refresh_daily_risk()
+            # (called from heartbeat). It sums actual matched BUYs from
+            # live_orders.jsonl since UTC midnight, so errors and cancels
+            # don't inflate the counter. Don't increment here.
             self.place_live_order(trade)
         elif self.dry_live:
             # Exercise the same arithmetic without submitting an order.
@@ -779,6 +818,10 @@ class FadeBot:
 
     def run(self):
         print(f"[fade-bot] polling every {POLL_INTERVAL}s — writing to {OUT_DIR}")
+        # Initialize daily_risk_usd from actual matched orders today
+        if self.live:
+            self.refresh_daily_risk()
+            print(f"[fade-bot] daily_risk_usd initialized: ${self.daily_risk_usd:.2f}")
         # Startup ping — useful to confirm restarts happened. Cooldown=0 so we
         # always see startup events, but limit to once per 5 min to dedupe a
         # tight watchdog restart loop.
@@ -887,6 +930,7 @@ class FadeBot:
                     self.maybe_reload_targets()
                     if self.live:
                         self.maybe_reload_daily_pnl()
+                        self.refresh_daily_risk()
                         if time.time() - last_tp_sweep >= TP_SWEEP_INTERVAL:
                             self.take_profit_sweep()
                             last_tp_sweep = time.time()

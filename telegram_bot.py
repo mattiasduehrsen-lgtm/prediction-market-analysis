@@ -60,6 +60,8 @@ def cmd_help(args: str) -> str:
         "/balance — wallet cash + position value\n"
         "/positions — currently-open positions\n"
         "/today — today's PnL detail\n"
+        "/risk — daily-risk and loss cap status\n"
+        "/perf — FADE vs FOLLOW lifetime breakdown\n"
         "/pause — stop placing new orders\n"
         "/resume — allow new orders again\n"
         "/restart — restart the esports bot task\n"
@@ -253,6 +255,96 @@ def cmd_log(args: str) -> str:
     return f"<b>Last {n} lines:</b>\n<pre>{tail}</pre>"
 
 
+def cmd_risk(args: str) -> str:
+    """Current daily_risk_usd and daily_pnl vs caps."""
+    import csv as _csv
+    today = datetime.now(timezone.utc).date()
+    midnight = datetime(today.year, today.month, today.day, tzinfo=timezone.utc).timestamp()
+    # Sum matched BUY costs since UTC midnight from live_orders.jsonl
+    risk_usd = 0.0
+    n_matched = n_canceled = n_error = 0
+    orders_path = OUT_ES / "live_orders.jsonl"
+    if orders_path.exists():
+        with orders_path.open(encoding="utf-8") as f:
+            for line in f:
+                try: o = json.loads(line)
+                except: continue
+                if str(o.get("side", "BUY")).upper() != "BUY": continue
+                if (o.get("ts") or 0) < midnight: continue
+                status = str(o.get("status", "")).lower()
+                if status == "matched":
+                    n_matched += 1
+                    try: risk_usd += float(o.get("cost_usd") or 0)
+                    except (TypeError, ValueError): pass
+                elif status in ("canceled", "cancelled"):
+                    n_canceled += 1
+    # Today's realized PnL from live_daily_pnl.json
+    daily_pnl = 0.0
+    if LIVE_DAILY.exists():
+        try:
+            d = json.loads(LIVE_DAILY.read_text(encoding="utf-8"))
+            if d.get("date") == today.isoformat():
+                daily_pnl = float(d.get("realized_pnl_usd") or 0)
+        except Exception:
+            pass
+
+    # Hardcoded caps (read from bot would require parsing source — these are
+    # the values we set today)
+    LOSS_CAP = 150.0
+    RISK_CAP = 2000.0
+    loss_pct = abs(daily_pnl / LOSS_CAP * 100) if daily_pnl < 0 else 0
+    risk_pct = risk_usd / RISK_CAP * 100
+    pnl_str = f"{'+' if daily_pnl >= 0 else '-'}${abs(daily_pnl):.2f}"
+    return (
+        f"<b>🛡️ Caps status (UTC {today})</b>\n"
+        f"\n"
+        f"<b>Loss cap (primary):</b> ${LOSS_CAP:.0f}\n"
+        f"  today's PnL: <b>{pnl_str}</b> ({loss_pct:.0f}% of cap)\n"
+        f"\n"
+        f"<b>Risk cap (backstop):</b> ${RISK_CAP:.0f}\n"
+        f"  spent today: <b>${risk_usd:.2f}</b> ({risk_pct:.1f}% of cap)\n"
+        f"  matched: {n_matched}  canceled: {n_canceled}"
+    )
+
+
+def cmd_perf(args: str) -> str:
+    """FADE vs FOLLOW lifetime breakdown from live_results.csv."""
+    import csv as _csv
+    if not LIVE_RESULTS.exists():
+        return "No live results yet."
+    by_strat = {"fade": {"n": 0, "w": 0, "l": 0, "pnl": 0.0, "cost": 0.0},
+                "follow": {"n": 0, "w": 0, "l": 0, "pnl": 0.0, "cost": 0.0}}
+    with LIVE_RESULTS.open(encoding="utf-8") as f:
+        for r in _csv.DictReader(f):
+            if str(r.get("side", "BUY")).upper() == "SELL": continue
+            strat = (r.get("strategy") or "fade").lower()
+            if strat not in by_strat: continue
+            status = r.get("status", "")
+            if status not in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS"): continue
+            s = by_strat[strat]
+            s["n"] += 1
+            if status in ("WIN", "TP_SOLD"): s["w"] += 1
+            else: s["l"] += 1
+            try:
+                s["pnl"]  += float(r.get("realized_pnl") or 0)
+                s["cost"] += float(r.get("cost_usd") or 0)
+            except (TypeError, ValueError): pass
+
+    def fmt(s):
+        if not s["n"]: return "  n=0"
+        wr = s["w"] / s["n"] * 100
+        roi = s["pnl"] / s["cost"] * 100 if s["cost"] > 0 else 0
+        sign = "+" if s["pnl"] >= 0 else "-"
+        pnl = f"{sign}${abs(s['pnl']):.2f}"
+        return (f"  n={s['n']:<3}  {s['w']}W/{s['l']}L  WR <b>{wr:.0f}%</b>\n"
+                f"  PnL: <b>{pnl}</b>  ROI: <b>{roi:+.1f}%</b>  cost: ${s['cost']:.0f}")
+    return (
+        f"<b>📊 Strategy performance (lifetime)</b>\n"
+        f"\n<b>FADE:</b>\n{fmt(by_strat['fade'])}\n"
+        f"\n<b>FOLLOW:</b>\n{fmt(by_strat['follow'])}"
+    )
+
+
 def cmd_stall(args: str) -> str:
     if not STALL_FLAG.exists():
         return "🟢 No stall — fade signals flowing normally."
@@ -272,6 +364,8 @@ COMMANDS = {
     "/status":    cmd_status,
     "/balance":   cmd_balance,
     "/today":     cmd_today,
+    "/risk":      cmd_risk,
+    "/perf":      cmd_perf,
     "/positions": cmd_positions,
     "/pause":     cmd_pause,
     "/resume":    cmd_resume,

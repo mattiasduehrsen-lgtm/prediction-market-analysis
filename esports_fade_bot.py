@@ -342,6 +342,11 @@ class FadeBot:
     is_cs2 = is_target_game
 
     def write_event(self, ev: dict):
+        # Auto-add a wall-clock timestamp to every event so downstream tools
+        # can filter by time. Doesn't overwrite an existing `ts` field —
+        # callers that already supplied one (e.g. live_order_final) keep theirs.
+        if "ts" not in ev:
+            ev["ts"] = time.time()
         with self.events_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(ev) + "\n")
 

@@ -436,6 +436,12 @@
     </table>
   </section>
 
+  <!-- Signal-stall warning (hidden when no stall) -->
+  <div id="es-stall-banner" style="display:none; background:#5d1f1f; border:2px solid #c62828; border-radius:6px; padding:14px 18px; margin:14px 0; color:#fff;">
+    <div style="font-size:14px; font-weight:700; margin-bottom:6px;">⚠️ SIGNAL STALL</div>
+    <div id="es-stall-banner-detail" style="font-size:12px; opacity:0.9;"></div>
+  </div>
+
   <section>
     <h2 style="font-size:13px; color:#aaa; margin-top:20px;">Bot log tail</h2>
     <pre id="es-log" style="background:#0f1117; border:1px solid #2a2d3a; color:#bbb; padding:10px; font-size:11px; overflow-x:auto; white-space:pre-wrap;">loading…</pre>
@@ -1535,6 +1541,20 @@ async function refreshEsports() {
   try {
     const s = await fetch('/api/esports/status').then(r => r.json());
     $('es-log').textContent = s.log_tail || '(no log yet)';
+    // Signal-stall banner
+    const stallBanner = $('es-stall-banner');
+    if (s.signal_stall) {
+      const hrs = s.signal_stall.duration_hours || 0;
+      const startTs = s.signal_stall.stall_started_at;
+      const startStr = startTs ? new Date(startTs * 1000).toISOString().slice(11, 16) + ' UTC' : '?';
+      $('es-stall-banner-detail').textContent =
+        `Fade signals have been flat for ${hrs.toFixed(1)}h (since ${startStr}). ` +
+        `Bot is healthy and polling, but no target wallets have traded. ` +
+        `Common causes: NA daytime match drought, Polymarket maintenance, or tournament gap.`;
+      stallBanner.style.display = 'block';
+    } else {
+      stallBanner.style.display = 'none';
+    }
   } catch (e) { /* ignore */ }
 
   // LIVE panel — fetches BOTH open positions + history

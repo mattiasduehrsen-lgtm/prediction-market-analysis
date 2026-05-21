@@ -1517,9 +1517,21 @@ def api_esports_status():
         except Exception:
             log_tail = ""
 
+    # Signal-stall flag — bot writes this when fades counter stays flat for
+    # >2h while trades_scanned keeps growing ("bot healthy, world dead").
+    stall = None
+    stall_path = OUT_ESPORTS / "signal_stall.flag"
+    if stall_path.exists():
+        try:
+            stall = json.loads(stall_path.read_text(encoding="utf-8"))
+            stall["duration_hours"] = round((now - stall.get("stall_started_at", now)) / 3600, 2)
+        except Exception:
+            stall = {"raw": stall_path.read_text(encoding="utf-8")[:200]}
+
     return jsonify({
         "bot_log_age_sec":      _age(ES_BOT_LOG),
         "watchdog_log_age_sec": _age(ES_WATCHDOG_LOG),
         "trades_csv_age_sec":   _age(ES_TRADES_CSV),
         "log_tail":             log_tail,
+        "signal_stall":         stall,  # null if no stall, else {stall_started_at, duration_hours, ...}
     })

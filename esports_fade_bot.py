@@ -732,6 +732,16 @@ class FadeBot:
         n_trades_seen = 0
         n_fades = 0
         self.tp_sells_placed = set()
+        # Signal-stall detection state. We flag when `fades` stays flat for
+        # >SIGNAL_STALL_SECONDS while `trades_scanned` continues to grow —
+        # signature of "bot healthy, world dead" (e.g. data-api content drought
+        # after a Polymarket maintenance, or a tournament-schedule lull).
+        SIGNAL_STALL_SECONDS = 7200  # 2 hours
+        last_fades_value = 0
+        last_fades_change_at = time.time()
+        last_scans_at_change = 0
+        stall_active = False
+        stall_flag_path = OUT_DIR / "signal_stall.flag"
         try:
             while True:
                 trades = self.poll()
@@ -747,7 +757,60 @@ class FadeBot:
                     pnl_str = f" daily_pnl=${self.daily_pnl:+.2f}" if self.live else ""
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} fades={n_fades_now} "
                           f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}")
-                    last_summary = time.time()
+
+                    # ── Signal-stall detection ─────────────────────────────
+                    now = time.time()
+                    if n_fades_now > last_fades_value:
+                        # Fades counter advanced — clear any active stall
+                        if stall_active:
+                            stall_duration = round(now - last_fades_change_at, 0)
+                            print(f"[fade-bot] STALL RECOVERED after {stall_duration:.0f}s "
+                                  f"({stall_duration/3600:.1f}h) — fades resumed")
+                            self.write_event({
+                                "type": "signal_stall_recovered",
+                                "ts": now,
+                                "stall_seconds": stall_duration,
+                                "fades_now": n_fades_now,
+                                "trades_scanned": n_trades_seen,
+                            })
+                            try: stall_flag_path.unlink()
+                            except FileNotFoundError: pass
+                            stall_active = False
+                        last_fades_value = n_fades_now
+                        last_fades_change_at = now
+                        last_scans_at_change = n_trades_seen
+                    else:
+                        # Fades flat. Check if we've crossed the stall threshold AND
+                        # the bot is still polling (trades_scanned growing).
+                        flat_seconds = now - last_fades_change_at
+                        scans_since_change = n_trades_seen - last_scans_at_change
+                        if (not stall_active
+                                and flat_seconds > SIGNAL_STALL_SECONDS
+                                and scans_since_change > 0):
+                            print(f"[fade-bot] !!! SIGNAL STALL DETECTED !!! "
+                                  f"fades stuck at {n_fades_now} for {flat_seconds/3600:.1f}h "
+                                  f"while {scans_since_change:,} trades scanned. "
+                                  f"Bot healthy but no target-wallet activity.")
+                            self.write_event({
+                                "type": "signal_stall_detected",
+                                "ts": now,
+                                "stall_seconds": round(flat_seconds, 0),
+                                "fades": n_fades_now,
+                                "trades_scanned_during_stall": scans_since_change,
+                            })
+                            try:
+                                stall_flag_path.write_text(json.dumps({
+                                    "stall_started_at": last_fades_change_at,
+                                    "fades_at_stall":   n_fades_now,
+                                    "detected_at":      now,
+                                    "stall_seconds":    round(flat_seconds, 0),
+                                }), encoding="utf-8")
+                            except Exception:
+                                pass
+                            stall_active = True
+                    # ───────────────────────────────────────────────────────
+
+                    last_summary = now
                     self.maybe_reload_targets()
                     if self.live:
                         self.maybe_reload_daily_pnl()

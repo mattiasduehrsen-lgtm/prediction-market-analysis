@@ -101,7 +101,7 @@ def main() -> None:
         print(f"{status:>12}  {n:>4}  {tfs:>20}  {sss:>18}  {sfs:>16}  {tot:>10}")
 
     # Bottom line: what fraction of cancels happened because we were slow?
-    cancelled = by_status.get("cancelled", [])
+    cancelled = by_status.get("cancelled", []) + by_status.get("canceled", [])
     matched   = by_status.get("matched", [])
     if cancelled and matched:
         print()

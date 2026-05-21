@@ -65,9 +65,9 @@ def main() -> None:
 
     print()
     print(f"{'status':>12}  {'n':>4}  "
-          f"{'their_fill→submit':>20}  "
-          f"{'signal→submit':>18}  "
-          f"{'submit→final':>16}  "
+          f"{'their_fill->submit':>20}  "
+          f"{'signal->submit':>18}  "
+          f"{'submit->final':>16}  "
           f"{'total':>10}")
     print(f"{'':>12}  {'':>4}  "
           f"{'p50 / p90 / p99':>20}  "

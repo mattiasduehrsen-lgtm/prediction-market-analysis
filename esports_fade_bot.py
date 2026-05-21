@@ -23,6 +23,11 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from notify import notify
+except Exception:
+    def notify(*a, **kw): return False  # graceful fallback if notify import fails
+
 import requests
 from dotenv import load_dotenv
 load_dotenv()
@@ -396,6 +401,13 @@ class FadeBot:
         if self.live and self.daily_pnl <= -DAILY_LOSS_CAP:
             self.write_event({"type": "skip_daily_loss_cap", "tx": tx,
                               "daily_pnl": self.daily_pnl, "cap": DAILY_LOSS_CAP})
+            notify(
+                f"🛑 <b>Daily loss cap hit</b>\n"
+                f"Today's realized PnL: ${self.daily_pnl:+.2f}\n"
+                f"Cap: -${DAILY_LOSS_CAP:.0f}. Bot will stop placing new orders today.\n"
+                f"Open positions remain.",
+                kind="loss_cap", cooldown=86400,  # 24h — only once per day
+            )
             return
 
         # Daily RISK cap (LIVE only) — SAFETY BACKSTOP. Only fires if we've
@@ -542,14 +554,28 @@ class FadeBot:
                               })
         except Exception as e:
             response_at = time.time()
+            err_str = str(e)
             print(f"[fade-bot]   LIVE order POST FAILED: {e}")
-            self.write_event({"type": "live_order_error", "error": str(e),
+            self.write_event({"type": "live_order_error", "error": err_str,
                               "tx": trade.get("tx_hash"),
                               "their_fill_ts": their_fill_ts,
                               "signal_seen_at": signal_seen_at,
                               "submit_at": submit_at,
                               "response_at": response_at,
                               "lag_to_failure_s": round(response_at - their_fill_ts, 3) if their_fill_ts else None})
+            # Telegram alert — surface balance issues immediately, group other errors.
+            if "not enough balance" in err_str.lower() or "insufficient" in err_str.lower():
+                notify(
+                    f"💸 <b>Bot out of pUSD</b>\n"
+                    f"Order failed — insufficient balance.\n"
+                    f"Top up the proxy wallet to keep trading.",
+                    kind="balance_low", cooldown=21600,  # 6h
+                )
+            else:
+                notify(
+                    f"❌ <b>Order error</b>\n<code>{err_str[:200]}</code>",
+                    kind="order_error", cooldown=1800,  # 30m
+                )
             return
 
         # --- Poll for fill, cancel on timeout ---
@@ -727,6 +753,14 @@ class FadeBot:
 
     def run(self):
         print(f"[fade-bot] polling every {POLL_INTERVAL}s — writing to {OUT_DIR}")
+        # Startup ping — useful to confirm restarts happened. Cooldown=0 so we
+        # always see startup events, but limit to once per 5 min to dedupe a
+        # tight watchdog restart loop.
+        notify(
+            f"🟢 <b>Bot started</b>\nmode={'LIVE' if self.live else 'PAPER'}\n"
+            f"targets={len(self.target_wallets)}",
+            kind="startup", cooldown=300,
+        )
         last_summary = time.time()
         last_tp_sweep = 0.0  # fire immediately on first heartbeat
         n_trades_seen = 0
@@ -773,6 +807,11 @@ class FadeBot:
                                 "fades_now": n_fades_now,
                                 "trades_scanned": n_trades_seen,
                             })
+                            notify(
+                                f"✅ <b>Signals resumed</b>\n"
+                                f"Stall ended after {stall_duration/3600:.1f}h. Bot is trading again.",
+                                kind="signal_stall_recovered", cooldown=0,
+                            )
                             try: stall_flag_path.unlink()
                             except FileNotFoundError: pass
                             stall_active = False
@@ -798,6 +837,14 @@ class FadeBot:
                                 "fades": n_fades_now,
                                 "trades_scanned_during_stall": scans_since_change,
                             })
+                            notify(
+                                f"⚠️ <b>Signal stall</b>\n"
+                                f"No fade signals for {flat_seconds/3600:.1f}h.\n"
+                                f"Bot is polling fine ({scans_since_change:,} trades scanned), "
+                                f"but no target wallets traded.\n"
+                                f"Likely cause: NA daytime drought or Polymarket maintenance.",
+                                kind="signal_stall", cooldown=14400,  # 4h — don't re-alert until recovery
+                            )
                             try:
                                 stall_flag_path.write_text(json.dumps({
                                     "stall_started_at": last_fades_change_at,

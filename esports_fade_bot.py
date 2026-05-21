@@ -398,6 +398,12 @@ class FadeBot:
         # today's realized losses pass DAILY_LOSS_CAP. daily_pnl is refreshed
         # from live_daily_pnl.json (eval_live cron, every 10 min) so this lags
         # the on-chain truth by up to ~10 min — acceptable for a stop-loss.
+        # Telegram-triggered pause flag — set by /pause command. Stops new
+        # entries (LIVE only); existing positions remain.
+        if self.live and (OUT_DIR / "paused.flag").exists():
+            self.write_event({"type": "skip_paused", "tx": tx})
+            return
+
         if self.live and self.daily_pnl <= -DAILY_LOSS_CAP:
             self.write_event({"type": "skip_daily_loss_cap", "tx": tx,
                               "daily_pnl": self.daily_pnl, "cap": DAILY_LOSS_CAP})

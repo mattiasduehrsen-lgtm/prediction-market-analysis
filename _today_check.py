@@ -71,20 +71,30 @@ for line in lines[-15:]:
     print(f"  {when}  {o.get('side','?'):<4} {o.get('status','?'):<10} ${o.get('cost_usd',0):.2f}  {o.get('fade_slug','')[:42]}")
 
 print()
-print("=== LIVE order errors / skips in last 24h ===")
+print("=== ALL event types in last 24h ===")
 cutoff24 = dt.datetime.now(dt.timezone.utc).timestamp() - 86400
-err_counts = Counter()
+all_counts = Counter()
+strat_counts = Counter()
+entry_below_floor = 0
 with (OUT / "fade_events.jsonl").open(encoding="utf-8") as f:
     for line in f:
         try: e = json.loads(line)
         except: continue
         ts = float(e.get("timestamp") or e.get("ts") or 0)
         if ts < cutoff24: continue
-        t = e.get("type","?")
-        if "skip" in t or "error" in t or "live_order" in t:
-            err_counts[t] += 1
-for t, c in err_counts.most_common():
+        all_counts[e.get("type","?")] += 1
+        if e.get("type") == "fade_signal":
+            strat_counts[e.get("strategy","?")] += 1
+            try:
+                if float(e.get("our_entry") or 0) < 0.40:
+                    entry_below_floor += 1
+            except (TypeError, ValueError):
+                pass
+for t, c in all_counts.most_common():
     print(f"  {c:>5}  {t}")
+print()
+print(f"  fade_signal split: {dict(strat_counts)}")
+print(f"  fade_signals with our_entry<0.40 (would be live-filtered): {entry_below_floor}")
 
 print()
 print("=== Pause flag check ===")

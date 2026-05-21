@@ -60,6 +60,33 @@ except Exception as e:
     print(f"  DOWN: {e}")
 
 print()
+print("=== Last 15 LIVE order events (with timestamps) ===")
+with (OUT / "live_orders.jsonl").open(encoding="utf-8") as f:
+    lines = f.readlines()
+for line in lines[-15:]:
+    try: o = json.loads(line)
+    except: continue
+    ts = float(o.get("ts") or 0)
+    when = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc).strftime("%m-%d %H:%M UTC") if ts else "?"
+    print(f"  {when}  {o.get('side','?'):<4} {o.get('status','?'):<10} ${o.get('cost_usd',0):.2f}  {o.get('fade_slug','')[:42]}")
+
+print()
+print("=== LIVE order errors / skips in last 24h ===")
+cutoff24 = dt.datetime.now(dt.timezone.utc).timestamp() - 86400
+err_counts = Counter()
+with (OUT / "fade_events.jsonl").open(encoding="utf-8") as f:
+    for line in f:
+        try: e = json.loads(line)
+        except: continue
+        ts = float(e.get("timestamp") or e.get("ts") or 0)
+        if ts < cutoff24: continue
+        t = e.get("type","?")
+        if "skip" in t or "error" in t or "live_order" in t:
+            err_counts[t] += 1
+for t, c in err_counts.most_common():
+    print(f"  {c:>5}  {t}")
+
+print()
 print("=== Pause flag check ===")
 for p in (ROOT / "output/5m_live/paused.live.flag",):
     print(f"  {p.name}: {'EXISTS' if p.exists() else 'absent'}")

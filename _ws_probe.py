@@ -27,35 +27,31 @@ WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
 def pick_active_cs2_tokens(limit: int = 5) -> list[str]:
-    """Pick a few currently-active CS2 markets, return their token_ids."""
-    import pandas as pd
-    df = pd.read_parquet(CLOB_MARKETS)
-    cs2 = df[df["slug"].fillna("").str.startswith(("cs2-", "csgo-"))].copy()
-    # Active = not closed, has end_date in the future or recent
-    if "closed" in cs2.columns:
-        cs2 = cs2[~cs2["closed"].fillna(False)]
-    if "end_date_iso" in cs2.columns:
-        # Keep ones ending within next 48h
-        import datetime as dt
-        now = dt.datetime.now(dt.timezone.utc)
-        soon = (now + dt.timedelta(hours=48)).isoformat()
-        cs2["end_date_iso"] = cs2["end_date_iso"].fillna("")
-        cs2 = cs2[(cs2["end_date_iso"] > now.isoformat()) & (cs2["end_date_iso"] < soon)]
-    # tokens column has both yes/no token_ids
+    """Pick a few currently-active CS2 markets, return their token_ids.
+
+    Falls back to live_orders.jsonl if the CLOB markets file's filters
+    don't yield anything (e.g. column names changed).
+    """
+    # Easier: take recent live orders' token_ids — those are markets we just
+    # traded so they're definitely active.
     tokens: list[str] = []
-    for _, row in cs2.head(limit).iterrows():
-        tk = row.get("tokens")
-        if isinstance(tk, dict):
-            for v in tk.values():
-                tokens.append(str(v))
-        elif isinstance(tk, str):
+    live_orders = ROOT / "output" / "esports_fade" / "live_orders.jsonl"
+    if live_orders.exists():
+        with live_orders.open(encoding="utf-8") as f:
+            lines = f.readlines()
+        seen = set()
+        for line in reversed(lines):  # most recent first
             try:
-                d = json.loads(tk)
-                for v in d.values():
-                    tokens.append(str(v))
+                o = json.loads(line)
             except Exception:
-                pass
-    return tokens[:limit * 2]  # 2 tokens per market
+                continue
+            tid = str(o.get("token_id") or "")
+            if tid and tid not in seen:
+                seen.add(tid)
+                tokens.append(tid)
+            if len(tokens) >= limit * 2:
+                break
+    return tokens
 
 
 async def probe(token_ids: list[str], duration: int = 30):

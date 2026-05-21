@@ -37,8 +37,11 @@ ES_DIR = ROOT / "cowork_snapshot" / "esports"
 OUT_DIR = ROOT / "output" / "esports_fade"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-POLL_INTERVAL = 2.0           # seconds between API polls
+POLL_INTERVAL = 1.0           # seconds between API polls (was 2.0 — halved 2026-05-20 for latency)
 RECENT_TRADES_LIMIT = 500     # how many recent trades to scan each poll
+MAX_TRADE_AGE_SECONDS = 60    # skip trades older than this (prevents re-processing stale
+                              # trades after restarts / seen_tx trims, which were creating
+                              # 5-min phantom-lag entries in latency analysis)
 PAPER_BET_USD = 5.0           # bet size (PAPER) — kept at $5 for backtest continuity
 LIVE_BET_USD = 10.0           # bet size (LIVE) — raised from $5 (2026-05-19) for first scaling step
 DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
@@ -63,7 +66,7 @@ MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 # so we can keep validating the rule.
 LIVE_MIN_OUR_ENTRY = 0.40
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
-LIVE_FILL_POLL_INTERVAL = 2.0 # seconds between fill checks
+LIVE_FILL_POLL_INTERVAL = 0.5 # seconds between fill checks (was 2.0 — quartered 2026-05-20 for latency)
 LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
 # Take-profit sweep: DISABLED by default.
 # At a threshold like 0.95 the EV of selling = 0.95 = EV of holding (0.95 * 1),
@@ -324,6 +327,23 @@ class FadeBot:
             return
         self.seen_tx.append(tx)
         self.seen_tx_set.add(tx)
+
+        # TRADE-AGE FILTER: if Polymarket's API surfaces a trade older than
+        # MAX_TRADE_AGE_SECONDS, skip it. By the time we'd fade, the price has
+        # already moved away and the order will cancel anyway (per latency
+        # report: 100% of cancels had >2s lag, with median 290s).
+        try:
+            their_fill_ts = float(t.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            their_fill_ts = 0
+        if their_fill_ts > 0 and (signal_seen_at - their_fill_ts) > MAX_TRADE_AGE_SECONDS:
+            # Only log occasionally to avoid spam during backlog drains
+            self.stale_trades_skipped = getattr(self, "stale_trades_skipped", 0) + 1
+            if self.stale_trades_skipped % 100 == 1:
+                self.write_event({"type": "skip_stale_trade", "tx": tx,
+                                  "age_s": round(signal_seen_at - their_fill_ts, 1),
+                                  "count_so_far": self.stale_trades_skipped})
+            return
         if len(self.seen_tx_set) > 10000:
             # Trim
             old = list(self.seen_tx)[:-5000]

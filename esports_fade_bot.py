@@ -50,9 +50,12 @@ DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
                               # which the eval_live cron refreshes every 10 min).
                               # Replaces the older immediate-risk cap so we can
                               # keep trading on winning days regardless of $ deployed.
-DAILY_RISK_CAP_USD = 500.0    # SAFETY BACKSTOP only — halts if we've placed $500
-                              # in orders today. Should never fire unless realized-PnL
-                              # tracking breaks (cron stops, file corrupt, etc).
+DAILY_RISK_CAP_USD = 2000.0   # SAFETY BACKSTOP only — halts if we've placed $2000
+                              # in matched orders today. Should never fire unless
+                              # realized-PnL tracking breaks (cron stops, file corrupt,
+                              # etc). Raised from $500 to $2000 on 2026-05-20 so the
+                              # cap stops being binding during high-activity days.
+                              # At $10/trade this caps at 200 fills/day.
 MAX_PER_MARKET_USD = 50.0     # cumulative bet cap per (market, our_outcome) — raised from $25 (2026-05-19) to preserve 5-fill stacking at $10 bet size
 MAX_FADES_PER_DAY = 500       # sanity ceiling on daily signal count — raised from 100 (2026-05-18)
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats

@@ -102,12 +102,12 @@ def main():
     if not CLOB_MARKETS.exists():
         print(f"Need CLOB markets file at {CLOB_MARKETS}")
         return
-    tokens = pick_active_cs2_tokens(limit=8)
+    tokens = pick_active_cs2_tokens(limit=30)  # more active markets
     if not tokens:
         print("Couldn't find any active CS2 tokens to subscribe to.")
         return
     print(f"Picked {len(tokens)} CS2 tokens to probe.")
-    asyncio.run(probe(tokens, duration=30))
+    asyncio.run(probe(tokens, duration=120))  # 2 min — should catch real trades
 
 
 if __name__ == "__main__":

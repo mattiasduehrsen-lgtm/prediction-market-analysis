@@ -8,11 +8,10 @@ ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "output" / "esports_fade"
 
 now = time.time()
-today_utc = dt.datetime.now(dt.timezone.utc).date()
-day_start = dt.datetime(today_utc.year, today_utc.month, today_utc.day, tzinfo=dt.timezone.utc).timestamp()
+day_start = now - 30 * 3600  # last 30 hours — covers full local day
 
 print(f"Now: {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M UTC}")
-print(f"Today UTC start: {dt.datetime.fromtimestamp(day_start, tz=dt.timezone.utc):%H:%M UTC}")
+print(f"Window: last 30h, from {dt.datetime.fromtimestamp(day_start, tz=dt.timezone.utc):%m-%d %H:%M UTC}")
 print()
 
 # 1. All LIVE orders today, ordered chronologically

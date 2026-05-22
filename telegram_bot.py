@@ -62,6 +62,7 @@ def cmd_help(args: str) -> str:
         "/today — today's PnL detail\n"
         "/risk — daily-risk and loss cap status\n"
         "/perf — FADE vs FOLLOW lifetime breakdown\n"
+        "/diagnose — why the bot isn't trading right now\n"
         "/pause — stop placing new orders\n"
         "/resume — allow new orders again\n"
         "/restart — restart the esports bot task\n"
@@ -345,6 +346,83 @@ def cmd_perf(args: str) -> str:
     )
 
 
+def cmd_diagnose(args: str) -> str:
+    """Quick diagnosis of WHY the bot isn't trading right now.
+
+    Reads last ~10 min of fade_events.jsonl and classifies:
+      - High stale-skip rate + zero fade_signals = Polymarket indexer is lagging
+      - No events at all = bot is stuck or process is dead
+      - Low stale-skip + low fade_signals = genuine market drought
+      - Active fade_signals + few orders = entry-price filter rejecting most
+    Tells the user whether /restart is worth trying.
+    """
+    cutoff = time.time() - 600  # 10 minutes
+    counts = Counter() if False else None  # init
+    from collections import Counter as _Counter
+    counts = _Counter()
+    latest_ts = 0
+    ev_path = OUT_ES / "fade_events.jsonl"
+    if ev_path.exists():
+        with ev_path.open(encoding="utf-8") as f:
+            for line in f:
+                try: e = json.loads(line)
+                except: continue
+                ts = float(e.get("ts") or 0)
+                if ts < cutoff: continue
+                counts[e.get("type","?")] += 1
+                if ts > latest_ts: latest_ts = ts
+
+    stale = counts.get("skip_stale_trade", 0)
+    signals = counts.get("fade_signal", 0)
+    placed = counts.get("live_order_placed", 0)
+    skip_floor = counts.get("skip_entry_price_floor", 0)
+    skip_risk = counts.get("skip_daily_risk_cap", 0)
+    age_min = (time.time() - latest_ts) / 60 if latest_ts else 999
+
+    lines = ["<b>🩺 Bot diagnosis (last 10 min)</b>"]
+    lines.append("")
+
+    # Total event activity
+    total_events = sum(counts.values())
+    if total_events == 0:
+        lines.append("❌ <b>0 events in 10 min</b>")
+        lines.append("Bot is likely stuck or crashed. Try /restart.")
+        return "\n".join(lines)
+
+    lines.append(f"  signals fired: <b>{signals}</b>")
+    lines.append(f"  orders placed: <b>{placed}</b>")
+    lines.append(f"  stale-skips:   <b>{stale}</b> (×100 each = ~{stale*100} raw)")
+    if skip_floor: lines.append(f"  entry<$0.40 skipped: {skip_floor}")
+    if skip_risk:  lines.append(f"  daily-risk-cap skipped: {skip_risk}")
+    lines.append(f"  last event: {age_min:.1f} min ago")
+    lines.append("")
+
+    # Diagnosis
+    if signals > 0 and placed > 0:
+        lines.append("✅ <b>Healthy.</b> Signals firing, orders placing.")
+    elif signals == 0 and stale >= 20:
+        lines.append("🐢 <b>Polymarket indexer is lagging.</b>")
+        lines.append("Bot is healthy and polling, but the data-api is serving")
+        lines.append("stale (3+ min old) trades. <b>Restart won't help</b> — wait")
+        lines.append("for Polymarket to catch up. Past episodes lasted 1-11h.")
+    elif signals == 0 and stale < 5 and total_events < 5:
+        lines.append("🌙 <b>Genuine market drought.</b>")
+        lines.append("Few trades happening at all. Wait for matches to start.")
+        lines.append("(Restart won't help — no signals to catch.)")
+    elif signals > 0 and placed == 0 and skip_floor > 0:
+        lines.append("🚧 <b>Entry-price filter blocking most signals.</b>")
+        lines.append("Markets are heavily lopsided — fade-side prices >$0.40")
+        lines.append("but follow-side <$0.40 are getting filtered. This is")
+        lines.append("normal during tournament finals or one-sided matches.")
+    elif age_min > 5:
+        lines.append("⚠️ <b>Events stopped flowing recently.</b>")
+        lines.append("Bot may be hung. /restart probably helps.")
+    else:
+        lines.append("🤔 <b>Mixed signals.</b> Check /log 30 for more detail.")
+
+    return "\n".join(lines)
+
+
 def cmd_stall(args: str) -> str:
     if not STALL_FLAG.exists():
         return "🟢 No stall — fade signals flowing normally."
@@ -367,6 +445,7 @@ COMMANDS = {
     "/risk":      cmd_risk,
     "/perf":      cmd_perf,
     "/positions": cmd_positions,
+    "/diagnose":  cmd_diagnose,
     "/pause":     cmd_pause,
     "/resume":    cmd_resume,
     "/restart":   cmd_restart,

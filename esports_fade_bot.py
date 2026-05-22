@@ -915,12 +915,21 @@ class FadeBot:
                                 "fades": n_fades_now,
                                 "trades_scanned_during_stall": scans_since_change,
                             })
+                            # Diagnose: high stale-skip rate suggests Polymarket
+                            # indexer lag rather than genuine market drought.
+                            stale_count = getattr(self, "stale_trades_skipped", 0)
+                            likely_indexer_lag = stale_count > 1000  # >1000 stale skips during stall
+                            cause = ("Polymarket data-api is serving stale trades "
+                                     "(indexer lag) — restart won't help, wait it out"
+                                    if likely_indexer_lag else
+                                     "NA daytime drought or tournament gap — wait for matches")
                             notify(
                                 f"⚠️ <b>Signal stall</b>\n"
                                 f"No fade signals for {flat_seconds/3600:.1f}h.\n"
                                 f"Bot is polling fine ({scans_since_change:,} trades scanned), "
-                                f"but no target wallets traded.\n"
-                                f"Likely cause: NA daytime drought or Polymarket maintenance.",
+                                f"but no target wallets traded.\n\n"
+                                f"<b>Likely cause:</b> {cause}.\n"
+                                f"Run /diagnose for details.",
                                 kind="signal_stall", cooldown=14400,  # 4h — don't re-alert until recovery
                             )
                             try:

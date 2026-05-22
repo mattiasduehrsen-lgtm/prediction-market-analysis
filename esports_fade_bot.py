@@ -549,10 +549,18 @@ class FadeBot:
         self.market_exposure[exp_key] = prior + bet
         self.fades_today += 1
 
-        # Paper: log every signal (entry-price filter is LIVE-only so PAPER
-        # keeps collecting unbiased samples to keep validating the rule).
-        self.write_paper_trade(trade)
+        # Paper trade log: only write when running in actual PAPER mode.
+        # In LIVE mode (current operation), paper_trades.csv is just
+        # duplicate data — fade_events.jsonl has the same info. Skip the
+        # write to save IO. (2026-05-21 — per user: stop using compute
+        # power on paper-trading side-effects, focus on LIVE.)
+        if not self.live:
+            self.write_paper_trade(trade)
         self.write_event({"type": "fade_signal", **trade})
+        # Heartbeat fades counter (used by stall detector). Used to count
+        # paper_trades.csv lines but now reads in-memory since we skip the
+        # CSV write in LIVE mode.
+        self.fade_signals_count = getattr(self, "fade_signals_count", 0) + 1
         print(f"[fade-bot] {datetime.utcnow().isoformat(timespec='seconds')}Z  "
               f"{strategy.upper():>6} {wallet[:10]}...  their {their_side} {their_outcome}@{their_price}  "
               f"-> our BUY {our_outcome}@{our_entry}  bet ${bet}  slug={slug[:50]}")
@@ -869,11 +877,17 @@ class FadeBot:
                 for t in trades:
                     n_trades_seen += 1
                     self.process_trade(t)
-                # Track fade events from file size
-                if self.papertrades_path.exists():
-                    n_fades_now = sum(1 for _ in self.papertrades_path.open(encoding="utf-8")) - 1
-                else:
-                    n_fades_now = 0
+                # In-memory fade-signal counter (was: line count of
+                # paper_trades.csv, which is no longer written in LIVE mode).
+                # Backfill from the CSV ONLY on first heartbeat so the counter
+                # starts at the right baseline across restarts.
+                if not hasattr(self, "fade_signals_count"):
+                    if self.papertrades_path.exists():
+                        baseline = sum(1 for _ in self.papertrades_path.open(encoding="utf-8")) - 1
+                        self.fade_signals_count = max(0, baseline)
+                    else:
+                        self.fade_signals_count = 0
+                n_fades_now = self.fade_signals_count
                 if time.time() - last_summary > 60:
                     pnl_str = f" daily_pnl=${self.daily_pnl:+.2f}" if self.live else ""
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} fades={n_fades_now} "

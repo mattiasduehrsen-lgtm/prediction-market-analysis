@@ -39,6 +39,10 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL = 1.0           # seconds between API polls (was 2.0 — halved 2026-05-20 for latency)
 RECENT_TRADES_LIMIT = 500     # how many recent trades to scan each poll
+FOLLOW_ENABLED = False        # FOLLOW strategy disabled 2026-05-21 at n=25 (-9.4% ROI).
+                              # Bot still loads follow_wallets so the data path stays
+                              # warm — only the strategy routing is bypassed. Set to
+                              # True to re-enable once the strategy is refined.
 MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 300
                               # on 2026-05-21 because Polymarket's data-api routinely
                               # lags 180-200s, and we were rejecting trades at exactly
@@ -399,7 +403,7 @@ class FadeBot:
         # cheap (O(1) set lookup) and saves work for the 99.9%+ of trades that
         # aren't from wallets we care about.
         wallet = (t.get("proxyWallet") or "").lower()
-        if wallet in self.follow_wallets:
+        if FOLLOW_ENABLED and wallet in self.follow_wallets:
             strategy = "follow"
         elif wallet in self.target_wallets:
             strategy = "fade"

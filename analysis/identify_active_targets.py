@@ -122,10 +122,11 @@ def main():
         seen.add(w)
         unique_wallets.append(w)
 
-    # LIVE subset = top losers by absolute PnL. Keeping LIVE tight (500) limits
-    # daily $ exposure to the highest-conviction targets. PAPER (full 1000+)
-    # captures the wider signal pool for ROI validation across more samples.
-    live_subset = unique_wallets[:500]
+    # LIVE subset = top losers by absolute PnL. Raised from 500 to 800 on
+    # 2026-05-22 to widen the signal pool (refresh pipeline routinely identifies
+    # 1200+ qualifying losers, so we were leaving ~700 wallets on the table).
+    LIVE_WALLET_CAP = 800
+    live_subset = unique_wallets[:LIVE_WALLET_CAP]
 
     import os
     now_iso  = pd.Timestamp.utcnow().isoformat()
@@ -154,7 +155,7 @@ def main():
         "games":          GAMES,
         "scope":          "live_subset",
         "target_wallets": live_subset,
-        "target_meta":    targets.head(500).to_dict(orient="records"),
+        "target_meta":    targets.head(LIVE_WALLET_CAP).to_dict(orient="records"),
     }
     live_path = ES_DIR / "fade_targets.json"   # name kept for back-compat
     tmp = live_path.with_suffix(".json.tmp")

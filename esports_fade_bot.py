@@ -39,10 +39,13 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL = 1.0           # seconds between API polls (was 2.0 — halved 2026-05-20 for latency)
 RECENT_TRADES_LIMIT = 500     # how many recent trades to scan each poll
-MAX_TRADE_AGE_SECONDS = 180   # skip trades older than this. Raised from 60 to 180
-                              # on 2026-05-20 because the 60s threshold was rejecting
-                              # signals that have legitimate 1-3min Polymarket
-                              # data-api indexer lag (per latency_report.py).
+MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 300
+                              # on 2026-05-21 because Polymarket's data-api routinely
+                              # lags 180-200s, and we were rejecting trades at exactly
+                              # 182-185s (right at the threshold). Latency report
+                              # showed p90 matched-lag = 305s, so 300s catches almost
+                              # all legitimate signals while still blocking the 5+
+                              # min phantom-lag from indexer outages.
 PAPER_BET_USD = 5.0           # bet size (PAPER) — kept at $5 for backtest continuity
 LIVE_BET_USD = 10.0           # bet size (LIVE) — raised from $5 (2026-05-19) for first scaling step
 DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses

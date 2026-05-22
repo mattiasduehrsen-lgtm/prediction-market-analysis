@@ -372,7 +372,9 @@ def cmd_diagnose(args: str) -> str:
                 counts[e.get("type","?")] += 1
                 if ts > latest_ts: latest_ts = ts
 
-    stale = counts.get("skip_stale_trade", 0)
+    # Old event type was skip_stale_trade; new (wallet-first) is
+    # skip_stale_target_trade. Sum both for backward compat with old data.
+    stale_target = counts.get("skip_stale_target_trade", 0) + counts.get("skip_stale_trade", 0)
     signals = counts.get("fade_signal", 0)
     placed = counts.get("live_order_placed", 0)
     skip_floor = counts.get("skip_entry_price_floor", 0)
@@ -391,21 +393,24 @@ def cmd_diagnose(args: str) -> str:
 
     lines.append(f"  signals fired: <b>{signals}</b>")
     lines.append(f"  orders placed: <b>{placed}</b>")
-    lines.append(f"  stale-skips:   <b>{stale}</b> (×100 each = ~{stale*100} raw)")
+    if stale_target:
+        lines.append(f"  target-wallet trades lost to staleness: <b>{stale_target}</b>")
     if skip_floor: lines.append(f"  entry<$0.40 skipped: {skip_floor}")
     if skip_risk:  lines.append(f"  daily-risk-cap skipped: {skip_risk}")
     lines.append(f"  last event: {age_min:.1f} min ago")
     lines.append("")
 
-    # Diagnosis
+    # Diagnosis. Indexer-lag is now detected differently: when there are
+    # MANY target-wallet stale skips, Polymarket's data is lagging for
+    # the wallets that matter (not just bulk-market noise).
     if signals > 0 and placed > 0:
         lines.append("✅ <b>Healthy.</b> Signals firing, orders placing.")
-    elif signals == 0 and stale >= 20:
+    elif stale_target >= 5:
         lines.append("🐢 <b>Polymarket indexer is lagging.</b>")
-        lines.append("Bot is healthy and polling, but the data-api is serving")
-        lines.append("stale (3+ min old) trades. <b>Restart won't help</b> — wait")
+        lines.append("Target wallets ARE trading, but the data-api is serving")
+        lines.append("their trades 3+ min late. <b>Restart won't help</b> — wait")
         lines.append("for Polymarket to catch up. Past episodes lasted 1-11h.")
-    elif signals == 0 and stale < 5 and total_events < 5:
+    elif signals == 0 and total_events < 5:
         lines.append("🌙 <b>Genuine market drought.</b>")
         lines.append("Few trades happening at all. Wait for matches to start.")
         lines.append("(Restart won't help — no signals to catch.)")

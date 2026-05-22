@@ -372,23 +372,6 @@ class FadeBot:
             return
         self.seen_tx.append(tx)
         self.seen_tx_set.add(tx)
-
-        # TRADE-AGE FILTER: if Polymarket's API surfaces a trade older than
-        # MAX_TRADE_AGE_SECONDS, skip it. By the time we'd fade, the price has
-        # already moved away and the order will cancel anyway (per latency
-        # report: 100% of cancels had >2s lag, with median 290s).
-        try:
-            their_fill_ts = float(t.get("timestamp") or 0)
-        except (TypeError, ValueError):
-            their_fill_ts = 0
-        if their_fill_ts > 0 and (signal_seen_at - their_fill_ts) > MAX_TRADE_AGE_SECONDS:
-            # Only log occasionally to avoid spam during backlog drains
-            self.stale_trades_skipped = getattr(self, "stale_trades_skipped", 0) + 1
-            if self.stale_trades_skipped % 100 == 1:
-                self.write_event({"type": "skip_stale_trade", "tx": tx,
-                                  "age_s": round(signal_seen_at - their_fill_ts, 1),
-                                  "count_so_far": self.stale_trades_skipped})
-            return
         if len(self.seen_tx_set) > 10000:
             # Trim
             old = list(self.seen_tx)[:-5000]
@@ -396,14 +379,40 @@ class FadeBot:
                 self.seen_tx_set.discard(x)
             self.seen_tx = deque(list(self.seen_tx)[-5000:], maxlen=10000)
 
+        # GLOBAL STALE COUNTER (cheap, no events) — used by the heartbeat
+        # stall detector to recognize Polymarket-indexer-lag situations
+        # (high stale rate = their indexer is behind, not our problem).
+        try:
+            their_fill_ts = float(t.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            their_fill_ts = 0
+        if their_fill_ts > 0 and (signal_seen_at - their_fill_ts) > MAX_TRADE_AGE_SECONDS:
+            self.stale_trades_skipped = getattr(self, "stale_trades_skipped", 0) + 1
+            is_stale = True
+        else:
+            is_stale = False
+
+        # WALLET CHECK — if not a target/follower, exit immediately. This is
+        # cheap (O(1) set lookup) and saves work for the 99.9%+ of trades that
+        # aren't from wallets we care about.
         wallet = (t.get("proxyWallet") or "").lower()
-        # Pick strategy by wallet membership. Follow wins if a wallet is both
-        # (rare — a winner takes precedence over a loser ranking).
         if wallet in self.follow_wallets:
             strategy = "follow"
         elif wallet in self.target_wallets:
             strategy = "fade"
         else:
+            return
+
+        # TARGET-WALLET STALE FILTER: only fires when the trade IS from a
+        # target wallet AND is stale. These events are diagnostic gold —
+        # every one represents a real signal we missed due to indexer lag.
+        if is_stale:
+            age = signal_seen_at - their_fill_ts
+            self.target_stale_skips = getattr(self, "target_stale_skips", 0) + 1
+            self.write_event({"type": "skip_stale_target_trade", "tx": tx,
+                              "wallet": wallet, "strategy": strategy,
+                              "age_s": round(age, 1),
+                              "target_skip_count": self.target_stale_skips})
             return
 
         slug = t.get("slug") or t.get("eventSlug") or ""

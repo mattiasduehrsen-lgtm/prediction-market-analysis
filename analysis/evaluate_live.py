@@ -26,6 +26,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 import requests
 
+# Load .env so the wallet-equity fetch finds POLYMARKET_PRIVATE_KEY etc.
+# (When the bot is launched via main.py this is implicit; the evaluator runs
+# as a standalone cron via run_esports_eval_live.bat and needs to load .env
+# itself.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT  = ROOT / "output" / "esports_fade"
 ORDERS_PATH    = OUT / "live_orders.jsonl"

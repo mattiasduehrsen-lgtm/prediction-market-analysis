@@ -103,7 +103,7 @@ def simulate_sport_oos(sport, clob_df):
     test_buys = test[(test["side"].str.upper() == "BUY")
                      & (test["proxyWallet"].isin(target_wallets))].copy()
 
-    # Build cid → outcomes map for opposite lookups
+    # Build cid -> outcomes map for opposite lookups
     cid_outs = {}
     sub = clob_df[clob_df["condition_id"].isin(test_buys["conditionId"].unique())]
     for _, row in sub.iterrows():
@@ -176,8 +176,8 @@ def simulate_sport_oos(sport, clob_df):
 def main():
     print("=" * 78)
     print(" SPORTS OUT-OF-SAMPLE BACKTEST")
-    print(f"   Train: first {TRAIN_DAYS}d → identify losing wallets")
-    print(f"   Test:  last {TRAIN_DAYS}d → fade them, compute realized PnL")
+    print(f"   Train: first {TRAIN_DAYS}d -> identify losing wallets")
+    print(f"   Test:  last {TRAIN_DAYS}d -> fade them, compute realized PnL")
     print("=" * 78)
     print()
 

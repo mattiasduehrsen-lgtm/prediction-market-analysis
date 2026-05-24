@@ -12,9 +12,9 @@ import csv, os, time
 from pathlib import Path
 import requests
 from dotenv import load_dotenv
-from py_clob_client.client import ClobClient
-from py_clob_client.constants import POLYGON
-from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+from py_clob_client_v2 import ClobClient
+from py_clob_client_v2.constants import POLYGON
+from py_clob_client_v2.clob_types import BalanceAllowanceParams, AssetType
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "output" / "esports_fade" / "live_results.csv"

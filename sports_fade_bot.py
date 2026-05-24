@@ -561,6 +561,16 @@ class FadeBot:
         self.market_exposure[exp_key] = prior + bet
         self.fades_today += 1
 
+        # Entry-price floor enforced in PAPER mode too (unlike esports bot
+        # which gates this on self.live). Reason: this paper bot is for
+        # validating what we'd ACTUALLY trade in LIVE. Including signals
+        # we'd never take would pollute the ROI estimate. 2026-05-24.
+        if our_entry < LIVE_MIN_OUR_ENTRY:
+            self.write_event({"type": "skip_entry_price_floor", "tx": tx,
+                              "our_entry": our_entry, "floor": LIVE_MIN_OUR_ENTRY,
+                              "strategy": strategy, "slug": slug})
+            return
+
         # Paper trade log: only write when running in actual PAPER mode.
         # In LIVE mode (current operation), paper_trades.csv is just
         # duplicate data — fade_events.jsonl has the same info. Skip the

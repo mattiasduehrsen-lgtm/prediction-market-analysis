@@ -151,39 +151,31 @@ def main():
     winner_map = {}  # condition_id → winning outcome string
     for _, row in recent.iterrows():
         tokens = row.get("tokens")
-        if not isinstance(tokens, (list, dict)):
+        # tokens is a numpy ndarray of dicts in this parquet
+        if tokens is None:
             continue
-        if isinstance(tokens, dict):
-            tokens = [{"outcome": k, "winner": False} for k in tokens]
-        winners = [t for t in tokens if (isinstance(t, dict) and t.get("winner"))]
+        try:
+            token_list = list(tokens)  # works for list, tuple, ndarray
+        except Exception:
+            continue
+        winners = [t for t in token_list if (isinstance(t, dict) and t.get("winner"))]
         if len(winners) == 1:
             winner_map[row["condition_id"]] = winners[0].get("outcome", "")
 
     print(f"      Resolved markets in our scrape: {len(winner_map):,}/{len(recent):,}")
 
-    # Compute PnL per trade
-    def trade_pnl(t):
-        cid = t.get("conditionId") or ""
-        outcome = t.get("outcome") or ""
-        price = float(t.get("price") or 0)
-        size = float(t.get("size") or 0)
-        cost = price * size
-        winner_outcome = winner_map.get(cid)
-        if winner_outcome is None:
-            return None  # unresolved
-        won = (outcome == winner_outcome)
-        # If trade was a BUY of the winning outcome: payout = size, profit = size - cost
-        # If BUY of losing outcome: lose cost
-        side = (t.get("side") or "BUY").upper()
-        if side == "BUY":
-            return (size - cost) if won else (-cost)
-        else:  # SELL
-            # SELL = exit; treat as: they gave up shares of `outcome` for cost
-            return cost if won else (-cost * 0)  # rough — simplification
-
-    recent_trades["pnl"] = recent_trades.apply(trade_pnl, axis=1)
-    recent_trades["cost"] = recent_trades["price"] * recent_trades["size"]
-    resolved = recent_trades.dropna(subset=["pnl"]).copy()
+    # Compute PnL — restrict to BUYs only (cleaner: SELLs are exits of unknown
+    # entries; can't compute without full position reconstruction).
+    buys = recent_trades[recent_trades["side"].str.upper() == "BUY"].copy()
+    print(f"      BUY trades only: {len(buys):,}")
+    buys["winner_outcome"] = buys["conditionId"].map(winner_map)
+    resolved = buys.dropna(subset=["winner_outcome"]).copy()
+    resolved["won"] = resolved["outcome"] == resolved["winner_outcome"]
+    resolved["cost"] = resolved["price"] * resolved["size"]
+    # PnL: win = size - cost (payout $1 per share); loss = -cost
+    resolved["pnl"] = resolved.apply(
+        lambda r: r["size"] - r["cost"] if r["won"] else -r["cost"], axis=1
+    )
     print(f"      Trades on resolved markets (usable for PnL): {len(resolved):,}")
 
     # Per-wallet

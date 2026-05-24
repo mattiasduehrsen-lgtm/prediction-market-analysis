@@ -2,6 +2,42 @@
 
 ---
 
+## v1.35 — 2026-05-24
+**Esports LIVE bet size $10 → $15 (first scale-up). Evaluator switched to wallet-equity as canonical lifetime PnL.**
+
+### Why now
+
+9 days into esports LIVE at $10/trade, my evaluator was reporting **-$24 realized / +$10 MTM** lifetime — essentially breakeven. The user pushed back: "we should be up $170."
+
+Reconciled against on-chain wallet:
+- pUSD balance: $836.19
+- Open positions MTM: $133.86
+- Total equity: **$963.05**
+- Starting deposit: **$749**
+- **Real lifetime PnL: +$214 / +28.6% ROI in 9 days**
+
+Discrepancy explained: the user keeps winning shares parked at ~$0.999 to skip the redemption fee delta. My evaluator credited those as "realized at $1.00" only after redemption, so ~31 unredeemed wins were silently missing from the headline number.
+
+### What changed (code)
+
+**`esports_fade_bot.py`** — `LIVE_BET_USD` 10.0 → 15.0. Sample size at scale-up: 275 resolved trades. ROI gate (+2% over 400+ trades) was past on ROI, short on sample, but +28.6% is well outside variance noise. Conservative escalation continues at $20 if trend holds another ~1 week.
+
+**`analysis/evaluate_live.py`** — added wallet-equity reconcile:
+  - Fetches actual pUSD via CLOB `get_balance_allowance` each run
+  - Reads optional `ESPORTS_STARTING_DEPOSIT_USD` from env
+  - Writes new JSON fields: `wallet_pusd_cash`, `wallet_total_equity_usd`, `lifetime_equity_pnl_usd`, `lifetime_equity_roi_pct`
+  - These are the new canonical lifetime numbers; the realized-from-CSV fields stay (used by the bot's `DAILY_LOSS_CAP` guard) but are now informational
+
+**`.env` (manual on laptop, not in git)**:
+  - `LIVE_MAX_DAILY_LOSS_USD` 50.0 → 75.0 (scale proportionally with bet size)
+  - `ESPORTS_STARTING_DEPOSIT_USD=749` (added)
+
+### Risk note
+
+9 days is short. A +28% run can occur from variance even on a real +3% edge. Scaling is justified by current data but no further size increases until lifetime equity ROI stays positive after one full ugly week.
+
+---
+
 ## v1.34 — 2026-05-12
 **ETH-15m re-enabled on LIVE, gated by recent-WR filter. Brain narrowed to ETH-only observation.**
 

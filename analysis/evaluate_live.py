@@ -35,6 +35,32 @@ DAILY_PNL_PATH = OUT / "live_daily_pnl.json"
 CACHE: dict[str, dict] = {}
 SESSION = requests.Session()
 
+# Starting deposit for the esports LIVE wallet (set via env, defaults to None).
+# When set, the evaluator writes lifetime_equity_pnl_usd = wallet_equity - deposit
+# which is the only PnL number not affected by redemption timing. The bot keeps
+# winning shares parked at $0.99x to skip the redemption fee delta, so the
+# realized-from-CSV number systematically lags reality by ~$30-200.
+STARTING_DEPOSIT_USD = os.environ.get("ESPORTS_STARTING_DEPOSIT_USD")
+try:
+    STARTING_DEPOSIT_USD = float(STARTING_DEPOSIT_USD) if STARTING_DEPOSIT_USD else None
+except Exception:
+    STARTING_DEPOSIT_USD = None
+
+
+def fetch_wallet_pusd() -> float | None:
+    """Current pUSD wallet balance via CLOB. Returns None on failure."""
+    try:
+        import sys
+        sys.path.insert(0, str(ROOT))
+        from src.bot.clob_auth import get_client
+        from py_clob_client_v2.clob_types import BalanceAllowanceParams, AssetType
+        c = get_client()
+        b = c.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        return int(b["balance"]) / 1e6
+    except Exception as e:
+        print(f"[wallet] failed to fetch pUSD balance: {e}")
+        return None
+
 
 def fetch_market(cid: str) -> dict | None:
     if cid in CACHE:
@@ -307,27 +333,46 @@ def main():
     today_unrealized    = today_mv    - today_cb
     lifetime_unrealized = lifetime_mv - lifetime_cb
 
+    # Wallet-equity ground truth (immune to redemption-timing skew).
+    # Fetch actual pUSD cash and add total open-position MTM. If we also know
+    # the starting deposit, we can compute true lifetime PnL.
+    pusd_cash = fetch_wallet_pusd()
+    if pusd_cash is not None:
+        wallet_equity = pusd_cash + lifetime_mv
+        equity_pnl = (wallet_equity - STARTING_DEPOSIT_USD) if STARTING_DEPOSIT_USD else None
+    else:
+        wallet_equity = None
+        equity_pnl = None
+
     # Daily PnL snapshot — bot reads this for its DAILY_LOSS_CAP guard.
     # realized_pnl_usd stays the canonical field the bot uses for safety;
     # the new MTM fields are informational so dashboards/scaling decisions
     # can see winners parked at $0.99x without waiting for redemption.
     _write_daily({
-        "date":                       today_str,
-        "realized_pnl_usd":           round(today_pnl, 4),
-        "unrealized_pnl_usd":         round(today_unrealized, 4),
-        "mtm_pnl_usd":                round(today_pnl + today_unrealized, 4),
-        "open_positions_value_usd":   round(today_mv, 4),
-        "open_positions_cost_usd":    round(today_cb, 4),
-        "n_resolved":                 today_resolved,
-        "n_open":                     today_open,
-        "n_open_priced":              today_priced,
-        "lifetime_realized_pnl_usd":  round(total_pnl, 4),
-        "lifetime_unrealized_pnl_usd":round(lifetime_unrealized, 4),
-        "lifetime_mtm_pnl_usd":       round(total_pnl + lifetime_unrealized, 4),
-        "lifetime_cost_usd":          round(total_cost, 4),
-        "lifetime_n_resolved":        n_resolved,
-        "lifetime_n_open":            len(lifetime_open_shares),
-        "generated_at":               time.time(),
+        "date":                         today_str,
+        "realized_pnl_usd":             round(today_pnl, 4),
+        "unrealized_pnl_usd":           round(today_unrealized, 4),
+        "mtm_pnl_usd":                  round(today_pnl + today_unrealized, 4),
+        "open_positions_value_usd":     round(today_mv, 4),
+        "open_positions_cost_usd":      round(today_cb, 4),
+        "n_resolved":                   today_resolved,
+        "n_open":                       today_open,
+        "n_open_priced":                today_priced,
+        "lifetime_realized_pnl_usd":    round(total_pnl, 4),
+        "lifetime_unrealized_pnl_usd":  round(lifetime_unrealized, 4),
+        "lifetime_mtm_pnl_usd":         round(total_pnl + lifetime_unrealized, 4),
+        "lifetime_cost_usd":            round(total_cost, 4),
+        "lifetime_n_resolved":          n_resolved,
+        "lifetime_n_open":              len(lifetime_open_shares),
+        # Wallet-equity ground truth — survives redemption-timing skew. Null if
+        # CLOB auth failed or ESPORTS_STARTING_DEPOSIT_USD not set in .env.
+        "wallet_pusd_cash":             round(pusd_cash, 4) if pusd_cash is not None else None,
+        "wallet_total_equity_usd":      round(wallet_equity, 4) if wallet_equity is not None else None,
+        "starting_deposit_usd":         STARTING_DEPOSIT_USD,
+        "lifetime_equity_pnl_usd":      round(equity_pnl, 4) if equity_pnl is not None else None,
+        "lifetime_equity_roi_pct":      round(equity_pnl / STARTING_DEPOSIT_USD * 100, 2)
+                                          if (equity_pnl is not None and STARTING_DEPOSIT_USD) else None,
+        "generated_at":                 time.time(),
     })
 
     print("\n" + "=" * 60)
@@ -350,6 +395,18 @@ def main():
     print(f"    unrealized    : ${lifetime_unrealized:+,.2f}")
     print(f"    MTM PnL       : ${total_pnl + lifetime_unrealized:+,.2f}")
     print()
+    if pusd_cash is not None:
+        print(f"  WALLET EQUITY (ground truth)")
+        print(f"    pUSD cash     : ${pusd_cash:,.2f}")
+        print(f"    open MTM      : ${lifetime_mv:,.2f}")
+        print(f"    total equity  : ${wallet_equity:,.2f}")
+        if equity_pnl is not None:
+            roi = equity_pnl / STARTING_DEPOSIT_USD * 100
+            print(f"    starting dep. : ${STARTING_DEPOSIT_USD:,.2f}")
+            print(f"    lifetime PnL  : ${equity_pnl:+,.2f}  ({roi:+.2f}% ROI)")
+        else:
+            print(f"    (set ESPORTS_STARTING_DEPOSIT_USD in .env for lifetime PnL)")
+        print()
 
 
 def _write_daily(d: dict):

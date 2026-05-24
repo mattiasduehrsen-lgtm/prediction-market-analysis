@@ -51,7 +51,9 @@ MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 
                               # all legitimate signals while still blocking the 5+
                               # min phantom-lag from indexer outages.
 PAPER_BET_USD = 5.0           # bet size (PAPER) — kept at $5 for backtest continuity
-LIVE_BET_USD = 10.0           # bet size (LIVE) — raised from $5 (2026-05-19) for first scaling step
+LIVE_BET_USD = 15.0           # bet size (LIVE) — raised $10 → $15 (2026-05-24) after
+                              # wallet-equity reconcile showed +$214 / +28.6% ROI over
+                              # 9 days on $749 starting deposit. Sample 275 trades.
 DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
                               # exceed this $ amount (LIVE; uses live_daily_pnl.json
                               # which the eval_live cron refreshes every 10 min).

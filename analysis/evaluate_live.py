@@ -50,6 +50,29 @@ def fetch_market(cid: str) -> dict | None:
         return None
 
 
+def fetch_sell_price(token_id: str) -> float | None:
+    """Best bid for token_id — what we'd realize if we sold right now.
+
+    Returns None on failure. Used to mark open positions to market so today's
+    unrealized PnL reflects winners parked at $0.99x waiting for redemption.
+    """
+    if not token_id:
+        return None
+    try:
+        r = SESSION.get(
+            "https://clob.polymarket.com/price",
+            params={"token_id": token_id, "side": "sell"},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        p = j.get("price")
+        return float(p) if p is not None else None
+    except Exception:
+        return None
+
+
 def winning_outcome(mkt: dict) -> str | None:
     if not mkt or not mkt.get("closed"):
         return None
@@ -92,6 +115,9 @@ def main():
     today_pnl = 0.0
     today_resolved = 0
     today_open = 0
+    today_open_cost = 0.0
+    today_open_shares: list[tuple[str, float, float]] = []  # (token_id, shares, cost)
+    lifetime_open_shares: list[tuple[str, float, float]] = []
 
     out_rows = []
     n_resolved = 0
@@ -197,13 +223,18 @@ def main():
             continue
 
         if winner is None:
-            # Still open + not fully sold + market unresolved
+            # Still open + not fully sold + market unresolved.
+            # Track remaining shares so we can mark to market after the loop.
+            remaining_cost = cost * (unsold_shares / shares) if shares else 0.0
+            lifetime_open_shares.append((tid, unsold_shares, remaining_cost))
             out_rows.append({**o, "status": "UNRESOLVED", "realized_pnl": "",
                              "cost_usd": round(cost, 4),
                              "sold_shares":  round(sold_shares, 4),
                              "sold_proceeds": round(sold_proceeds, 4)})
             if is_today:
                 today_open += 1
+                today_open_cost += remaining_cost
+                today_open_shares.append((tid, unsold_shares, remaining_cost))
             continue
 
         # Market resolved AND some shares still held → settle remainder via winner
@@ -248,13 +279,55 @@ def main():
         os.replace(tmp, RESULTS_PATH)
         print(f"\nWrote per-order results: {RESULTS_PATH}")
 
-    # Daily PnL snapshot — bot reads this for its DAILY_LOSS_CAP guard
+    # ── Mark open positions to market via CLOB best-bid (one cached fetch per token).
+    # We only price unique tokens so the API hit scales with # open positions, not orders.
+    unique_open_tokens = {t for (t, _s, _c) in lifetime_open_shares if t}
+    price_cache: dict[str, float] = {}
+    for tid in unique_open_tokens:
+        p = fetch_sell_price(tid)
+        if p is not None:
+            price_cache[tid] = p
+        time.sleep(0.03)
+
+    def _mtm(rows: list[tuple[str, float, float]]) -> tuple[float, float, int]:
+        """(market_value, cost_basis, # positions priced)."""
+        mv = 0.0; cb = 0.0; n = 0
+        for tid, sh, c in rows:
+            p = price_cache.get(tid)
+            if p is None:
+                # Fallback: assume mid 0.50 if we couldn't fetch (very rare)
+                p = 0.50
+            mv += sh * p
+            cb += c
+            n += 1
+        return mv, cb, n
+
+    today_mv,    today_cb,    today_priced    = _mtm(today_open_shares)
+    lifetime_mv, lifetime_cb, lifetime_priced = _mtm(lifetime_open_shares)
+    today_unrealized    = today_mv    - today_cb
+    lifetime_unrealized = lifetime_mv - lifetime_cb
+
+    # Daily PnL snapshot — bot reads this for its DAILY_LOSS_CAP guard.
+    # realized_pnl_usd stays the canonical field the bot uses for safety;
+    # the new MTM fields are informational so dashboards/scaling decisions
+    # can see winners parked at $0.99x without waiting for redemption.
     _write_daily({
-        "date":             today_str,
-        "realized_pnl_usd": round(today_pnl, 4),
-        "n_resolved":       today_resolved,
-        "n_open":           today_open,
-        "generated_at":     time.time(),
+        "date":                       today_str,
+        "realized_pnl_usd":           round(today_pnl, 4),
+        "unrealized_pnl_usd":         round(today_unrealized, 4),
+        "mtm_pnl_usd":                round(today_pnl + today_unrealized, 4),
+        "open_positions_value_usd":   round(today_mv, 4),
+        "open_positions_cost_usd":    round(today_cb, 4),
+        "n_resolved":                 today_resolved,
+        "n_open":                     today_open,
+        "n_open_priced":              today_priced,
+        "lifetime_realized_pnl_usd":  round(total_pnl, 4),
+        "lifetime_unrealized_pnl_usd":round(lifetime_unrealized, 4),
+        "lifetime_mtm_pnl_usd":       round(total_pnl + lifetime_unrealized, 4),
+        "lifetime_cost_usd":          round(total_cost, 4),
+        "lifetime_n_resolved":        n_resolved,
+        "lifetime_n_open":            len(lifetime_open_shares),
+        "generated_at":               time.time(),
     })
 
     print("\n" + "=" * 60)
@@ -266,9 +339,16 @@ def main():
     print(f"  ROI (all-time)      : {(total_pnl/total_cost*100 if total_cost else 0):+.2f}%")
     print()
     print(f"  TODAY ({today_str})")
-    print(f"    resolved : {today_resolved}")
-    print(f"    open     : {today_open}")
-    print(f"    PnL      : ${today_pnl:+,.2f}")
+    print(f"    resolved      : {today_resolved}")
+    print(f"    open          : {today_open}  (priced: {today_priced})")
+    print(f"    realized PnL  : ${today_pnl:+,.2f}")
+    print(f"    unrealized    : ${today_unrealized:+,.2f}  (open value ${today_mv:,.2f} vs cost ${today_cb:,.2f})")
+    print(f"    MTM PnL       : ${today_pnl + today_unrealized:+,.2f}")
+    print()
+    print(f"  LIFETIME MTM (includes open positions @ best bid)")
+    print(f"    realized      : ${total_pnl:+,.2f}")
+    print(f"    unrealized    : ${lifetime_unrealized:+,.2f}")
+    print(f"    MTM PnL       : ${total_pnl + lifetime_unrealized:+,.2f}")
     print()
 
 

@@ -12,22 +12,16 @@ import csv, os, time
 from pathlib import Path
 import requests
 from dotenv import load_dotenv
-from py_clob_client_v2 import ClobClient
-from py_clob_client_v2.constants import POLYGON
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.bot.clob_auth import get_client
 from py_clob_client_v2.clob_types import BalanceAllowanceParams, AssetType
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "output" / "esports_fade" / "live_results.csv"
 
 load_dotenv()
-c = ClobClient(
-    "https://clob.polymarket.com",
-    key=os.environ["POLYMARKET_PRIVATE_KEY"],
-    chain_id=POLYGON,
-    signature_type=2,
-    funder=os.environ["POLYMARKET_PROXY_ADDRESS"],
-)
-c.set_api_creds(c.create_or_derive_api_creds())
+c = get_client()
 b = c.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
 pusd = int(b["balance"]) / 1e6
 print(f"pUSD wallet balance      : ${pusd:,.2f}")

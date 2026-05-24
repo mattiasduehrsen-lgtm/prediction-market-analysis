@@ -41,6 +41,19 @@ FOLLOW_ENABLED = False        # FOLLOW strategy disabled 2026-05-21 at n=25 (-9.
                               # Bot still loads follow_wallets so the data path stays
                               # warm — only the strategy routing is bypassed. Set to
                               # True to re-enable once the strategy is refined.
+
+# CONSENSUS FILTER: only fire fade after N target wallets have hit the same
+# (market, outcome). Backtest data (2026-05-24) showed rank-1 signals have
+# ~0-1% OOS ROI but rank-5+ signals have +19% ROI in NBA, +8% in MLB/Tennis.
+# Set to 1 to disable, 2 for moderate filter, 5 for strict quality filter.
+CONSENSUS_THRESHOLD = 2
+# How long to remember signals on a market before resetting count (seconds).
+# Markets settle within hours; 6h gives all wallets time to pile on.
+CONSENSUS_TTL_SECONDS = 21600
+
+# MARKET-TYPE FILTER: skip spread/handicap markets (OOS ROI -1.34%, while
+# total O/U returns +13.62% and moneylines +7.97%).
+SKIP_MARKET_KEYWORDS = ("spread", "handicap", "-line-")
 MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 300
                               # on 2026-05-21 because Polymarket's data-api routinely
                               # lags 180-200s, and we were rejecting trades at exactly
@@ -93,12 +106,12 @@ TP_SWEEP_INTERVAL = 60.0
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
 # Dota/Valorant samples too small to trust right now — add later.
 ESPORTS_PREFIXES = (
-    # Sports prefixes — STRONG_GO categories from 2026-05-23 recon
+    # Sports prefixes — soccer REMOVED 2026-05-24 (OOS: negative correlation,
+    # losers become winners). Other sports passed wallet-persistence test.
     "nhl-",
     "nba-",
     "mlb-",
     "atp-", "wta-",
-    "epl-", "laliga-", "champions-", "uefa-", "fifa-",
 )
 
 
@@ -126,6 +139,10 @@ class FadeBot:
         self.daily_pnl_path = OUT_DIR / "live_daily_pnl.json"
         # Exposure state (resets daily)
         self.market_exposure: dict[tuple[str, str], float] = {}  # (cid, our_outcome) -> usd
+        # CONSENSUS TRACKING: count of target-wallet signals per (cid, our_outcome).
+        # When count reaches CONSENSUS_THRESHOLD, we fire the fade.
+        # Each entry: {"count": int, "first_ts": float, "wallets": set, "tx_list": list}
+        self.consensus_signals: dict[tuple[str, str], dict] = {}
         self.fades_today = 0
         self.last_signal_ts: dict[tuple[str, str], float] = {}   # (target, cid) -> epoch
         # condition_id -> {"outcomes":[a,b], "tokens":{outcome:token_id}}
@@ -588,6 +605,43 @@ class FadeBot:
                               "our_entry": our_entry, "floor": LIVE_MIN_OUR_ENTRY,
                               "strategy": strategy, "slug": slug})
             return
+
+        # MARKET-TYPE FILTER: skip spread/handicap markets (OOS -1.34% ROI).
+        # Total O/U and moneylines are the +EV market types.
+        slug_lower = (slug or "").lower()
+        if any(kw in slug_lower for kw in SKIP_MARKET_KEYWORDS):
+            self.write_event({"type": "skip_market_type", "tx": tx,
+                              "slug": slug, "reason": "spread_or_handicap"})
+            return
+
+        # CONSENSUS FILTER: require CONSENSUS_THRESHOLD target wallets to
+        # have hit this (cid, our_outcome) before firing the fade. First
+        # N-1 signals just increment the counter and are skipped.
+        ckey = (condition_id, our_outcome)
+        now_ts = time.time()
+        ckdata = self.consensus_signals.get(ckey)
+        # TTL expiry — if first signal was >TTL ago, treat as fresh
+        if ckdata and (now_ts - ckdata.get("first_ts", 0)) > CONSENSUS_TTL_SECONDS:
+            ckdata = None
+        if ckdata is None:
+            ckdata = {"count": 0, "first_ts": now_ts, "wallets": set(), "tx_list": []}
+            self.consensus_signals[ckey] = ckdata
+        # Count UNIQUE wallets (don't double-count same wallet hitting same market)
+        if wallet not in ckdata["wallets"]:
+            ckdata["wallets"].add(wallet)
+            ckdata["count"] += 1
+            ckdata["tx_list"].append(tx)
+        if ckdata["count"] < CONSENSUS_THRESHOLD:
+            self.write_event({"type": "skip_consensus_wait", "tx": tx,
+                              "cid": condition_id, "our_outcome": our_outcome,
+                              "current_count": ckdata["count"],
+                              "threshold": CONSENSUS_THRESHOLD})
+            return
+        # Consensus reached — proceed. Mark this trade as the one that fired.
+        self.write_event({"type": "consensus_reached", "tx": tx,
+                          "cid": condition_id, "our_outcome": our_outcome,
+                          "wallet_count": ckdata["count"],
+                          "wallets_so_far": list(ckdata["wallets"])})
 
         # Paper trade log: only write when running in actual PAPER mode.
         # In LIVE mode (current operation), paper_trades.csv is just

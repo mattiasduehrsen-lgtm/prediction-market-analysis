@@ -62,7 +62,8 @@ DAILY_RISK_CAP_USD = 2000.0   # SAFETY BACKSTOP only — halts if we've placed $
                               # cap stops being binding during high-activity days.
                               # At $10/trade this caps at 200 fills/day.
 MAX_PER_MARKET_USD = 50.0     # cumulative bet cap per (market, our_outcome) — raised from $25 (2026-05-19) to preserve 5-fill stacking at $10 bet size
-MAX_FADES_PER_DAY = 500       # sanity ceiling on daily signal count — raised from 100 (2026-05-18)
+MAX_FADES_PER_DAY = 5000      # sports paper bot processes ~1600/day (67/hr), need higher cap
+                              # than esports LIVE's 500. PAPER so no real-money risk from raising.
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)

@@ -517,6 +517,25 @@ class FadeBot:
                               "our_outcome": our_outcome, "prior": prior, "tx": tx})
             return
 
+        # OPPOSITE-SIDE HEDGE GUARD: if we already hold the other side of
+        # this binary market, taking this trade locks in a guaranteed loss
+        # (we'd pay >$1.00 total for a $1.00 payout). This happens when
+        # two target wallets bet opposite sides on the same market and we
+        # try to fade both. (2026-05-24 — discovered on cs2-fal2-lgc-2026-05-24
+        # where we bought both Falcons and Legacy moneyline = guaranteed -$6.84.)
+        for other_outcome in mkt["outcomes"]:
+            if other_outcome == our_outcome:
+                continue
+            opp_exposure = self.market_exposure.get((condition_id, other_outcome), 0.0)
+            if opp_exposure > 0:
+                self.write_event({"type": "skip_opposite_side_held", "tx": tx,
+                                  "cid": condition_id,
+                                  "our_outcome": our_outcome,
+                                  "opposite_outcome": other_outcome,
+                                  "opposite_exposure_usd": opp_exposure,
+                                  "slug": slug})
+                return
+
         # Per-(target, market) debounce — drop rapid repeats from same target on same market
         debounce_key = (wallet, condition_id)
         now_ts = time.time()

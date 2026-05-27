@@ -15,6 +15,18 @@ def scan(bot_name: str, orders_path: Path):
     if not orders_path.exists():
         print(f"[{bot_name}] no orders file at {orders_path}")
         return
+    # Build set of resolved cids from live_results.csv so we don't include
+    # markets that have already settled (we got the payout, exposure is moot).
+    resolved_cids: set[str] = set()
+    results_path = orders_path.with_name("live_results.csv")
+    if results_path.exists():
+        import csv as _csv
+        with results_path.open(encoding="utf-8") as fh:
+            for r in _csv.DictReader(fh):
+                if r.get("status") in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS"):
+                    cid = r.get("fade_condition", "")
+                    if cid:
+                        resolved_cids.add(cid)
     # cid -> {outcome -> [(ts, shares, cost)]}
     positions = defaultdict(lambda: defaultdict(list))
     slug_for_cid = {}
@@ -34,6 +46,7 @@ def scan(bot_name: str, orders_path: Path):
             cid = o.get("fade_condition","")
             outcome = o.get("our_outcome","")
             if not cid or not outcome: continue
+            if cid in resolved_cids: continue  # already settled, ignore
             positions[cid][outcome].append((o.get("ts",0), shares, cost))
             if cid not in slug_for_cid:
                 slug_for_cid[cid] = o.get("fade_slug","")

@@ -73,7 +73,7 @@ def scan(bot_name: str, orders_path: Path):
             worst_loss = max_payout - total_cost  # if best-payout side wins
             # If neither side wins... but in binary markets exactly one resolves YES
             # so we'll always get the max-payout side's value or one of the others'.
-            print(f"  ⚠ DUAL POSITION: {slug}")
+            print(f"  !! DUAL POSITION: {slug}")
             for outcome, (sh, c) in sorted(net.items()):
                 print(f"      {outcome:>15}: {sh:>6.2f} shares  cost ${c:>6.2f}")
             print(f"      total cost: ${total_cost:.2f}")
@@ -85,7 +85,7 @@ def scan(bot_name: str, orders_path: Path):
                   f"PnL ${worst_payout - total_cost:+.2f}")
             print()
     if flagged == 0:
-        print(f"  ✓ no dual-side positions ({len(positions)} markets scanned)")
+        print(f"  OK no dual-side positions ({len(positions)} markets scanned)")
     else:
         print(f"  Total: {flagged} dual-side markets")
 

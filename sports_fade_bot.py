@@ -62,8 +62,9 @@ MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 
                               # all legitimate signals while still blocking the 5+
                               # min phantom-lag from indexer outages.
 PAPER_BET_USD = 5.0           # bet size (PAPER) — kept at $5 for backtest continuity
-LIVE_BET_USD = 10.0           # bet size (LIVE) — raised from $5 (2026-05-19) for first scaling step
-DAILY_LOSS_CAP = 150.0        # primary stop: halt if today's REALIZED losses
+LIVE_BET_USD = 5.0            # bet size (LIVE) — MLB-only initial deployment 2026-05-27.
+                              # Conservative starting size; bump after 200+ live trades hold +EV.
+DAILY_LOSS_CAP = 75.0         # primary stop: halt if today's REALIZED losses
                               # exceed this $ amount (LIVE; uses live_daily_pnl.json
                               # which the eval_live cron refreshes every 10 min).
                               # Replaces the older immediate-risk cap so we can
@@ -112,6 +113,15 @@ ESPORTS_PREFIXES = (
     "nba-",
     "mlb-",
     "atp-", "wta-",
+)
+
+# LIVE-only sports (real money). PAPER mode still records all of ESPORTS_PREFIXES
+# above for ongoing data collection; LIVE mode trades only this subset.
+#   2026-05-27 v1.36 - MLB only. Tennis blew up to -19% on May 27 paper data
+#   (single-day collapse from +2.5%), NBA season ending, NHL sample too small.
+#   MLB held +7-10% ROI across 355 paper trades - safest to deploy.
+LIVE_SPORTS_PREFIXES = (
+    "mlb-",
 )
 
 
@@ -364,6 +374,12 @@ class FadeBot:
             print(f"[sports-bot] poll error: {e}")
             return []
 
+    def is_live_eligible_sport(self, slug: str) -> bool:
+        """True if this market's sport is enabled for LIVE order placement.
+        PAPER trades still log all sports (data collection); only LIVE is restricted."""
+        s = (slug or "").lower()
+        return any(s.startswith(p) for p in LIVE_SPORTS_PREFIXES)
+
     def is_target_game(self, slug: str) -> bool:
         s = (slug or "").lower()
         return any(s.startswith(p) for p in ESPORTS_PREFIXES)
@@ -486,7 +502,13 @@ class FadeBot:
                 our_entry = round(1 - their_price, 4)
         our_token_id = mkt["tokens"].get(our_outcome)
 
-        bet = LIVE_BET_USD if self.live else PAPER_BET_USD
+        # effective_live = "should this trade execute as a real-money order?"
+        # Bot-level self.live must be True AND the market's sport must be in
+        # LIVE_SPORTS_PREFIXES. Non-eligible sports fall back to paper logging
+        # (continues data collection) without placing real orders. This way the
+        # bot can be LIVE on MLB while still gathering paper data on NHL/Tennis/NBA.
+        effective_live = self.live and self.is_live_eligible_sport(slug)
+        bet = LIVE_BET_USD if effective_live else PAPER_BET_USD
 
         # UTC day rollover — reset counters and exposure
         today = datetime.now(timezone.utc).date()
@@ -504,11 +526,11 @@ class FadeBot:
         # the on-chain truth by up to ~10 min — acceptable for a stop-loss.
         # Telegram-triggered pause flag — set by /pause command. Stops new
         # entries (LIVE only); existing positions remain.
-        if self.live and (OUT_DIR / "paused.flag").exists():
+        if effective_live and (OUT_DIR / "paused.flag").exists():
             self.write_event({"type": "skip_paused", "tx": tx})
             return
 
-        if self.live and self.daily_pnl <= -DAILY_LOSS_CAP:
+        if effective_live and self.daily_pnl <= -DAILY_LOSS_CAP:
             self.write_event({"type": "skip_daily_loss_cap", "tx": tx,
                               "daily_pnl": self.daily_pnl, "cap": DAILY_LOSS_CAP})
             notify(
@@ -522,7 +544,7 @@ class FadeBot:
 
         # Daily RISK cap (LIVE only) — SAFETY BACKSTOP. Only fires if we've
         # somehow placed $500+ in orders without the loss-PnL feed catching up.
-        if self.live and self.daily_risk_usd + bet > DAILY_RISK_CAP_USD:
+        if effective_live and self.daily_risk_usd + bet > DAILY_RISK_CAP_USD:
             self.write_event({"type": "skip_daily_risk_cap", "tx": tx,
                               "spent_today": self.daily_risk_usd, "cap": DAILY_RISK_CAP_USD})
             return
@@ -643,12 +665,13 @@ class FadeBot:
                           "wallet_count": ckdata["count"],
                           "wallets_so_far": list(ckdata["wallets"])})
 
-        # Paper trade log: only write when running in actual PAPER mode.
-        # In LIVE mode (current operation), paper_trades.csv is just
-        # duplicate data — fade_events.jsonl has the same info. Skip the
-        # write to save IO. (2026-05-21 — per user: stop using compute
-        # power on paper-trading side-effects, focus on LIVE.)
-        if not self.live:
+        # Paper trade log: write when the signal is NOT live-eligible.
+        # - Bot in PAPER mode: every signal is paper-logged
+        # - Bot in LIVE mode but slug isn't in LIVE_SPORTS_PREFIXES: paper-logged
+        #   (e.g. NHL/Tennis/NBA continue data collection while MLB trades live)
+        # - Bot in LIVE mode AND slug eligible: skip paper write (duplicate of
+        #   fade_events.jsonl; saves IO under volume).
+        if not effective_live:
             self.write_paper_trade(trade)
         self.write_event({"type": "fade_signal", **trade})
         # Heartbeat fades counter (used by stall detector). Used to count
@@ -659,7 +682,7 @@ class FadeBot:
               f"{strategy.upper():>6} {wallet[:10]}...  their {their_side} {their_outcome}@{their_price}  "
               f"-> our BUY {our_outcome}@{our_entry}  bet ${bet}  slug={slug[:50]}")
 
-        if self.live:
+        if effective_live:
             # LIVE-only entry-price floor. Live data through 2026-05-18 showed
             # 0/5 WR at our_entry in [0.20, 0.40). Skip BEFORE bumping the
             # daily-risk counter so a screened signal doesn't eat into the cap.
@@ -1076,12 +1099,16 @@ class FadeBot:
 
 def main():
     ap = argparse.ArgumentParser()
-    # Sports bot is PAPER-ONLY. The --live/--dry-live flags from esports_fade_bot
-    # are intentionally removed here; we are validating signal volume and
-    # economic intuition, not placing real orders yet.
+    # v1.36 (2026-05-27): --live re-enabled. LIVE order placement is restricted
+    # at the per-trade level to LIVE_SPORTS_PREFIXES (currently MLB only).
+    # Other sports continue paper-logging when --live is active, so data
+    # collection for NHL/Tennis/NBA doesn't pause.
+    ap.add_argument("--live", action="store_true",
+                    help="Place real CLOB orders for LIVE_SPORTS_PREFIXES sports. "
+                         "Other sports remain paper-logged.")
+    ap.add_argument("--dry-live", action="store_true",
+                    help="Exercise the LIVE code path without submitting orders.")
     args = ap.parse_args()
-    args.live = False
-    args.dry_live = False
     if args.live and args.dry_live:
         ap.error("--live and --dry-live are mutually exclusive")
     FadeBot(live=args.live, dry_live=args.dry_live).run()

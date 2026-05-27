@@ -2,6 +2,61 @@
 
 ---
 
+## v1.36 — 2026-05-27
+**Sports fade bot enters LIVE mode (MLB only at $5/trade).**
+
+### Why now
+
+4 days of paper data on the v2 sports bot. Per-sport breakdown showed clean separation:
+
+| Sport | Trades | WR | ROI | Verdict |
+|---|---|---|---|---|
+| **MLB** | 355 | 58.6% | **+7.2%** | Deploy LIVE |
+| NBA | 137 | 60.6% | +10.6% | Season ending; skip |
+| NHL | 34 | 70.6% | +50.9% | Sample too small |
+| Tennis | 569 | 52.4% | **-19.3%** | Excluded — collapsed May 27 |
+
+Tennis went from +2.5% to -19% in a single day (+311 new trades net -$581). Decisive exclusion.
+
+### What changed
+
+**`sports_fade_bot.py`:**
+- `LIVE_BET_USD` 10.0 → 5.0 (conservative starting size)
+- `DAILY_LOSS_CAP` 150.0 → 75.0
+- New `LIVE_SPORTS_PREFIXES = ("mlb-",)` constant
+- New `is_live_eligible_sport(slug)` method
+- `process_trade` computes `effective_live = self.live and is_live_eligible_sport(slug)`. Real-money gates (bet size, daily caps, order placement) all use `effective_live`. Non-MLB markets in LIVE mode still write to `paper_trades.csv` so NHL/Tennis/NBA data collection continues.
+- `main()` re-enables `--live` and `--dry-live` argparse (was hardcoded `args.live = False`)
+
+**`watch_sports_fade.bat`:** launches with `--live` now.
+
+**`analysis/evaluate_sports_live.py`** (NEW):
+- Mirror of esports `evaluate_live.py`
+- Reads `output/sports_fade/live_orders.jsonl`
+- Writes `output/sports_fade/live_results.csv` + `live_daily_pnl.json`
+- No wallet-equity tracking (wallet shared with esports; that lives in esports evaluator)
+
+**`run_sports_eval_live.bat`** (NEW): cron entry point.
+
+**New scheduled task `PolyBotSportsLiveEval`** (every 10 min) — refreshes `live_daily_pnl.json` so the bot's `DAILY_LOSS_CAP` can actually fire.
+
+### Wallet & data separation
+
+- **Wallet**: shared with esports for operational simplicity. One Polymarket account.
+- **Data**: fully separate. Sports writes to `output/sports_fade/`, esports to `output/esports_fade/`. Different orders ledger, different daily PnL JSON, different evaluator, different cron task.
+
+### Risk profile
+
+- $5/trade × ~90 MLB trades/day expected ≈ $450/day exposure
+- Daily loss cap $75 = 15% of expected exposure (won't false-trip on normal variance)
+- Bankroll bumps after 200+ live trades hold ≥ +3% ROI
+
+### What's still in PAPER
+
+NHL, Tennis, NBA continue to be paper-logged in `paper_trades.csv` and evaluated by `evaluate_sports_paper.py` (existing cron). When MLB is proven LIVE we can revisit deploying others.
+
+---
+
 ## v1.35 — 2026-05-24
 **Esports LIVE bet size $10 → $15 (first scale-up). Evaluator switched to wallet-equity as canonical lifetime PnL.**
 

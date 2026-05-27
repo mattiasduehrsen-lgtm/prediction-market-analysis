@@ -2,6 +2,47 @@
 
 ---
 
+## v1.37 — 2026-05-28
+**Fix opposite-side hedge bug — `market_exposure` now persists across days and restarts.**
+
+### What broke
+
+Discovered on `cs2-3dmax-mgc-2026-05-27`:
+- 17:24 UTC: bought 3DMAX @ $0.50, 30 shares, $15 → `market_exposure[(cid, "3DMAX")] = $15`
+- 00:00 UTC: UTC day rollover → `market_exposure.clear()` wipes the dict
+- 01:44 UTC: bought magic @ $0.52 → no prior exposure visible → opposite-side guard misses it
+- **Locked guaranteed loss: -$1.15** (best case $0, worst case -$1.15)
+
+The v1.34 hedge guard checked the right thing (`market_exposure[(cid, other_outcome)]`) but the dict was wiped nightly *and* on every bot restart, so any prior-day or pre-restart position was invisible.
+
+### Fix
+
+**Two changes in both `esports_fade_bot.py` and `sports_fade_bot.py`:**
+
+1. **Removed `self.market_exposure.clear()` from UTC day rollover.** Positions persist across days; only daily counters (`daily_pnl`, `daily_risk_usd`, `fades_today`, `last_signal_ts`) reset.
+
+2. **Added `_rebuild_market_exposure()` called at startup.** Scans `live_orders.jsonl`, sums matched BUY cost minus matched SELL cost per `(cid, outcome)`, excludes markets already flagged WIN/LOSS/TP_* in `live_results.csv`. Prints a startup summary including how many markets currently have dual-side holdings.
+
+### Why this is subtle
+
+The `market_exposure` dict was confusingly used for two purposes:
+- Per-market position cap (`MAX_PER_MARKET_USD`)
+- Opposite-side hedge guard
+
+The first works fine with daily reset (we *want* a fresh cap each day on volume). The second needs lifetime-of-position tracking. Same dict, two semantics — easy to miss when reading the code.
+
+### Damage assessment
+
+- Specific instance (3DMAX/magic): max -$1.15
+- Bug latent since v1.34 (2026-05-24, 4 days). A `_scan_dual_positions.py` helper checks all open positions on both wallets — see scan output for full list.
+- Scales with bet size: at $20/trade would be -$3–4 per occurrence, at $50/trade -$10+.
+
+### Operational note
+
+Bot needs restart to pick up the fix. The `_rebuild_market_exposure` will print exposure summary on next start — if it reports "N markets with dual-side holdings" > 0, those are existing locked positions and the hedge guard will now correctly block any *new* trades on them.
+
+---
+
 ## v1.36 — 2026-05-27
 **Sports fade bot enters LIVE mode (MLB only at $5/trade).**
 

@@ -120,7 +120,11 @@ class FadeBot:
         self.daily_risk_usd = 0.0
         self.day_started = datetime.now(timezone.utc).date()
         self.daily_pnl_path = OUT_DIR / "live_daily_pnl.json"
-        # Exposure state (resets daily)
+        # Exposure state — TRACKS POSITIONS HELD across days/restarts (NOT daily volume).
+        # (cid, our_outcome) -> usd cost of net-open (unsold) shares. Used by:
+        #   1. Per-market position cap (don't accumulate too much on one market)
+        #   2. Opposite-side hedge guard (don't buy both sides of binary market)
+        # Rebuilt from live_orders.jsonl on startup so restarts don't lose state.
         self.market_exposure: dict[tuple[str, str], float] = {}  # (cid, our_outcome) -> usd
         self.fades_today = 0
         self.last_signal_ts: dict[tuple[str, str], float] = {}   # (target, cid) -> epoch
@@ -130,10 +134,88 @@ class FadeBot:
         # Prime dedup with recent tx hashes from CSV so a restart doesn't
         # cause a burst of re-fires from the first poll's 500-trade window.
         self._prime_seen_tx()
+        # Rebuild market_exposure from live_orders.jsonl — survives restarts AND
+        # day rollovers (the 2026-05-27 v1.36 dual-side bug came from losing
+        # this state when a UTC midnight hit between two opposite-side fades).
+        if self.live:
+            self._rebuild_market_exposure()
         print(f"[fade-bot] mode={'LIVE' if live else 'PAPER'}")
         print(f"[fade-bot] tracking {len(self.target_wallets)} target wallets")
         print(f"[fade-bot] preloaded {len(self.market_cache)} markets from CLOB index")
         print(f"[fade-bot] primed {len(self.seen_tx_set)} tx hashes from history")
+
+    def _rebuild_market_exposure(self):
+        """Reconstruct self.market_exposure from live_orders.jsonl.
+
+        Sums matched BUY cost per (cid, outcome) and subtracts matched SELL
+        cost. Markets that have already resolved (we can detect via the eval'd
+        live_results.csv) are excluded — their exposure is no longer relevant.
+
+        Called once at bot startup so:
+          - Restarts don't lose hedge-guard state
+          - UTC day rollovers don't lose hedge-guard state
+        """
+        orders_path = OUT_DIR / "live_orders.jsonl"
+        if not orders_path.exists():
+            return
+        # First pass: gather resolved cids from live_results.csv (status WIN/LOSS/TP_*)
+        # so we don't keep ghost exposure on settled markets.
+        resolved_cids: set[str] = set()
+        results_path = OUT_DIR / "live_results.csv"
+        if results_path.exists():
+            try:
+                import csv as _csv
+                with results_path.open(encoding="utf-8") as fh:
+                    for r in _csv.DictReader(fh):
+                        if r.get("status") in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS"):
+                            cid = r.get("fade_condition", "")
+                            if cid:
+                                resolved_cids.add(cid)
+            except Exception as e:
+                print(f"[fade-bot] exposure rebuild: results.csv read failed: {e}")
+
+        # Second pass: scan orders, sum BUY cost − SELL cost per (cid, outcome).
+        exposure: dict[tuple[str, str], float] = {}
+        try:
+            with orders_path.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if str(o.get("status", "")).lower() != "matched":
+                        continue
+                    cid = o.get("fade_condition", "")
+                    if not cid or cid in resolved_cids:
+                        continue
+                    outcome = o.get("our_outcome", "")
+                    cost = float(o.get("cost_usd") or 0)
+                    side = str(o.get("side", "BUY")).upper()
+                    key = (cid, outcome)
+                    if side == "BUY":
+                        exposure[key] = exposure.get(key, 0.0) + cost
+                    elif side == "SELL":
+                        exposure[key] = exposure.get(key, 0.0) - cost
+        except Exception as e:
+            print(f"[fade-bot] exposure rebuild: orders.jsonl read failed: {e}")
+            return
+        # Drop entries that net out to ~zero (fully closed positions)
+        self.market_exposure = {k: v for k, v in exposure.items() if v > 0.5}
+        n = len(self.market_exposure)
+        if n:
+            total = sum(self.market_exposure.values())
+            # Count markets where we hold multiple outcomes (would be hedge-blocked now)
+            cids_by_outcome: dict[str, set[str]] = {}
+            for (cid, oc), _ in self.market_exposure.items():
+                cids_by_outcome.setdefault(cid, set()).add(oc)
+            multi = sum(1 for ocs in cids_by_outcome.values() if len(ocs) > 1)
+            print(f"[fade-bot] exposure rebuilt: {n} (cid,outcome) positions, "
+                  f"${total:.2f} total, {multi} markets with dual-side holdings")
+        else:
+            print(f"[fade-bot] exposure rebuilt: no open positions")
 
     def _prime_seen_tx(self):
         """Pre-populate seen_tx_set from the tail of paper_trades.csv.
@@ -467,13 +549,18 @@ class FadeBot:
 
         bet = LIVE_BET_USD if self.live else PAPER_BET_USD
 
-        # UTC day rollover — reset counters and exposure
+        # UTC day rollover — reset DAILY counters only.
+        # IMPORTANT: do NOT reset self.market_exposure here. Exposure tracks
+        # *positions held* (cid, outcome) → $ committed, which persist across
+        # days until the market resolves or we sell. Clearing it nightly caused
+        # the opposite-side hedge guard to miss prior-day positions, leading
+        # to bot buying both sides of the same market (v1.36 bug, discovered
+        # on cs2-3dmax-mgc-2026-05-27 — locked guaranteed -$1.15).
         today = datetime.now(timezone.utc).date()
         if today != self.day_started:
             self.day_started = today
             self.daily_pnl = 0
             self.daily_risk_usd = 0.0
-            self.market_exposure.clear()
             self.fades_today = 0
             self.last_signal_ts.clear()
 

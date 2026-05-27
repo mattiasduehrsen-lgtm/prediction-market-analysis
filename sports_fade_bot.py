@@ -147,7 +147,9 @@ class FadeBot:
         self.daily_risk_usd = 0.0
         self.day_started = datetime.now(timezone.utc).date()
         self.daily_pnl_path = OUT_DIR / "live_daily_pnl.json"
-        # Exposure state (resets daily)
+        # Exposure state — TRACKS POSITIONS HELD across days/restarts (NOT daily volume).
+        # Rebuilt from live_orders.jsonl on startup (see _rebuild_market_exposure).
+        # See esports_fade_bot.py docstring — same bug rationale.
         self.market_exposure: dict[tuple[str, str], float] = {}  # (cid, our_outcome) -> usd
         # CONSENSUS TRACKING: count of target-wallet signals per (cid, our_outcome).
         # When count reaches CONSENSUS_THRESHOLD, we fire the fade.
@@ -161,10 +163,78 @@ class FadeBot:
         # Prime dedup with recent tx hashes from CSV so a restart doesn't
         # cause a burst of re-fires from the first poll's 500-trade window.
         self._prime_seen_tx()
+        # Rebuild market_exposure from live_orders.jsonl so opposite-side hedge
+        # guard survives restarts and UTC day rollovers (v1.37 fix).
+        if self.live:
+            self._rebuild_market_exposure()
         print(f"[sports-bot] mode={'LIVE' if live else 'PAPER'}")
         print(f"[sports-bot] tracking {len(self.target_wallets)} target wallets")
         print(f"[sports-bot] preloaded {len(self.market_cache)} markets from CLOB index")
         print(f"[sports-bot] primed {len(self.seen_tx_set)} tx hashes from history")
+
+    def _rebuild_market_exposure(self):
+        """Reconstruct self.market_exposure from live_orders.jsonl.
+
+        See esports_fade_bot.py for full rationale. Skips markets already
+        flagged WIN/LOSS/TP_* in live_results.csv (those positions are
+        settled and shouldn't block new entries).
+        """
+        orders_path = OUT_DIR / "live_orders.jsonl"
+        if not orders_path.exists():
+            return
+        resolved_cids: set[str] = set()
+        results_path = OUT_DIR / "live_results.csv"
+        if results_path.exists():
+            try:
+                import csv as _csv
+                with results_path.open(encoding="utf-8") as fh:
+                    for r in _csv.DictReader(fh):
+                        if r.get("status") in ("WIN", "LOSS", "TP_SOLD", "TP_LOSS"):
+                            cid = r.get("fade_condition", "")
+                            if cid:
+                                resolved_cids.add(cid)
+            except Exception as e:
+                print(f"[sports-bot] exposure rebuild: results.csv read failed: {e}")
+
+        exposure: dict[tuple[str, str], float] = {}
+        try:
+            with orders_path.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if str(o.get("status", "")).lower() != "matched":
+                        continue
+                    cid = o.get("fade_condition", "")
+                    if not cid or cid in resolved_cids:
+                        continue
+                    outcome = o.get("our_outcome", "")
+                    cost = float(o.get("cost_usd") or 0)
+                    side = str(o.get("side", "BUY")).upper()
+                    key = (cid, outcome)
+                    if side == "BUY":
+                        exposure[key] = exposure.get(key, 0.0) + cost
+                    elif side == "SELL":
+                        exposure[key] = exposure.get(key, 0.0) - cost
+        except Exception as e:
+            print(f"[sports-bot] exposure rebuild: orders.jsonl read failed: {e}")
+            return
+        self.market_exposure = {k: v for k, v in exposure.items() if v > 0.5}
+        n = len(self.market_exposure)
+        if n:
+            total = sum(self.market_exposure.values())
+            cids_by_outcome: dict[str, set[str]] = {}
+            for (cid, oc), _ in self.market_exposure.items():
+                cids_by_outcome.setdefault(cid, set()).add(oc)
+            multi = sum(1 for ocs in cids_by_outcome.values() if len(ocs) > 1)
+            print(f"[sports-bot] exposure rebuilt: {n} (cid,outcome) positions, "
+                  f"${total:.2f} total, {multi} markets with dual-side holdings")
+        else:
+            print(f"[sports-bot] exposure rebuilt: no open positions")
 
     def _prime_seen_tx(self):
         """Pre-populate seen_tx_set from the tail of paper_trades.csv.
@@ -510,13 +580,14 @@ class FadeBot:
         effective_live = self.live and self.is_live_eligible_sport(slug)
         bet = LIVE_BET_USD if effective_live else PAPER_BET_USD
 
-        # UTC day rollover — reset counters and exposure
+        # UTC day rollover — reset DAILY counters only. market_exposure
+        # tracks positions held (persistent until resolved), NOT daily volume.
+        # See esports_fade_bot.py — same v1.37 bug rationale.
         today = datetime.now(timezone.utc).date()
         if today != self.day_started:
             self.day_started = today
             self.daily_pnl = 0
             self.daily_risk_usd = 0.0
-            self.market_exposure.clear()
             self.fades_today = 0
             self.last_signal_ts.clear()
 

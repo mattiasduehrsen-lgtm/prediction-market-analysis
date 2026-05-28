@@ -15,17 +15,20 @@ v1.36 deployed MLB live at $5/trade on 2026-05-27 based on paper data showing **
 
 ### What needs to happen before re-enabling
 
-This is the second time a strategy has looked great in backtest/paper and failed live (cf. crypto 15m bot). Don't redeploy any sport without understanding **why** the live PnL diverged from the paper PnL. Candidates:
+This is the second time a strategy has looked great in backtest/paper and failed live (cf. crypto 15m bot). Don't redeploy any sport without understanding **why** the live PnL diverged from the paper PnL.
 
-1. **Execution friction higher than modeled** — paper assumes we get our entry price; live we eat slippage + cancellation losses
-2. **Different population in live window** — paper data was 4 days, live had different game slate / different target-wallet behavior
-3. **Latency effect** — by the time we fade a signal, the market has already moved against us
-4. **MLB-specific microstructure** — maybe baseball markets are thinner / more efficient than the historical sample
+**Leading hypothesis (user insight, 2026-05-28):** MLB/NBA/NHL/Tennis markets on Polymarket are arbitraged against traditional sportsbooks (DraftKings, FanDuel, Pinnacle) within seconds. There is no persistent mispricing for the fade strategy to exploit — by the time a target wallet places a "bad" bet, arb bots have already snapped the price back to Vegas consensus. We can paper-trade favorable-looking signals all day, but at execution time the edge is gone.
 
-Investigation plan:
-- Run `analysis/evaluate_sports_live.py` and compute the live ROI explicitly
-- Compare paper-trade-by-trade to live-trade-by-trade for the same time window
-- Specifically: how does live entry price compare to paper entry price for the same signal? That isolates execution friction.
+Esports doesn't have this problem because CS2 odds are largely set by Polymarket's own order flow (no traditional book runs CS2 lines at the same scale and speed). So mispricings persist long enough for the fade strategy to capture them.
+
+If this hypothesis is right, **no traditional sport will work for this strategy as currently designed.** Re-enabling MLB would just bleed the wallet again. Possible alternatives:
+- Test strategies that exploit the arbitrage rather than fight it (cross-book arb if we can read DraftKings odds, but that's a different bot)
+- Stick to markets without external price discovery (esports, niche prediction markets)
+
+Secondary candidates worth ruling out:
+1. **Execution friction higher than modeled** — but probably a small effect; paper was already +7% with realistic friction modeled
+2. **Different game slate during live window** — possible but the strategy should generalize across slates
+3. **Latency effect** — by the time we fade a signal, the market has moved. Could check this with `analysis/evaluate_sports_live.py`
 
 Esports bot is **unaffected** — still LIVE on CS2 at $15/trade.
 

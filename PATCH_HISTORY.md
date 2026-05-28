@@ -2,6 +2,35 @@
 
 ---
 
+## v1.38 — 2026-05-28
+**MLB live trading DISABLED — paper edge did not survive live execution.**
+
+### What happened
+
+v1.36 deployed MLB live at $5/trade on 2026-05-27 based on paper data showing **+7-10% ROI over 355 trades**. First ~24 hours of live trading bled hard. User halted via `/pause` and asked to disable MLB.
+
+### Fix
+
+`LIVE_SPORTS_PREFIXES` set to empty tuple `()`. With no eligible sports, `effective_live` is always False in `process_trade` — every signal falls back to paper logging. Bot continues running (NHL/Tennis/NBA/MLB all paper-logged) so data collection isn't lost.
+
+### What needs to happen before re-enabling
+
+This is the second time a strategy has looked great in backtest/paper and failed live (cf. crypto 15m bot). Don't redeploy any sport without understanding **why** the live PnL diverged from the paper PnL. Candidates:
+
+1. **Execution friction higher than modeled** — paper assumes we get our entry price; live we eat slippage + cancellation losses
+2. **Different population in live window** — paper data was 4 days, live had different game slate / different target-wallet behavior
+3. **Latency effect** — by the time we fade a signal, the market has already moved against us
+4. **MLB-specific microstructure** — maybe baseball markets are thinner / more efficient than the historical sample
+
+Investigation plan:
+- Run `analysis/evaluate_sports_live.py` and compute the live ROI explicitly
+- Compare paper-trade-by-trade to live-trade-by-trade for the same time window
+- Specifically: how does live entry price compare to paper entry price for the same signal? That isolates execution friction.
+
+Esports bot is **unaffected** — still LIVE on CS2 at $15/trade.
+
+---
+
 ## v1.37 — 2026-05-28
 **Fix opposite-side hedge bug — `market_exposure` now persists across days and restarts.**
 

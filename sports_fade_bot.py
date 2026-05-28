@@ -117,11 +117,13 @@ ESPORTS_PREFIXES = (
 
 # LIVE-only sports (real money). PAPER mode still records all of ESPORTS_PREFIXES
 # above for ongoing data collection; LIVE mode trades only this subset.
-#   2026-05-27 v1.36 - MLB only. Tennis blew up to -19% on May 27 paper data
-#   (single-day collapse from +2.5%), NBA season ending, NHL sample too small.
-#   MLB held +7-10% ROI across 355 paper trades - safest to deploy.
+#   2026-05-28 v1.38 - DISABLED ALL. MLB live deploy 2026-05-27 bled hard
+#   in first ~24h despite paper showing +7-10% ROI. User halted via /pause +
+#   asked to disable. Empty tuple => no sport is live-eligible, every signal
+#   falls back to paper logging. Bot can continue running for data collection;
+#   re-enable a sport here when ready (and bump v1.39).
 LIVE_SPORTS_PREFIXES = (
-    "mlb-",
+    # "mlb-",  # disabled 2026-05-28 — see PATCH_HISTORY.md v1.38
 )
 
 

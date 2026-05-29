@@ -66,7 +66,7 @@ for t in trades:
     print(f"\ntx={h[:18]}  proxyWallet={pw[:14]}")
     print(f"  OrderFilled maker/taker set ({len(makers_takers)}): "
           f"{[m[:14] for m in list(makers_takers)[:6]]}")
-    print(f"  proxyWallet in maker/taker set? {'YES ✓' if match else 'NO'}")
+    print(f"  proxyWallet in maker/taker set? {'YES' if match else 'NO'}")
     print(f"  asset ids seen: {[a[:18]+'...' for a in list(asset_ids)[:3]]}")
     checked += 1
     if checked >= 5:

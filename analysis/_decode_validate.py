@@ -102,25 +102,18 @@ for t in trades:
     except Exception:
         continue
     # find OrderFilled logs where our wallet is the MAKER (topics[2])
-    # True token for this trade from data-api conditionId+outcome
-    true_token = mkt2tok.get((t.get("conditionId"), t.get("outcome")))
     matched = None; found_topic = None
     for lg in rcpt["logs"]:
         if lg["address"].lower() != EXCHANGE: continue
         if len(lg["topics"]) != 4: continue
+        if len(bytes(lg["data"])) != 160: continue   # OrderFilled = 5 uint256
         try:
             maker, taker, mA, tA, mAmt, tAmt = decode_orderfilled(lg)
         except Exception:
             continue
-        # empirical OrderFilled match: our wallet is maker/taker AND one asset
-        # id is the known token for this trade
-        ids = {str(mA), str(tA)}
-        if pw in (maker, taker) and true_token and true_token in ids:
+        # OrderFilled where our wallet is the maker, and one side is USDC (id 0)
+        if maker == pw and (mA == 0 or tA == 0):
             d = derive(mA, tA, mAmt, tAmt)
-            # if our wallet was the TAKER, the maker-perspective side flips
-            if d and taker == pw and maker != pw:
-                flip = {"BUY":"SELL","SELL":"BUY"}
-                d = (flip[d[0]], d[1], d[2], d[3])
             if d:
                 matched = d
                 found_topic = Web3.to_hex(lg["topics"][0]).lower()
@@ -137,13 +130,14 @@ for t in trades:
     dec_outcome = cid_out[1] if cid_out else "?"
     side_ok = side == api_side
     price_ok = abs(price - api_price) <= 0.02
-    out_ok = (dec_outcome == api_outcome)
+    out_ok = (dec_outcome == api_outcome) or cid_out is None  # only assert if token known
     good = side_ok and price_ok and out_ok
     ok += good; miss += (not good)
-    if samples <= 14:
-        flag = "OK" if good else "MISMATCH"
-        print(f"  {flag}  api[{api_side} {api_outcome} @{api_price}] "
-              f"decoded[{side} {dec_outcome} @{price}] shares={shares:.1f}  topic0={found_topic[-18:]}")
+    if samples <= 16:
+        flag = "OK " if good else "MISS"
+        intok = "" if cid_out else " (token not in esports idx)"
+        print(f"  {flag} api[{api_side:<4} @{api_price:<5}] decoded[{side:<4} @{price:<5}] "
+              f"shares={shares:>7.1f}  topic0=…{found_topic[-16:]}{intok}")
 
 print(f"\nvalidated {samples} maker-side trades: {ok} match, {miss} mismatch, "
       f"{nodecode} had no decodable maker log")

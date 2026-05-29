@@ -2,6 +2,49 @@
 
 ---
 
+## v1.40 — 2026-05-29
+**On-chain real-time signal source — the latency fix (data-api was ~220s stale).**
+
+### Diagnosis
+
+Measured the full fade pipeline latency on 665 live orders:
+
+| Segment | What | p50 | p90 |
+|---|---|---|---|
+| A: their fill → we see it | **data-api indexer lag** | **108s** | **280s** |
+| B: see → submit | our processing | 0.00s | 0.3s |
+| C: submit → sign | local crypto | 0.30s | 0.5s |
+| D: sign → CLOB response | network | 0.20s | 0.3s |
+
+**Segment A is 99.7% of latency.** Direct probe: the data-api `/trades` newest row is 220–350s old. 27% of target signals were skipped as stale (>300s); 77% of acted trades were already >60s old. We were fading minutes after the market had absorbed the target's bad bet — the likely reason the edge is ~0.
+
+**A VPS would do nothing** — segment D (network) is already 0.2s.
+
+### Fix
+
+`onchain_listener.py` — a background thread that watches Polygon directly:
+- ERC-1155 `TransferSingle` events on the Conditional Tokens contract `0x4d97…6045`, filtered via `eth_getLogs` (every 2s) to our target wallets (indexed `to`=BUY / `from`=SELL topic).
+- Decodes token id + shares from event data; resolves outcome/market via the token index; price via CLOB midpoint at detection.
+- **Decode validated 100%** on side+outcome vs data-api ground truth.
+- Detection latency **~2-4s vs ~108-280s = 30-50x faster**.
+
+Integration:
+- Listener pushes data-api-shaped trades to a queue; the main loop drains it into the **same `process_trade`** (all gates apply: entry floor, per-wallet cap, single-map filter, hedge guard, daily loss cap).
+- The data-api poll **stays on as a backstop**; dedup by tx hash means whichever source sees a trade first wins.
+- **Orders are LIMIT** at our computed entry, so a price-decode error cannot make us overpay.
+- Any signal where token/market/price can't be resolved sanely is **dropped**, never fired.
+- RPC configurable via `POLYGON_RPC_URL` env (defaults to public endpoints).
+
+### What this is
+
+The test of whether latency was killing the edge. If the cleaned target list + 2s latency produces a positive edge over the next stretch, the strategy is real. **If the edge stays dead at 2s, the CS2 fade is not exploitable and we stop** — this removes the last "maybe it's just latency" excuse.
+
+### Monitoring
+
+Heartbeat now logs `onchain[conn= detected= emitted= dropped= last_lag=]`. Every emitted signal writes an `onchain_signal` event. Esports is a small slice of current Polymarket volume, so signals will be infrequent — that's expected.
+
+---
+
 ## v1.39 — 2026-05-29
 **Three esports fade fixes after a −$240/3-day bleed. Diagnostic: the edge is marginal.**
 

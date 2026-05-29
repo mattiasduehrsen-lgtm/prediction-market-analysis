@@ -46,9 +46,16 @@ DEFAULT_RPCS = [
     "https://1rpc.io/matic",
 ]
 
-POLL_INTERVAL = 2.0          # seconds between getLogs polls (~chain block time)
-MAX_BLOCK_LOOKBACK = 30      # if we fall behind, never scan more than this many blocks
-WALLET_CHUNK = 120           # addresses per getLogs topic filter (RPC-friendly)
+POLL_INTERVAL = 3.0          # seconds between getLogs polls. 3s keeps detection
+                             # latency ~3-4s (still 30-50x better than the ~220s
+                             # data-api) while cutting RPC request volume ~33%.
+MAX_BLOCK_LOOKBACK = 40      # if we fall behind, never scan more than this many blocks
+# Addresses per getLogs topic filter. Alchemy (our primary RPC) handles all 300
+# wallets in ONE filter, so a poll is just 2 getLogs (to + from) instead of 6 —
+# ~3x fewer requests = ~3x less Compute Unit usage. If a query errors (e.g. a
+# picky public-RPC fallback rejects a large topic array), we downshift to 120.
+WALLET_CHUNK_DEFAULT = 300
+WALLET_CHUNK_SAFE = 120
 
 
 def _pad_addr(addr: str) -> str:
@@ -74,6 +81,7 @@ class OnChainListener(threading.Thread):
         self.w3: Web3 | None = None
         self._rpc_idx = 0            # rotates across endpoints on failure
         self._consec_errors = 0      # trip a rotation after repeated errors
+        self._chunk = WALLET_CHUNK_DEFAULT  # downshifts to SAFE if a query errors
         self.active_rpc = None
         self.last_block = None
         self._seen = deque(maxlen=5000)      # (txhash, logIndex) dedup
@@ -175,8 +183,8 @@ class OnChainListener(threading.Thread):
         wallets = list(self.wallets)
         out = []
         ok = True
-        for i in range(0, len(wallets), WALLET_CHUNK):
-            chunk = [_pad_addr(w) for w in wallets[i:i + WALLET_CHUNK]]
+        for i in range(0, len(wallets), self._chunk):
+            chunk = [_pad_addr(w) for w in wallets[i:i + self._chunk]]
             if position == "to":
                 topics = [TRANSFER_SINGLE_TOPIC, None, None, chunk]
             else:  # from
@@ -190,6 +198,11 @@ class OnChainListener(threading.Thread):
                 out.extend((position, lg) for lg in logs)
             except Exception as e:
                 ok = False
+                # A large topic array can be rejected by some public RPCs;
+                # downshift the chunk size so retries (and fallbacks) succeed.
+                if self._chunk > WALLET_CHUNK_SAFE:
+                    self._chunk = WALLET_CHUNK_SAFE
+                    self.log(f"[onchain] downshifting wallet chunk -> {self._chunk}")
                 self.log(f"[onchain] get_logs error ({position}) "
                          f"[{from_block}-{to_block}]: {e}")
         return out, ok

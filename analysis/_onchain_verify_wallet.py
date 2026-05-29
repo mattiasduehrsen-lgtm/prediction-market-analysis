@@ -41,9 +41,10 @@ for t in trades:
         rcpt = w3.eth.get_transaction_receipt(h)
     except Exception:
         continue
+    # Match empirically: log on the exchange contract with 4 topics
+    # (topic0 + indexed orderHash + indexed maker + indexed taker = OrderFilled).
     of_logs = [lg for lg in rcpt["logs"]
-               if lg["address"].lower() == EXCHANGE.lower()
-               and lg["topics"] and lg["topics"][0].hex().lstrip("0x") == ORDER_FILLED.lstrip("0x")]
+               if lg["address"].lower() == EXCHANGE.lower() and len(lg["topics"]) == 4]
     if not of_logs:
         continue
     makers_takers = set()

@@ -43,8 +43,8 @@ def connect():
     raise SystemExit("no rpc")
 
 # Build token_id -> (condition_id, outcome) reverse index from the CLOB parquet
-print("building token->market reverse index...")
-tok2mkt = {}
+print("building token<->market indexes...")
+tok2mkt = {}; mkt2tok = {}
 p = ES_DIR / "clob_esports_markets.parquet"
 df = pd.read_parquet(p, columns=["condition_id", "tokens"])
 for _, row in df.iterrows():
@@ -54,6 +54,7 @@ for _, row in df.iterrows():
             tid = str(t.get("token_id")); o = t.get("outcome")
             if tid and o:
                 tok2mkt[tid] = (cid, o)
+                mkt2tok[(cid, o)] = tid
     except TypeError:
         continue
 print(f"  indexed {len(tok2mkt)} tokens")
@@ -101,14 +102,29 @@ for t in trades:
     except Exception:
         continue
     # find OrderFilled logs where our wallet is the MAKER (topics[2])
-    matched = None
+    # True token for this trade from data-api conditionId+outcome
+    true_token = mkt2tok.get((t.get("conditionId"), t.get("outcome")))
+    matched = None; found_topic = None
     for lg in rcpt["logs"]:
-        if not is_order_filled(lg): continue
-        maker, taker, mA, tA, mAmt, tAmt = decode_orderfilled(lg)
-        if maker == pw:
+        if lg["address"].lower() != EXCHANGE: continue
+        if len(lg["topics"]) != 4: continue
+        try:
+            maker, taker, mA, tA, mAmt, tAmt = decode_orderfilled(lg)
+        except Exception:
+            continue
+        # empirical OrderFilled match: our wallet is maker/taker AND one asset
+        # id is the known token for this trade
+        ids = {str(mA), str(tA)}
+        if pw in (maker, taker) and true_token and true_token in ids:
             d = derive(mA, tA, mAmt, tAmt)
+            # if our wallet was the TAKER, the maker-perspective side flips
+            if d and taker == pw and maker != pw:
+                flip = {"BUY":"SELL","SELL":"BUY"}
+                d = (flip[d[0]], d[1], d[2], d[3])
             if d:
-                matched = d; break
+                matched = d
+                found_topic = Web3.to_hex(lg["topics"][0]).lower()
+                break
     if matched is None:
         nodecode += 1
         continue
@@ -124,11 +140,10 @@ for t in trades:
     out_ok = (dec_outcome == api_outcome)
     good = side_ok and price_ok and out_ok
     ok += good; miss += (not good)
-    if samples <= 12:
+    if samples <= 14:
         flag = "OK" if good else "MISMATCH"
         print(f"  {flag}  api[{api_side} {api_outcome} @{api_price}] "
-              f"decoded[{side} {dec_outcome} @{price}] shares={shares:.1f}"
-              f"{'' if cid_out else '  (token not in index)'}")
+              f"decoded[{side} {dec_outcome} @{price}] shares={shares:.1f}  topic0={found_topic[-18:]}")
 
 print(f"\nvalidated {samples} maker-side trades: {ok} match, {miss} mismatch, "
       f"{nodecode} had no decodable maker log")

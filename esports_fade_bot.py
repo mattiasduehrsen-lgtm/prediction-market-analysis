@@ -67,6 +67,14 @@ DAILY_RISK_CAP_USD = 2000.0   # SAFETY BACKSTOP only — halts if we've placed $
                               # At $10/trade this caps at 200 fills/day.
 MAX_PER_MARKET_USD = 50.0     # cumulative bet cap per (market, our_outcome) — raised from $25 (2026-05-19) to preserve 5-fill stacking at $10 bet size
 MAX_FADES_PER_DAY = 500       # sanity ceiling on daily signal count — raised from 100 (2026-05-18)
+MAX_FADES_PER_WALLET_PER_DAY = 3  # v1.39 — cap fades per target wallet per UTC day.
+                              # Diagnostic on 415 live trades (2026-05-29) found wallet
+                              # 0x47138dc1 was faded 90x (22% of all volume) for -$109,
+                              # over half the total loss. It's a hyperactive bot/sharp,
+                              # not a persistent loser. No single wallet should dominate.
+SKIP_SINGLE_MAP_MARKETS = True  # v1.39 — skip Bo1 single-map/game markets (slug has
+                              # -game / -map-). Live ROI: map/game -8.1% vs series -3.5%.
+                              # A single map is a coin flip; the loser-edge dilutes.
 MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)
@@ -96,6 +104,16 @@ TP_SWEEP_INTERVAL = 60.0
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
 # Dota/Valorant samples too small to trust right now — add later.
 ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-")
+
+# Matches single-map / per-game markets: "-game1", "-game2", "-map-2", etc.
+# These are Bo1 outcomes (coin flips); we only want series moneylines.
+# Also catches "-map-handicap" style markets, which are likewise negative-EV.
+import re as _re
+_SINGLE_MAP_RE = _re.compile(r"-game\d+|-map-?\d*\b|-map-", _re.IGNORECASE)
+
+
+def is_single_map_market(slug: str) -> bool:
+    return bool(_SINGLE_MAP_RE.search(slug or ""))
 
 
 class FadeBot:
@@ -127,6 +145,7 @@ class FadeBot:
         # Rebuilt from live_orders.jsonl on startup so restarts don't lose state.
         self.market_exposure: dict[tuple[str, str], float] = {}  # (cid, our_outcome) -> usd
         self.fades_today = 0
+        self.fades_by_wallet_today: dict[str, int] = {}          # wallet -> fade count (resets UTC daily)
         self.last_signal_ts: dict[tuple[str, str], float] = {}   # (target, cid) -> epoch
         # condition_id -> {"outcomes":[a,b], "tokens":{outcome:token_id}}
         self.market_cache: dict[str, dict] = {}
@@ -510,6 +529,13 @@ class FadeBot:
         if not self.is_target_game(slug):
             return
 
+        # SINGLE-MAP/GAME FILTER (v1.39). Skip Bo1 per-map markets — they're
+        # coin flips (live ROI -8.1% vs -3.5% for series). LIVE only; PAPER
+        # keeps collecting so we can keep validating the rule.
+        if self.live and SKIP_SINGLE_MAP_MARKETS and is_single_map_market(slug):
+            self.write_event({"type": "skip_single_map", "tx": tx, "slug": slug})
+            return
+
         # Build fade
         their_side = t.get("side")     # BUY or SELL
         their_outcome = t.get("outcome") # the token they bought / sold
@@ -562,6 +588,7 @@ class FadeBot:
             self.daily_pnl = 0
             self.daily_risk_usd = 0.0
             self.fades_today = 0
+            self.fades_by_wallet_today.clear()
             self.last_signal_ts.clear()
 
         # Daily LOSS cap (LIVE only) — PRIMARY stop. Halts new entries once
@@ -597,6 +624,17 @@ class FadeBot:
         if self.fades_today >= MAX_FADES_PER_DAY:
             self.write_event({"type": "skip_daily_count_cap", "tx": tx})
             return
+
+        # Per-WALLET daily cap (v1.39) — stop one hyperactive target wallet from
+        # dominating the book. LIVE only. Applied before order placement; the
+        # counter is bumped only when we actually place (see fade-count bump).
+        if self.live and strategy == "fade":
+            wcount = self.fades_by_wallet_today.get(wallet, 0)
+            if wcount >= MAX_FADES_PER_WALLET_PER_DAY:
+                self.write_event({"type": "skip_wallet_daily_cap", "tx": tx,
+                                  "wallet": wallet, "count": wcount,
+                                  "cap": MAX_FADES_PER_WALLET_PER_DAY})
+                return
 
         # Per-market exposure cap
         exp_key = (condition_id, our_outcome)
@@ -663,6 +701,8 @@ class FadeBot:
         # when we'll actually place an order — see entry-price filter below)
         self.market_exposure[exp_key] = prior + bet
         self.fades_today += 1
+        if strategy == "fade":
+            self.fades_by_wallet_today[wallet] = self.fades_by_wallet_today.get(wallet, 0) + 1
 
         # Paper trade log: only write when running in actual PAPER mode.
         # In LIVE mode (current operation), paper_trades.csv is just

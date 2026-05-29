@@ -94,23 +94,61 @@ def main():
         g["wr"]      = (g["wins"] / g["trades"] * 100).round(2)
         g["roi"]     = (g["pnl"] / (g["trades"] * BET) * 100).round(2)
         g["avg_pnl"] = (g["pnl"] / g["trades"]).round(3)
+        g["trades_per_day"] = (g["trades"] / GAME_DATA_WINDOW_DAYS[game]).round(2)
 
-        # Lower trade-count floor for LoL since its volume is much smaller
+        # ── RECENT-WINDOW persistence (v1.39) ────────────────────────────────
+        # A wallet that was a loser over the full window might have turned
+        # around recently. Compute ROI over just the recent window and require
+        # it to STILL be losing, so we don't fade reformed/improving wallets.
+        rdf = gdf[gdf["timestamp"] >= recent_cutoff]
+        rg = rdf.groupby("proxyWallet").agg(
+            r_trades=("pnl", "size"),
+            r_pnl=("pnl", "sum"),
+        ).reset_index()
+        rg["recent_roi"] = (rg["r_pnl"] / (rg["r_trades"] * BET) * 100).round(2)
+        g = g.merge(rg, on="proxyWallet", how="left")
+
+        # ── BOT / MARKET-MAKER EXCLUSION (v1.39) ─────────────────────────────
+        # The single biggest leak in the live book (diagnostic 2026-05-29):
+        # wallet 0x47138dc1 traded 95,730 times (-11% ROI, -$53k). That's a
+        # market maker, not a recreational loser. MMs capture the spread and
+        # look mildly negative on naive directional PnL, but fading them just
+        # pays the vig. Exclude anything trading faster than a human plausibly
+        # could. Heavy degens do <30/day; MMs do hundreds-to-thousands/day.
+        MAX_TRADES_PER_DAY = 30.0
+        bots = g[g["trades_per_day"] > MAX_TRADES_PER_DAY]
+        if len(bots):
+            print(f"  [{game}] excluding {len(bots)} bot/MM wallets "
+                  f"(>{MAX_TRADES_PER_DAY}/day). Top by volume:")
+            print(bots.sort_values("trades", ascending=False)
+                  .head(5)[["proxyWallet","trades","trades_per_day","wr","roi"]]
+                  .to_string(index=False))
+        g = g[g["trades_per_day"] <= MAX_TRADES_PER_DAY]
+
         min_trades = 30 if game == "cs2" else 15
-        tg = g[(g["trades"] >= min_trades) & (g["roi"] < -5) & (g["last_ts"] >= recent_cutoff)]
-        tg = tg.sort_values("pnl").reset_index(drop=True)
-        print(f"\n[{game}] active losing wallets (n>={min_trades}, ROI<-5%, last 14d): {len(tg)}")
-        print(tg.head(10)[["proxyWallet", "trades", "wr", "pnl", "roi", "avg_pnl"]].to_string(index=False))
-        # Wider top-K per game for PAPER detection — we collect signals on the
-        # full pool. LIVE order placement is gated separately on a tighter subset.
-        # CS2 gets 1000, LoL gets 400 for paper (signal collection).
+
+        # ── PAPER detection list (wide) — ROI<-5, still-losing-recently ──────
+        # Kept generous for signal collection. recent_roi may be NaN if the
+        # wallet had no trades in the recent window; treat NaN as "not recent".
+        paper_tg = g[(g["trades"] >= min_trades)
+                     & (g["roi"] < -5)
+                     & (g["last_ts"] >= recent_cutoff)
+                     & (g["recent_roi"].fillna(0) < 0)]
+        paper_tg = paper_tg.sort_values("roi").reset_index(drop=True)
+        print(f"\n[{game}] PAPER losing wallets "
+              f"(n>={min_trades}, ROI<-5%, recent_roi<0, <={MAX_TRADES_PER_DAY}/day): {len(paper_tg)}")
+        print(paper_tg.head(10)[["proxyWallet","trades","trades_per_day","wr","roi","recent_roi"]]
+              .to_string(index=False))
         per_game_cap = 1000 if game == "cs2" else 400
-        all_targets.append(tg.head(per_game_cap))
+        all_targets.append(paper_tg.head(per_game_cap))
 
     if not all_targets:
         print("\nNo targets found — aborting")
         return
-    targets = pd.concat(all_targets, ignore_index=True).sort_values("pnl").reset_index(drop=True)
+    # Rank by ROI ascending (worst EDGE first) — NOT absolute pnl. The old
+    # pnl-ranking surfaced the highest-VOLUME wallets (bots/MMs), not the
+    # wallets with the worst per-trade edge. (v1.39 fix.)
+    targets = pd.concat(all_targets, ignore_index=True).sort_values("roi").reset_index(drop=True)
 
     # Deduplicate — a wallet active in multiple games appears once
     seen = set()
@@ -122,11 +160,21 @@ def main():
         seen.add(w)
         unique_wallets.append(w)
 
-    # LIVE subset = top losers by absolute PnL. Raised from 500 to 800 on
-    # 2026-05-22 to widen the signal pool (refresh pipeline routinely identifies
-    # 1200+ qualifying losers, so we were leaving ~700 wallets on the table).
-    LIVE_WALLET_CAP = 800
-    live_subset = unique_wallets[:LIVE_WALLET_CAP]
+    # ── LIVE subset (v1.39) — HIGH-CONVICTION persistent losers only ─────────
+    # Previously this was just paper[:800] sorted by absolute pnl, which put a
+    # 95k-trade market maker at #1. New rule: a wallet must be a STRONG loser
+    # (full-window ROI < -15%) AND still losing recently (recent_roi < -5%),
+    # ranked by worst ROI, capped tight. Fewer, better targets = more edge per
+    # fade and less exposure to mislabeled non-losers.
+    LIVE_ROI_THRESHOLD = -15.0
+    LIVE_RECENT_ROI_THRESHOLD = -5.0
+    LIVE_WALLET_CAP = 300
+    live_df = targets[(targets["roi"] < LIVE_ROI_THRESHOLD)
+                      & (targets["recent_roi"].fillna(0) < LIVE_RECENT_ROI_THRESHOLD)]
+    live_df = live_df.sort_values("roi").drop_duplicates("proxyWallet")
+    live_subset = list(live_df["proxyWallet"].head(LIVE_WALLET_CAP))
+    print(f"\nLIVE subset: {len(live_subset)} high-conviction wallets "
+          f"(ROI<{LIVE_ROI_THRESHOLD}%, recent_roi<{LIVE_RECENT_ROI_THRESHOLD}%, cap {LIVE_WALLET_CAP})")
 
     import os
     now_iso  = pd.Timestamp.utcnow().isoformat()
@@ -155,7 +203,7 @@ def main():
         "games":          GAMES,
         "scope":          "live_subset",
         "target_wallets": live_subset,
-        "target_meta":    targets.head(LIVE_WALLET_CAP).to_dict(orient="records"),
+        "target_meta":    live_df.head(LIVE_WALLET_CAP).to_dict(orient="records"),
     }
     live_path = ES_DIR / "fade_targets.json"   # name kept for back-compat
     tmp = live_path.with_suffix(".json.tmp")

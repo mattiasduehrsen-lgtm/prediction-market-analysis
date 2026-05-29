@@ -139,9 +139,12 @@ class OnChainListener(threading.Thread):
         return None
 
     def _get_logs_for(self, from_block, to_block, position):
-        """position: 'to' (buys) or 'from' (sells). Returns logs across wallet chunks."""
+        """position: 'to' (buys) or 'from' (sells).
+        Returns (logs, ok). ok=False if any chunk query errored (caller should
+        not advance the cursor so the range is retried)."""
         wallets = list(self.wallets)
         out = []
+        ok = True
         for i in range(0, len(wallets), WALLET_CHUNK):
             chunk = [_pad_addr(w) for w in wallets[i:i + WALLET_CHUNK]]
             if position == "to":
@@ -156,8 +159,10 @@ class OnChainListener(threading.Thread):
                 })
                 out.extend((position, lg) for lg in logs)
             except Exception as e:
-                self.log(f"[onchain] get_logs error ({position}): {e}")
-        return out
+                ok = False
+                self.log(f"[onchain] get_logs error ({position}) "
+                         f"[{from_block}-{to_block}]: {e}")
+        return out, ok
 
     def _topic_addr(self, tp) -> str:
         return "0x" + Web3.to_hex(tp)[-40:]
@@ -178,31 +183,37 @@ class OnChainListener(threading.Thread):
 
             if self.last_block is None:
                 self.last_block = latest - 3   # small initial lookback
+            # Query up to one block behind the tip — public RPC load-balancers
+            # serve slightly different tips, so the very latest block may not yet
+            # exist on the node that answers the getLogs call ("invalid block
+            # range"). One block of confirmation lag avoids that flapping.
+            to_block = latest - 1
+            if to_block < self.last_block:
+                # tip went backwards (different node) or no new block — wait
+                time.sleep(POLL_INTERVAL)
+                continue
             from_block = self.last_block + 1
-            if from_block > latest:
+            if from_block > to_block:
                 time.sleep(POLL_INTERVAL)
                 continue
             # don't scan an unbounded range if we fell behind
-            if latest - from_block > MAX_BLOCK_LOOKBACK:
-                from_block = latest - MAX_BLOCK_LOOKBACK
+            if to_block - from_block > MAX_BLOCK_LOOKBACK:
+                from_block = to_block - MAX_BLOCK_LOOKBACK
 
             if not self.wallets:
-                self.last_block = latest
+                self.last_block = to_block
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            try:
-                logs = (self._get_logs_for(from_block, latest, "to")
-                        + self._get_logs_for(from_block, latest, "from"))
-            except Exception as e:
-                self.log(f"[onchain] poll error: {e}")
-                time.sleep(POLL_INTERVAL)
-                continue
-
-            for position, lg in logs:
+            logs_to, ok1 = self._get_logs_for(from_block, to_block, "to")
+            logs_from, ok2 = self._get_logs_for(from_block, to_block, "from")
+            for position, lg in (logs_to + logs_from):
                 self._handle_log(position, lg)
 
-            self.last_block = latest
+            # Only advance the cursor if BOTH queries succeeded; otherwise retry
+            # the same range next poll so we never silently skip blocks.
+            if ok1 and ok2:
+                self.last_block = to_block
             time.sleep(POLL_INTERVAL)
 
     def _handle_log(self, position, lg):

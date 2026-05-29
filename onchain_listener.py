@@ -41,6 +41,9 @@ DEFAULT_RPCS = [
     "https://polygon-bor-rpc.publicnode.com",
     "https://polygon-rpc.com",
     "https://rpc.ankr.com/polygon",
+    "https://polygon.llamarpc.com",
+    "https://polygon.drpc.org",
+    "https://1rpc.io/matic",
 ]
 
 POLL_INTERVAL = 2.0          # seconds between getLogs polls (~chain block time)
@@ -69,6 +72,9 @@ class OnChainListener(threading.Thread):
         self.clob = clob_session or requests.Session()
         self.log = log
         self.w3: Web3 | None = None
+        self._rpc_idx = 0            # rotates across endpoints on failure
+        self._consec_errors = 0      # trip a rotation after repeated errors
+        self.active_rpc = None
         self.last_block = None
         self._seen = deque(maxlen=5000)      # (txhash, logIndex) dedup
         self._seen_set: set = set()
@@ -81,14 +87,24 @@ class OnChainListener(threading.Thread):
         self.last_detect_lag = None
         self.connected = False
 
-    # ── connection ───────────────────────────────────────────────────────
-    def _connect(self) -> bool:
+    def _rpc_list(self) -> list[str]:
+        """Endpoint priority: a configured POLYGON_RPC_URL (e.g. Alchemy/QuickNode
+        key) is always tried FIRST, then the public fallbacks."""
         urls = []
         env_url = os.environ.get("POLYGON_RPC_URL", "").strip()
         if env_url:
             urls.append(env_url)
         urls += DEFAULT_RPCS
-        for url in urls:
+        return urls
+
+    # ── connection ───────────────────────────────────────────────────────
+    def _connect(self) -> bool:
+        urls = self._rpc_list()
+        # Start from the current rotation index so a flaky endpoint is skipped
+        # next time rather than retried first.
+        n = len(urls)
+        for off in range(n):
+            url = urls[(self._rpc_idx + off) % n]
             try:
                 w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 10}))
                 try:
@@ -99,12 +115,26 @@ class OnChainListener(threading.Thread):
                 if w3.is_connected():
                     self.w3 = w3
                     self.connected = True
-                    self.log(f"[onchain] connected: {url}")
+                    self.active_rpc = url
+                    self._rpc_idx = (self._rpc_idx + off) % n
+                    self._consec_errors = 0
+                    # Don't leak a full Alchemy key into logs
+                    safe = url.split("/v2/")[0] if "/v2/" in url else url
+                    self.log(f"[onchain] connected: {safe}")
                     return True
             except Exception as e:
                 self.log(f"[onchain] connect failed {url}: {e}")
         self.connected = False
         return False
+
+    def _rotate_rpc(self, why: str):
+        """Advance to the next endpoint and force a reconnect."""
+        n = len(self._rpc_list())
+        self._rpc_idx = (self._rpc_idx + 1) % n
+        self.w3 = None
+        self.connected = False
+        self._consec_errors = 0
+        self.log(f"[onchain] rotating RPC ({why}) -> idx {self._rpc_idx}")
 
     def update_wallets(self, wallets: set[str]):
         self.wallets = set(w.lower() for w in wallets)
@@ -176,9 +206,9 @@ class OnChainListener(threading.Thread):
             try:
                 latest = self.w3.eth.block_number
             except Exception as e:
-                self.log(f"[onchain] block_number failed: {e}; reconnecting")
-                self.w3 = None
-                time.sleep(3)
+                self.log(f"[onchain] block_number failed: {e}; rotating")
+                self._rotate_rpc("block_number error")
+                time.sleep(2)
                 continue
 
             if self.last_block is None:
@@ -214,6 +244,12 @@ class OnChainListener(threading.Thread):
             # the same range next poll so we never silently skip blocks.
             if ok1 and ok2:
                 self.last_block = to_block
+                self._consec_errors = 0
+            else:
+                # Repeated getLogs failures on this endpoint -> rotate away from it.
+                self._consec_errors += 1
+                if self._consec_errors >= 3:
+                    self._rotate_rpc("repeated getLogs errors")
             time.sleep(POLL_INTERVAL)
 
     def _handle_log(self, position, lg):

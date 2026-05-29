@@ -35,6 +35,12 @@ def connect():
     for url in RPCS:
         try:
             w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 10}))
+            # Polygon is POA — inject middleware so block parsing works
+            try:
+                from web3.middleware import ExtraDataToPOAMiddleware
+                w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+            except Exception:
+                pass
             if w3.is_connected():
                 print(f"  connected: {url}")
                 return w3

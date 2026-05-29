@@ -105,6 +105,14 @@ TP_SWEEP_INTERVAL = 60.0
 # Dota/Valorant samples too small to trust right now — add later.
 ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-")
 
+# On-chain real-time signal source (v1.40). The data-api /trades feed is ~220s
+# stale; the Polygon chain tip is ~2s. We watch ERC-1155 TransferSingle events
+# on the Conditional Tokens contract filtered to our target wallets, decode them
+# into the same trade shape the data-api produces, and run them through the SAME
+# process_trade pipeline (all safety gates apply). The data-api poll stays on as
+# a backstop; whichever source sees a tx first wins (deduped by tx hash).
+ONCHAIN_ENABLED = True
+
 # Matches single-map / per-game markets: "-game1", "-game2", "-map-2", etc.
 # These are Bo1 outcomes (coin flips); we only want series moneylines.
 # Also catches "-map-handicap" style markets, which are likewise negative-EV.
@@ -162,6 +170,40 @@ class FadeBot:
         print(f"[fade-bot] tracking {len(self.target_wallets)} target wallets")
         print(f"[fade-bot] preloaded {len(self.market_cache)} markets from CLOB index")
         print(f"[fade-bot] primed {len(self.seen_tx_set)} tx hashes from history")
+
+        # ── On-chain real-time signal source (v1.40) ────────────────────────
+        # Background thread watches Polygon for target-wallet TransferSingle
+        # events and pushes data-api-shaped trades into a thread-safe queue that
+        # the main loop drains into process_trade (single-threaded — no races).
+        import queue as _queue
+        self.onchain_queue: "_queue.Queue" = _queue.Queue(maxsize=2000)
+        self.onchain = None
+        if ONCHAIN_ENABLED:
+            try:
+                from onchain_listener import OnChainListener
+                import requests as _rq
+                token_index = self._build_token_index()
+                self.onchain = OnChainListener(
+                    wallets=self.target_wallets,
+                    token_index=token_index,
+                    on_signal=self._enqueue_onchain_signal,
+                    clob_session=_rq.Session(),  # dedicated session (thread isolation)
+                    log=print,
+                )
+                self.onchain.start()
+                print(f"[fade-bot] on-chain listener started "
+                      f"({len(token_index)} tokens indexed, {len(self.target_wallets)} wallets)")
+            except Exception as e:
+                print(f"[fade-bot] on-chain listener failed to start: {e}")
+                self.onchain = None
+
+    def _enqueue_onchain_signal(self, trade: dict):
+        """Callback from the listener thread. Just enqueue — processing happens
+        single-threaded in the main loop to avoid races on shared state."""
+        try:
+            self.onchain_queue.put_nowait(trade)
+        except Exception:
+            pass  # queue full — drop (main loop is behind; rare)
 
     def _rebuild_market_exposure(self):
         """Reconstruct self.market_exposure from live_orders.jsonl.
@@ -282,6 +324,28 @@ class FadeBot:
                     self.market_cache[cid] = {"outcomes": outs, "tokens": toks}
         except Exception as e:
             print(f"[fade-bot] market index preload failed: {e}")
+
+    def _build_token_index(self) -> dict:
+        """token_id(str) -> (condition_id, outcome, slug) for the on-chain listener."""
+        idx = {}
+        try:
+            import pandas as pd
+            p = ES_DIR / "clob_esports_markets.parquet"
+            if not p.exists():
+                return idx
+            df = pd.read_parquet(p, columns=["condition_id", "tokens", "slug"])
+            for _, row in df.iterrows():
+                cid = row["condition_id"]; slug = row.get("slug") or ""
+                try:
+                    for t in row["tokens"]:
+                        tid = t.get("token_id"); o = t.get("outcome")
+                        if tid and o:
+                            idx[str(tid)] = (cid, o, slug)
+                except TypeError:
+                    continue
+        except Exception as e:
+            print(f"[fade-bot] token index build failed: {e}")
+        return idx
 
     def get_market(self, condition_id: str) -> dict | None:
         """Return {outcomes, tokens} for a conditionId, fetching on miss."""
@@ -408,6 +472,9 @@ class FadeBot:
                 self.target_wallets = wallets
                 self.fade_mtime = fade_mtime
                 self.targets_mtime = fade_mtime
+                # Keep the on-chain listener's wallet filter in sync
+                if getattr(self, "onchain", None):
+                    self.onchain.update_wallets(wallets)
                 print(f"[fade-bot] reloaded {len(wallets)} fade targets "
                       f"(+{added} new, -{removed} dropped)")
                 self.write_event({"type": "fade_targets_reloaded",
@@ -1028,6 +1095,26 @@ class FadeBot:
         stall_flag_path = OUT_DIR / "signal_stall.flag"
         try:
             while True:
+                # ── On-chain signals first (they're ~100x fresher than data-api).
+                # Drain the queue and process each. process_trade dedups by tx
+                # hash, so the later data-api copy of the same trade is a no-op.
+                drained = 0
+                while True:
+                    try:
+                        oc = self.onchain_queue.get_nowait()
+                    except Exception:
+                        break
+                    n_trades_seen += 1
+                    drained += 1
+                    lag = oc.get("_detect_lag_s")
+                    self.write_event({"type": "onchain_signal", "tx": oc.get("transactionHash"),
+                                      "wallet": oc.get("proxyWallet"), "slug": oc.get("slug"),
+                                      "side": oc.get("side"), "outcome": oc.get("outcome"),
+                                      "price": oc.get("price"), "detect_lag_s": lag})
+                    self.process_trade(oc)
+                    if drained >= 200:
+                        break  # safety valve
+
                 trades = self.poll()
                 for t in trades:
                     n_trades_seen += 1
@@ -1045,8 +1132,14 @@ class FadeBot:
                 n_fades_now = self.fade_signals_count
                 if time.time() - last_summary > 60:
                     pnl_str = f" daily_pnl=${self.daily_pnl:+.2f}" if self.live else ""
+                    oc_str = ""
+                    if getattr(self, "onchain", None):
+                        o = self.onchain
+                        lag = f"{o.last_detect_lag:.0f}s" if o.last_detect_lag is not None else "n/a"
+                        oc_str = (f" | onchain[conn={o.connected} detected={o.n_detected} "
+                                  f"emitted={o.n_emitted} dropped={o.n_dropped} last_lag={lag}]")
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} fades={n_fades_now} "
-                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}")
+                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}{oc_str}")
 
                     # ── Signal-stall detection ─────────────────────────────
                     now = time.time()

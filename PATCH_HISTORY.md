@@ -2,6 +2,57 @@
 
 ---
 
+## v1.39 — 2026-05-29
+**Three esports fade fixes after a −$240/3-day bleed. Diagnostic: the edge is marginal.**
+
+### The diagnostic (415 live trades)
+
+Market-efficiency test — win rate vs entry price by bucket:
+
+| Entry price | Avg price | Win rate | Edge (WR − price) |
+|---|---|---|---|
+| 0.45–0.55 | 0.50 | 51.2% | +0.013 |
+| 0.55–0.65 | 0.60 | 52.9% | **−0.068** |
+| 0.65–0.75 | 0.69 | 70.4% | +0.015 |
+| 0.75–0.85 | 0.79 | 79.3% | +0.008 |
+| 0.85+ | 0.90 | 90.9% | +0.012 |
+
+**Trade-weighted edge = −1.3%.** Win rate tracks entry price — the signature of an efficiently-priced market with ~no exploitable edge. The first 11 days (+$36) was variance; we scaled $10→$15 at the peak (v1.35) and mean-reverted hard. Last 3 days: 51% WR at 0.63 avg entry = −0.117 edge = −$240.
+
+### Root causes of the concentrated losses
+
+1. **Fading a market maker.** Wallet `0x47138dc1`: 95,730 trades, −11% naive ROI, −$53k. Faded 90× (22% of our volume) for −$109. MMs capture the spread and show mildly-negative *directional* PnL, but they are not recreational losers — fading them just pays the vig.
+2. **Single-map/Bo1 markets are coin flips.** −8.1% ROI vs −3.5% for series moneylines.
+3. **The target-list ranking surfaced bots.** LIVE subset was sorted by *absolute PnL*, which just ranks the highest-*volume* wallets (bots), not the worst-*edge* wallets.
+
+### Fixes (user-selected 3 of 4)
+
+**`esports_fade_bot.py`:**
+- `MAX_FADES_PER_WALLET_PER_DAY = 3` — no single wallet can dominate the book
+- `SKIP_SINGLE_MAP_MARKETS = True` + `is_single_map_market()` regex (`-game\d`, `-map-`)
+
+**`analysis/identify_active_targets.py` (target rebuild):**
+- Exclude bot/MM wallets trading >30/day. Removed **91 wallets**, including 3 with *positive* ROI (+1.4%, +6.2%, +6.4%) we'd been fading.
+- Rank LIVE subset by ROI ascending (worst edge first), **not** absolute PnL.
+- Tighten LIVE: full-window ROI < −15% **AND** recent-window ROI < −5%, cap 300 (was 800).
+- Recent-window persistence requirement (don't fade reformed wallets).
+- New list **hot-reloaded live** (300 wallets, −500 dropped, toxic MM gone) — no restart needed for the list itself.
+
+**Not done:** the [0.55,0.65) price-band filter. It's the worst bucket in-sample but has no causal mechanism — almost certainly overfit. Rejected.
+
+**Not done (user kept):** bet size stays $15. Given edge ≈ 0, smaller size would reduce variance, but user's call.
+
+### Honest assessment
+
+These fixes remove the worst *structural* leaks (MM fading, coin-flip maps, concentration). But the core finding stands: **on directional accounting the strategy is close to break-even.** If the next ~150 trades on the cleaned target list don't show a positive edge, the fade thesis on CS2 may simply not be exploitable at our latency, and we should stop or rethink rather than keep paying the vig.
+
+### Activation
+
+- Target list: live now (hot-reload).
+- `MAX_FADES_PER_WALLET_PER_DAY` + single-map filter: **require bot restart** to take effect.
+
+---
+
 ## v1.38 — 2026-05-28
 **MLB live trading DISABLED — paper edge did not survive live execution.**
 

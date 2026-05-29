@@ -60,6 +60,15 @@ print(f"  indexed {len(tok2mkt)} tokens")
 
 w3 = connect()
 
+OF_SIG = "OrderFilled(bytes32,address,address,uint256,uint256,uint256,uint256,uint256)"
+OF_TOPIC = Web3.to_hex(Web3.keccak(text=OF_SIG)).lower()
+print(f"OrderFilled topic0 = {OF_TOPIC}")
+
+def is_order_filled(log):
+    if log["address"].lower() != EXCHANGE: return False
+    if len(log["topics"]) != 4: return False
+    return Web3.to_hex(log["topics"][0]).lower() == OF_TOPIC
+
 def decode_orderfilled(log):
     maker = "0x" + log["topics"][2].hex()[-40:]
     taker = "0x" + log["topics"][3].hex()[-40:]
@@ -94,8 +103,7 @@ for t in trades:
     # find OrderFilled logs where our wallet is the MAKER (topics[2])
     matched = None
     for lg in rcpt["logs"]:
-        if lg["address"].lower() != EXCHANGE: continue
-        if len(lg["topics"]) != 4: continue
+        if not is_order_filled(lg): continue
         maker, taker, mA, tA, mAmt, tAmt = decode_orderfilled(lg)
         if maker == pw:
             d = derive(mA, tA, mAmt, tAmt)

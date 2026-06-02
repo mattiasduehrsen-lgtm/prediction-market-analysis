@@ -39,3 +39,43 @@ cowork_snapshot/gamedata/pandascore/
   cs2_matches_raw.jsonl   (raw match objects, resumable append)
   cs2_matches.parquet     (flattened)
   cs2_teams.parquet
+cowork_snapshot/gamedata/
+  polymarket_cs2_markets.parquet  (20,469 H2H markets; 2,673 series, 18,827 resolved)
+  prematch_prices.parquet         (pre-match implied prob; 1,723 markets, ~317s before start)
+  feasibility_joined.parquet      (model vs market, written by feasibility.py)
+
+## RESULTS SO FAR (2026-06-02, partial data through 2023-06)
+- **Elo predicts CS2 outcomes: 61.1% accuracy**, Brier 0.231 (vs 0.25 coin flip),
+  log-loss 0.654 (vs 0.693). **Calibration is excellent** across all buckets
+  (pred 0.55->actual 0.57, 0.74->0.75, 0.84->0.89). A simple match-level Elo
+  is genuinely predictive and well-calibrated.
+- Pre-match Polymarket prices extracted for 1,723 series markets.
+- ⚠️ 61% accuracy is NOT the same as beating the market — the market price
+  already encodes team strength. The real test is feasibility.py (does the
+  model find MISPRICINGS vs Polymarket). That needs 2025-2026 PandaScore data,
+  which is still downloading. Verdict will be in pipeline.log + sent to Telegram.
+
+## Autonomous tasks running
+- **PandaPipeline** (scheduled task): download CS2 history -> flatten ->
+  polymarket extract -> elo -> prematch prices -> feasibility. Logs pipeline.log.
+- **PandaFeasNotify** (09:25): re-runs feasibility, posts verdict to Telegram.
+
+## NEXT STEPS (after the feasibility verdict)
+IF model beats market (positive ROI at higher edge thresholds):
+  1. Refine the model: recent-form weighting, Elo K-tuning, home/LAN factor,
+     opponent-strength-of-schedule. (Map-level detail would help but is PandaScore-paid.)
+  2. Build a PAPER betting bot (reuse infra): for each upcoming CS2 market, compute
+     model prob, compare to live Polymarket price, paper-bet when edge > threshold.
+  3. Validate paper for 2+ weeks before any live money.
+IF model does NOT beat market (flat/negative ROI):
+  - CS2 series markets are efficiently priced. Options: (a) odds-based cross-market
+    edge (needs a paid odds feed — PandaScore paid tier or The Odds API), or
+    (b) accept that Polymarket esports has no exploitable edge and stop.
+  - Either way: the fade strategy + this model test will have given a clear answer.
+
+## Data sources NOT yet exhausted (if we want more)
+- Liquipedia API (free) — could supplement match history / rosters; redundant with
+  PandaScore for now.
+- The Odds API / PandaScore paid — bookmaker odds (the higher-probability edge),
+  requires payment.
+- HLTV/bo3.gg — richer stats (player ratings, map win rates) but Cloudflare-gated.

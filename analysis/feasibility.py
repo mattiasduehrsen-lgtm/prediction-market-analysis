@@ -20,12 +20,25 @@ ROOT = Path(__file__).resolve().parents[1]
 GD = ROOT / "cowork_snapshot" / "gamedata"
 
 def norm(s):
+    """Normalize a team name for matching. Strips (BO3)/(BO1) and other
+    parentheticals, 'ex-' prefixes, and generic org suffixes — but KEEPS
+    distinguishing words like 'academy'/'future'/'youngsters' so a junior
+    team isn't wrongly matched to its main roster."""
     if not isinstance(s, str): return ""
     s = s.lower()
-    s = re.sub(r"[^a-z0-9 ]", "", s)
-    for junk in [" esports", " gaming", " team ", " e-sports", " academy"]:
+    s = re.sub(r"\(.*?\)", " ", s)          # drop (BO3), (+8.5), etc.
+    s = s.replace("ex-", " ")
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    s = re.sub(r"\bbo\d\b", " ", s)         # stray 'bo3' tokens
+    for junk in [" esports", " e sports", " gaming", " team ", " clan "]:
         s = s.replace(junk, " ")
     return re.sub(r"\s+", " ", s).strip()
+
+def is_handicap_market(a, b):
+    blob = f"{a} {b}".lower()
+    return ("handicap" in blob or "rounds" in blob
+            or re.search(r"[+-]\d+\.?\d*\)?$", a or "") is not None
+            or re.search(r"[+-]\d+\.?\d*\)?$", b or "") is not None)
 
 def main():
     elo = pd.read_parquet(GD / "pandascore" / "cs2_elo_history.parquet")
@@ -37,29 +50,43 @@ def main():
     elo = elo.copy()
     elo["nA"] = elo["teamA_name"].map(norm); elo["nB"] = elo["teamB_name"].map(norm)
     elo["date"] = pd.to_datetime(elo["begin_at"], utc=True).dt.floor("D")
-    # index elo matches by unordered team pair + date for lookup
-    elo_idx = defaultdict(list)
+    # index elo matches by calendar day for windowed lookup
+    elo_by_day = defaultdict(list)
     for r in elo.itertuples(index=False):
-        elo_idx[frozenset((r.nA, r.nB))].append(r)
+        elo_by_day[r.date.toordinal()].append(r)
+
+    def teq(x, y):
+        return bool(x) and bool(y) and (x == y or (len(x) >= 4 and len(y) >= 4 and (x in y or y in x)))
 
     # market implied prob for teamA = price of teamA outcome
     px_by = {(r.condition_id, r.outcome): r.price for r in px.itertuples(index=False)}
 
     joined = []
+    n_handicap = 0
     for r in mk.itertuples(index=False):
+        if is_handicap_market(r.teamA, r.teamB):
+            n_handicap += 1
+            continue
         nA, nB = norm(r.teamA), norm(r.teamB)
-        cands = elo_idx.get(frozenset((nA, nB)))
-        if not cands:
-            continue
         gd = pd.Timestamp(r.game_start).floor("D")
-        best = min(cands, key=lambda c: abs((c.date - gd).days))
-        if abs((best.date - gd).days) > 2:
+        god = gd.toordinal()
+        # scan elo matches within +/- 2 days, fuzzy-match the team pair
+        best = None; best_gap = 99
+        for dd in range(-2, 3):
+            for c in elo_by_day.get(god + dd, []):
+                if (teq(nA, c.nA) and teq(nB, c.nB)) or (teq(nA, c.nB) and teq(nB, c.nA)):
+                    if abs(dd) < best_gap:
+                        best = c; best_gap = abs(dd)
+        if best is None:
             continue
-        # model prob for THIS market's teamA
-        if norm(best.teamA_name) == nA:
+        # model prob for THIS market's teamA (orient to which side matched)
+        if teq(nA, best.nA):
             model_pA = best.pred_pA
         else:
             model_pA = 1 - best.pred_pA
+        # require both teams to have reliable Elo history
+        if min(best.gamesA, best.gamesB) < 10:
+            continue
         mpx_A = px_by.get((r.condition_id, r.teamA))
         mpx_B = px_by.get((r.condition_id, r.teamB))
         # market implied prob for A: prefer A's own price; else 1 - B price
@@ -76,6 +103,7 @@ def main():
                        "model_pA": model_pA, "market_pA": market_pA, "A_won": A_won,
                        "edge": model_pA - market_pA})
     j = pd.DataFrame(joined)
+    print(f"handicap markets skipped: {n_handicap}")
     print(f"joined markets (model+market+outcome): {len(j)}")
     if not len(j):
         print("no joined rows — check team-name matching / data coverage")

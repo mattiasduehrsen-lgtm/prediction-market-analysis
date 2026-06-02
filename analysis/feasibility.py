@@ -101,7 +101,8 @@ def main():
         A_won = 1 if r.winning_outcome == r.teamA else 0
         joined.append({"cid": r.condition_id, "teamA": r.teamA, "teamB": r.teamB,
                        "model_pA": model_pA, "market_pA": market_pA, "A_won": A_won,
-                       "edge": model_pA - market_pA})
+                       "edge": model_pA - market_pA,
+                       "ts_start": pd.Timestamp(r.game_start).value})
     j = pd.DataFrame(joined)
     print(f"handicap markets skipped: {n_handicap}")
     print(f"joined markets (model+market+outcome): {len(j)}")
@@ -137,6 +138,33 @@ def main():
         roi = pnl / cost * 100 if cost else 0
         print(f"    {thr:>5.2f} {len(bets):>5} {wins/len(bets)*100:>5.0f}% {roi:>+7.1f}%")
     print("\n  (positive ROI at higher thresholds = model finds real market mispricings)")
+
+    # ── RIGOR 1: execution friction (we pay SLIP more per share) ─────────────
+    def sim(bets, slip):
+        pnl = cost = 0.0; wins = 0
+        for r in bets.itertuples(index=False):
+            if r.edge > 0: price = min(0.99, r.market_pA + slip); won = r.A_won
+            else:          price = min(0.99, (1 - r.market_pA) + slip); won = 1 - r.A_won
+            cost += price; pnl += (1 - price) if won else (-price); wins += won
+        return (pnl / cost * 100 if cost else 0), len(bets)
+    print("\n  RIGOR 1 — with 2c slippage haircut:")
+    for thr in [0.05, 0.10, 0.15, 0.20]:
+        bets = j[j["edge"].abs() > thr]
+        roi, n = sim(bets, 0.02)
+        print(f"    thr {thr:.2f}  n={n:>4}  ROI {roi:>+6.1f}%")
+
+    # ── RIGOR 2: out-of-sample time split (does edge persist on later data?) ─
+    if "game_start" not in j.columns:
+        pass
+    js = j.sort_values("ts_start") if "ts_start" in j.columns else j
+    cut = int(len(js) * 0.6)
+    train, test = js.iloc[:cut], js.iloc[cut:]
+    print(f"\n  RIGOR 2 — out-of-sample time split (train={len(train)}, test={len(test)}):")
+    for label, d in [("TRAIN", train), ("TEST (later, unseen)", test)]:
+        for thr in [0.10]:
+            bets = d[d["edge"].abs() > thr]
+            roi, n = sim(bets, 0.02)
+            print(f"    {label:<22} thr {thr:.2f}  n={n:>4}  ROI(2c slip) {roi:>+6.1f}%")
 
 if __name__ == "__main__":
     main()

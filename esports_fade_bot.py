@@ -644,6 +644,14 @@ class FadeBot:
             return
         other = [o for o in mkt["outcomes"] if o != their_outcome][0]
 
+        # STALL DETECTION counter (v1.41): count every genuine target-wallet
+        # signal that reaches the fade logic, BEFORE any filtering (model
+        # filter, caps, single-map). The stall detector uses THIS — not the
+        # count of placed fades — so it only alarms when target activity truly
+        # stops (dead feed / no matches), not when the model filter is just
+        # being selective and placing few orders.
+        self.target_signals_seen = getattr(self, "target_signals_seen", 0) + 1
+
         # STRATEGY ROUTING
         # FADE:   we BUY the opposite outcome's token (target loses → we win)
         # FOLLOW: we BUY the same outcome's token at the same price (target wins → we win)
@@ -1187,6 +1195,10 @@ class FadeBot:
                     else:
                         self.fade_signals_count = 0
                 n_fades_now = self.fade_signals_count
+                # Stall is judged on TARGET SIGNALS SEEN (pre-filter), not placed
+                # fades — the model filter (v1.41) makes placed fades rare, so the
+                # old fades-based stall would cry wolf constantly.
+                n_signals_now = getattr(self, "target_signals_seen", 0)
                 if time.time() - last_summary > 60:
                     pnl_str = f" daily_pnl=${self.daily_pnl:+.2f}" if self.live else ""
                     oc_str = ""
@@ -1195,52 +1207,56 @@ class FadeBot:
                         lag = f"{o.last_detect_lag:.0f}s" if o.last_detect_lag is not None else "n/a"
                         oc_str = (f" | onchain[conn={o.connected} detected={o.n_detected} "
                                   f"emitted={o.n_emitted} dropped={o.n_dropped} last_lag={lag}]")
-                    print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} fades={n_fades_now} "
+                    print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} "
+                          f"signals={n_signals_now} fades={n_fades_now} "
                           f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}{oc_str}")
 
                     # ── Signal-stall detection ─────────────────────────────
                     now = time.time()
-                    if n_fades_now > last_fades_value:
-                        # Fades counter advanced — clear any active stall
+                    if n_signals_now > last_fades_value:
+                        # Target-signal counter advanced — clear any active stall
                         if stall_active:
                             stall_duration = round(now - last_fades_change_at, 0)
                             print(f"[fade-bot] STALL RECOVERED after {stall_duration:.0f}s "
-                                  f"({stall_duration/3600:.1f}h) — fades resumed")
+                                  f"({stall_duration/3600:.1f}h) — target signals resumed")
                             self.write_event({
                                 "type": "signal_stall_recovered",
                                 "ts": now,
                                 "stall_seconds": stall_duration,
-                                "fades_now": n_fades_now,
+                                "signals_now": n_signals_now,
                                 "trades_scanned": n_trades_seen,
                             })
                             notify(
                                 f"✅ <b>Signals resumed</b>\n"
-                                f"Stall ended after {stall_duration/3600:.1f}h. Bot is trading again.",
+                                f"Stall ended after {stall_duration/3600:.1f}h. "
+                                f"Target wallets are trading again.",
                                 kind="signal_stall_recovered", cooldown=0,
                             )
                             try: stall_flag_path.unlink()
                             except FileNotFoundError: pass
                             stall_active = False
-                        last_fades_value = n_fades_now
+                        last_fades_value = n_signals_now
                         last_fades_change_at = now
                         last_scans_at_change = n_trades_seen
                     else:
-                        # Fades flat. Check if we've crossed the stall threshold AND
-                        # the bot is still polling (trades_scanned growing).
+                        # Target signals flat. Stall only if NO target wallet has
+                        # traded for the threshold while we're still polling — i.e.
+                        # genuine drought / dead feed, NOT the model filter being
+                        # selective (placed fades can be 0 without a stall).
                         flat_seconds = now - last_fades_change_at
                         scans_since_change = n_trades_seen - last_scans_at_change
                         if (not stall_active
                                 and flat_seconds > SIGNAL_STALL_SECONDS
                                 and scans_since_change > 0):
                             print(f"[fade-bot] !!! SIGNAL STALL DETECTED !!! "
-                                  f"fades stuck at {n_fades_now} for {flat_seconds/3600:.1f}h "
+                                  f"target signals stuck at {n_signals_now} for {flat_seconds/3600:.1f}h "
                                   f"while {scans_since_change:,} trades scanned. "
                                   f"Bot healthy but no target-wallet activity.")
                             self.write_event({
                                 "type": "signal_stall_detected",
                                 "ts": now,
                                 "stall_seconds": round(flat_seconds, 0),
-                                "fades": n_fades_now,
+                                "signals": n_signals_now,
                                 "trades_scanned_during_stall": scans_since_change,
                             })
                             # Diagnose: high stale-skip rate suggests Polymarket
@@ -1253,7 +1269,7 @@ class FadeBot:
                                      "NA daytime drought or tournament gap — wait for matches")
                             notify(
                                 f"⚠️ <b>Signal stall</b>\n"
-                                f"No fade signals for {flat_seconds/3600:.1f}h.\n"
+                                f"No target-wallet trades for {flat_seconds/3600:.1f}h.\n"
                                 f"Bot is polling fine ({scans_since_change:,} trades scanned), "
                                 f"but no target wallets traded.\n\n"
                                 f"<b>Likely cause:</b> {cause}.\n"
@@ -1262,10 +1278,10 @@ class FadeBot:
                             )
                             try:
                                 stall_flag_path.write_text(json.dumps({
-                                    "stall_started_at": last_fades_change_at,
-                                    "fades_at_stall":   n_fades_now,
-                                    "detected_at":      now,
-                                    "stall_seconds":    round(flat_seconds, 0),
+                                    "stall_started_at":  last_fades_change_at,
+                                    "signals_at_stall":  n_signals_now,
+                                    "detected_at":       now,
+                                    "stall_seconds":     round(flat_seconds, 0),
                                 }), encoding="utf-8")
                             except Exception:
                                 pass

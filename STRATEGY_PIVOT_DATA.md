@@ -55,6 +55,42 @@ cowork_snapshot/gamedata/
   model find MISPRICINGS vs Polymarket). That needs 2025-2026 PandaScore data,
   which is still downloading. Verdict will be in pipeline.log + sent to Telegram.
 
+## ★ FEASIBILITY VERDICT (2026-06-02, full data) — POSITIVE & ROBUST ★
+After fixing team-name matching (strip (BOn)/ex-/parentheticals, exclude
+handicap markets, fuzzy + date-window match, require >=10 games Elo history):
+
+- **1,148 markets** joined (model + pre-match price + outcome).
+- Model accuracy 63.4% vs market 65.2% (market slightly sharper — expected).
+- **Edge-threshold sweep — ROI climbs monotonically with model/market disagreement:**
+    thr 0.00  1148 bets  +4.0%
+    thr 0.10   392 bets  +19.7%
+    thr 0.20   103 bets  +38.0%
+  (monotonic dose-response = real edge, not noise. Low WR + high ROI =
+   value-betting underdogs the market overprices. The fact ROI RISES as we
+   restrict to high model-disagreement proves the MODEL adds value, not blind
+   underdog betting — that would be flat across thresholds.)
+- **RIGOR 1 (2c slippage):** thr 0.10 +13.6%, thr 0.20 +29.2%. Survives friction.
+- **RIGOR 2 (out-of-sample time split, 2c friction):** TRAIN +9.9%, TEST +18.8%.
+  Edge PERSISTS (strengthens) on later unseen data — opposite of overfitting.
+
+This is the first strategy in the project to survive walk-forward + friction +
+out-of-sample. Walk-forward Elo (no look-ahead), genuine pre-match prices, real
+outcomes, 159 OOS bets.
+
+### Remaining risks before live money
+1. LIQUIDITY — we bet underdogs at low prices; can we get filled at size?
+   Polymarket esports books can be thin. The 2c slip may understate real cost.
+2. Pre-match price = a trade that happened, not guaranteed available liquidity.
+3. Matching covers 1,148 of 2,560 series markets (established teams). 
+4. Match-level Elo only (no map detail). Could improve.
+5. Backtest -> live gap: must PAPER-validate before real money (this is where
+   the fade/MLB died — but those never passed a rigorous OOS backtest like this).
+
+### Next step
+Build a PAPER betting bot: for each upcoming CS2 series market, compute model
+prob (live Elo), compare to live Polymarket price, paper-bet when |edge|>0.10.
+Validate 2+ weeks, checking real fill prices/liquidity, before any live money.
+
 ## Autonomous tasks running
 - **PandaPipeline** (scheduled task): download CS2 history -> flatten ->
   polymarket extract -> elo -> prematch prices -> feasibility. Logs pipeline.log.

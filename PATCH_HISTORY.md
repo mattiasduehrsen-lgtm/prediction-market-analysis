@@ -2,6 +2,37 @@
 
 ---
 
+## v1.41 — 2026-06-02
+**Elo model filter on the live fade bot (fade + model hybrid).**
+
+### Why
+
+Built a CS2 Elo model from PandaScore match history (57k matches). Backtest vs Polymarket prices:
+- Model-only (bet when model disagrees with market by >0.10): **+13-19% ROI** out-of-sample, after 2¢ friction.
+- **Fade + model** (fade only when the model also likes our side): **+30% ROI** (thr 0.10), **+42% (thr 0.15)** — beats model-only (+19%) and fade-only (+10%).
+
+Why the combination wins: the fade signal tells us **when the model's edge is real**. When the model likes side Y *and* a known loser bet the other side, the edge is strong. When a loser is on the model's *own* side, the edge is weak — and those are exactly the bets the filter discards.
+
+### What changed
+
+`esports_fade_bot.py`:
+- `MODEL_FILTER_ENABLED = True`, `MODEL_FILTER_MIN_EDGE = 0.10`.
+- Loads `cs2_model.CS2Model` at startup.
+- In `process_trade`, before a LIVE fade is placed: compute the model's probability for our fade side; place only if `model_prob(our side) − our_entry > 0.10`.
+- CS2/CSGO markets where teams don't match, and non-CS2 (LoL) markets, are **skipped on LIVE** (logged: `skip_model_no_coverage` / `skip_model_unmatched` / `skip_model_filter`; passes logged as `model_filter_pass`).
+- PAPER mode unaffected (logs all fades for data collection).
+- Elo hot-reloaded hourly via the heartbeat (`cs2_model.maybe_reload()`).
+
+### Effect
+
+The live fade bot now bets only model-confirmed fades — the +30% backtested config — combining v1.40's ~2s on-chain detection with the Elo value check. Expect **much lower fade volume** (only CS2 matched markets where the model agrees), higher quality.
+
+### Caveats
+
+Backtest prices aren't guaranteed fills; team-matching misses some top teams (3DMAX, Falcons) which are then skipped. The standalone `cs2_model_bot.py` paper bot runs in parallel to validate the model + measure real order-book liquidity.
+
+---
+
 ## v1.40 — 2026-05-29
 **On-chain real-time signal source — the latency fix (data-api was ~220s stale).**
 

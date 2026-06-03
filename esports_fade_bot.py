@@ -72,6 +72,18 @@ MAX_FADES_PER_WALLET_PER_DAY = 3  # v1.39 — cap fades per target wallet per UT
                               # 0x47138dc1 was faded 90x (22% of all volume) for -$109,
                               # over half the total loss. It's a hyperactive bot/sharp,
                               # not a persistent loser. No single wallet should dominate.
+# ── Elo MODEL FILTER (v1.41) ────────────────────────────────────────────────
+# Backtest (2026-06-02): fade+model beats fade-only and model-only. On CS2 series
+# markets with target activity, fading ONLY when the Elo model also likes our
+# side by >0.10 returned +30% ROI (vs +19% model-only, +10% fade-only) — because
+# the fade tells us WHEN the model's edge is real (a loser is on the other side).
+# When enabled, a LIVE fade is placed only if the model confirms our side is
+# under-priced. CS2/CSGO markets where teams can't be matched, and non-CS2
+# markets (LoL — no model), are SKIPPED on LIVE (logged). PAPER is unaffected.
+MODEL_FILTER_ENABLED = True
+MODEL_FILTER_MIN_EDGE = 0.10
+MODEL_FILTER_GAMES_PREFIXES = ("cs2-", "csgo-")  # games the Elo model covers
+
 SKIP_SINGLE_MAP_MARKETS = True  # v1.39 — skip Bo1 single-map/game markets (slug has
                               # -game / -map-). Live ROI: map/game -8.1% vs series -3.5%.
                               # A single map is a coin flip; the loser-edge dilutes.
@@ -175,6 +187,18 @@ class FadeBot:
         # Background thread watches Polygon for target-wallet TransferSingle
         # events and pushes data-api-shaped trades into a thread-safe queue that
         # the main loop drains into process_trade (single-threaded — no races).
+        # ── Elo model filter (v1.41) ────────────────────────────────────────
+        self.cs2_model = None
+        if MODEL_FILTER_ENABLED:
+            try:
+                from cs2_model import CS2Model
+                self.cs2_model = CS2Model()
+                print(f"[fade-bot] Elo model filter ON "
+                      f"({len(self.cs2_model.elo_by_id)} teams, min_edge={MODEL_FILTER_MIN_EDGE})")
+            except Exception as e:
+                print(f"[fade-bot] Elo model load failed (filter disabled): {e}")
+                self.cs2_model = None
+
         import queue as _queue
         self.onchain_queue: "_queue.Queue" = _queue.Queue(maxsize=2000)
         self.onchain = None
@@ -739,6 +763,39 @@ class FadeBot:
             return
         self.last_signal_ts[debounce_key] = now_ts
 
+        # ── Elo MODEL FILTER (v1.41) — LIVE only ────────────────────────────
+        # Only place a real-money fade if the Elo model also likes our side.
+        # our_entry ≈ market price of our fade side; model gives its probability.
+        # edge = model_prob(our side) − market_price(our side). Require > min.
+        if self.live and MODEL_FILTER_ENABLED and self.cs2_model is not None and strategy == "fade":
+            slug_l = (slug or "").lower()
+            if not slug_l.startswith(MODEL_FILTER_GAMES_PREFIXES):
+                self.write_event({"type": "skip_model_no_coverage", "tx": tx,
+                                  "slug": slug, "reason": "non_cs2_game"})
+                return
+            other_outcome = [o for o in mkt["outcomes"] if o != our_outcome]
+            other_outcome = other_outcome[0] if other_outcome else ""
+            pred = self.cs2_model.predict(our_outcome, other_outcome)
+            if not pred or not pred.get("ok"):
+                self.write_event({"type": "skip_model_unmatched", "tx": tx, "slug": slug,
+                                  "our_outcome": our_outcome, "other": other_outcome,
+                                  "reason": (pred or {}).get("reason", "no_pred")})
+                return
+            model_p_ours = pred["model_pA"]            # model prob of our_outcome
+            model_edge = model_p_ours - our_entry      # vs market price of our side
+            if model_edge <= MODEL_FILTER_MIN_EDGE:
+                self.write_event({"type": "skip_model_filter", "tx": tx, "slug": slug,
+                                  "our_outcome": our_outcome, "our_entry": our_entry,
+                                  "model_p": round(model_p_ours, 4),
+                                  "model_edge": round(model_edge, 4),
+                                  "min_edge": MODEL_FILTER_MIN_EDGE})
+                return
+            self.write_event({"type": "model_filter_pass", "tx": tx, "slug": slug,
+                              "our_outcome": our_outcome, "our_entry": our_entry,
+                              "model_p": round(model_p_ours, 4),
+                              "model_edge": round(model_edge, 4),
+                              "eloA": pred["eloA"], "eloB": pred["eloB"]})
+
         shares_est = round(bet / max(our_entry, 0.05), 2)
 
         trade = {
@@ -1217,6 +1274,8 @@ class FadeBot:
 
                     last_summary = now
                     self.maybe_reload_targets()
+                    if self.cs2_model is not None:
+                        self.cs2_model.maybe_reload()
                     if self.live:
                         self.maybe_reload_daily_pnl()
                         self.refresh_daily_risk()

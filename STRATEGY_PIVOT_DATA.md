@@ -86,10 +86,28 @@ outcomes, 159 OOS bets.
 5. Backtest -> live gap: must PAPER-validate before real money (this is where
    the fade/MLB died — but those never passed a rigorous OOS backtest like this).
 
-### Next step
-Build a PAPER betting bot: for each upcoming CS2 series market, compute model
-prob (live Elo), compare to live Polymarket price, paper-bet when |edge|>0.10.
-Validate 2+ weeks, checking real fill prices/liquidity, before any live money.
+### Next step — DONE: PAPER bot deployed 2026-06-02
+- `cs2_model.py` — Elo ratings + team matching + win-prob.
+- `cs2_model_bot.py` — PAPER bot. Each cycle: finds CS2 series markets starting
+  within 15 min, computes model prob, compares to live CLOB midpoint, paper-bets
+  the model side when |edge|>0.10 at the live best-ask. RECORDS ORDER-BOOK DEPTH
+  at entry (the liquidity reality check). Skips unmatched / <10-game teams.
+  Output: output/cs2_model/paper_bets.csv.
+- `analysis/refresh_elo.py` — hourly: pull recent CS2 matches, rebuild Elo.
+- `analysis/evaluate_cs2_model.py` — every 30 min: resolve bets, PnL, median
+  book depth. Output: paper_summary.json.
+- Scheduled tasks: CS2ModelBot (continuous), CS2EloRefresh (hourly), CS2ModelEval (30 min).
+
+### KNOWN FOLLOW-UP (matching coverage)
+Some high-volume current teams don't match PandaScore names yet (e.g. "3DMAX"
+unmatched, "Falcons" maps to a 7-game team). The bot SAFELY skips these, but it
+costs coverage. Improve team-name matching (manual alias map for top teams +
+better fuzzy) after seeing how many markets get skipped vs bet in the first day.
+
+### Validate before live money
+Run paper 2+ weeks. Watch: (1) paper ROI vs the +13-19% backtest, (2) median
+book depth — is there liquidity to fill underdog bets at size? If both hold,
+graduate to small live. If book depth is thin, the backtest edge won't survive.
 
 ## Autonomous tasks running
 - **PandaPipeline** (scheduled task): download CS2 history -> flatten ->

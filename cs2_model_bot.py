@@ -47,10 +47,12 @@ def classify_market(slug, question):
 
 
 def _clean_team(s):
-    s = re.sub(r"\(.*?\)", "", s)                                   # (-2.5)
-    s = re.sub(r"\s*-\s*map\s*\d+.*$", "", s, flags=re.IGNORECASE)  # - Map 1 Winner
-    s = re.sub(r"\bmap\s*\d+\b.*$", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"\s*-\s*(winner|total|handicap).*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\(.*?\)", "", s)                       # (-2.5), (BO3)
+    # cut anything after a spaced ' - ' (e.g. '- Map 1 Winner', '- United2026
+    # Championship'). CS2 team names don't contain ' - ', so this is safe and
+    # also keeps 'ex-Zero'/'G2' intact (no spaces around their dash).
+    s = re.sub(r"\s+-\s+.*$", "", s)
+    s = re.sub(r"\bmap\s*\d+\b.*$", "", s, flags=re.IGNORECASE)  # trailing 'Map 1...'
     return s.strip(" -:")
 
 

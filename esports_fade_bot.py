@@ -81,7 +81,11 @@ MAX_FADES_PER_WALLET_PER_DAY = 3  # v1.39 — cap fades per target wallet per UT
 # under-priced. CS2/CSGO markets where teams can't be matched, and non-CS2
 # markets (LoL — no model), are SKIPPED on LIVE (logged). PAPER is unaffected.
 MODEL_FILTER_ENABLED = True
-MODEL_FILTER_MIN_EDGE = 0.10
+MODEL_FILTER_MIN_EDGE = 0.07   # v1.43: lowered 0.10->0.07 for more trades/faster
+                               # validation. Backtest: fade+model still positive
+                               # below 0.10 (thr 0.0 +13.8%, 0.10 +30%), so a
+                               # modest loosening trades a bit of per-bet edge for
+                               # ~2-3x the volume. Revisit after a real sample.
 MODEL_FILTER_GAMES_PREFIXES = ("cs2-", "csgo-")  # games the Elo model covers
 
 SKIP_SINGLE_MAP_MARKETS = True  # v1.39 — skip Bo1 single-map/game markets (slug has

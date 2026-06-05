@@ -127,6 +127,28 @@ IF model does NOT beat market (flat/negative ROI):
     (b) accept that Polymarket esports has no exploitable edge and stop.
   - Either way: the fade strategy + this model test will have given a clear answer.
 
+## ★ PHASE 1 VERDICT — MAP MODEL (2026-06-05): REJECTED ★
+Investigated the "use per-map win rates (Team A 70% on Mirage)" idea.
+- DATA: bo3.gg free API (api.bo3.gg, no key/Cloudflare) has per-map history —
+  137k games with map_name + winner_clan_name, AND live current-map status.
+  Downloaded 28,277 CS2 games (2023+). Great lower-tier coverage.
+  (Saved: cowork_snapshot/gamedata/bo3/{games,matches,teams}.jsonl)
+- MODEL: map-adjusted Elo (overall Elo + shrinkage-blended per-map Elo).
+  analysis/build_map_model.py, analysis/map_feasibility.py.
+- GATE 1 (does map info help predict?): NO. Map-aware Brier 0.2429 vs
+  map-AGNOSTIC 0.2419 (agnostic better). Even with both teams >=8 games on the
+  map, agnostic wins. Knowing the map adds nothing.
+- GATE 2 (beat Polymarket map prices, OOS + 2c friction):
+    map-aware  : TRAIN +9.6%  TEST -14.0%  (FAILS out-of-sample)
+    team-only  : TRAIN +21.2% TEST +6.2%   (weakly positive, but thin/noisy)
+- WHY IT FAILS: the veto removes each team's worst maps, so every played map is
+  one both teams are comfortable on -> map-specific skill gaps compress exactly
+  when they'd matter. Good teams are good everywhere (skill transfers).
+- DECISION: do NOT build the live map/veto pipeline (Phase 2/3). The
+  map-specific thesis is dead; team-strength-on-maps is the same (weaker) edge
+  as the series model. SERIES model remains the real edge (+18.8% OOS).
+  Phase 1 cost $0 and saved us from chasing noise.
+
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with
   PandaScore for now.

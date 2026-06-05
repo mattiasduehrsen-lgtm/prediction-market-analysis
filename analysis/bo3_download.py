@@ -91,7 +91,9 @@ def download_teams():
 
 if __name__ == "__main__":
     print(f"=== bo3 download (>= {CUTOFF}) ===")
-    download_teams()
-    paginate_until("matches", "start_date", "matches.jsonl", "-start_date")
+    # GAMES first — they carry per-map winner (winner_clan_name) + map_name, which
+    # is what the model needs. maps_score on /matches is unreliable for per-map.
     paginate_until("games", "begin_at", "games.jsonl", "-begin_at")
+    paginate_until("matches", "start_date", "matches.jsonl", "-start_date")
+    download_teams()
     print("ALL DONE")

@@ -46,7 +46,7 @@ def main():
         bt = g.get("begin_at")
         if not (w and l and mp and bt) or w == l:
             continue
-        games.append((bt, w.strip(), l.strip(), mp))
+        games.append((bt, w.strip(), l.strip(), mp, g.get("match_id"), g.get("number")))
     games.sort(key=lambda x: x[0])
     print(f"usable CS2 games: {len(games)}")
 
@@ -65,7 +65,7 @@ def main():
         return ov + shrink * (me - ov)
 
     rows = []
-    for bt, win, lose, mp in games:
+    for bt, win, lose, mp, match_id, number in games:
         # order teams independent of outcome to avoid label leakage
         A, B = sorted((win, lose))
         actualA = 1 if A == win else 0
@@ -76,6 +76,7 @@ def main():
         p_ov = logistic(overall[A], overall[B])
         rows.append({
             "begin_at": bt, "teamA": A, "teamB": B, "map": mp,
+            "match_id": match_id, "number": number,
             "p_map": p_map, "p_overall": p_ov, "actualA": actualA,
             "gA": tot_games[A], "gB": tot_games[B],
             "mgA": map_games[(A, mp)], "mgB": map_games[(B, mp)],

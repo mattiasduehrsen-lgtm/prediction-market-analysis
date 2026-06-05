@@ -23,11 +23,18 @@ BETS = OUT / "paper_bets.csv"
 EVENTS = OUT / "events.jsonl"
 
 EDGE_THRESHOLD = 0.10        # bet when |model_pA - market_pA| > this
-START_WINDOW_MIN = 15        # bet markets starting within this many minutes
+START_WINDOW_MIN = 180       # bet series markets starting within this many minutes
+                             # (was 15 — far too narrow; caught 0 bets in a day).
+                             # We record time_to_start so near-start vs early bets
+                             # can be segmented in analysis.
 POLL_INTERVAL = 120
 BET_USD = 10.0
 CLOB = "https://clob.polymarket.com"
 VS_RE = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
+# Skip non-series derivatives (single map / handicap / totals) — the model only
+# rates full-series moneylines.
+SKIP_SLUG_RE = re.compile(r"-game\d+|-map-?\d*\b|-map-|handicap|total|rounds", re.IGNORECASE)
+SKIP_Q_RE = re.compile(r"\bmap \d|handicap|total rounds|over/under|rounds", re.IGNORECASE)
 
 S = requests.Session()
 
@@ -55,7 +62,8 @@ def write_bet(row):
     new = not BETS.exists()
     cols = ["ts", "condition_id", "slug", "game_start", "teamA", "teamB",
             "model_pA", "market_pA", "edge", "bet_side", "bet_outcome",
-            "entry_price", "book_depth_usd", "eloA", "eloB", "gamesA", "gamesB"]
+            "entry_price", "book_depth_usd", "time_to_start_min",
+            "eloA", "eloB", "gamesA", "gamesB"]
     with BETS.open("a", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols)
         if new: w.writeheader()
@@ -145,6 +153,11 @@ def run():
             for r in cand.itertuples(index=False):
                 if r.condition_id in bet_cids:
                     continue
+                # skip single-map / handicap / totals derivatives — model is
+                # series-moneyline only
+                if SKIP_SLUG_RE.search(r.slug or "") or SKIP_Q_RE.search(r.question or ""):
+                    bet_cids.add(r.condition_id)
+                    continue
                 teams = parse_teams(r.question)
                 if not teams:
                     continue
@@ -182,12 +195,14 @@ def run():
                 if best_ask is None:
                     event({"type": "skip_no_liquidity", "cid": r.condition_id, "slug": r.slug})
                     continue
+                ttm = round((r.game_start - now).total_seconds() / 60, 1)
                 row = {
                     "ts": time.time(), "condition_id": r.condition_id, "slug": r.slug,
                     "game_start": r.game_start.isoformat(), "teamA": a, "teamB": b,
                     "model_pA": model_pA, "market_pA": round(market_pA, 4),
                     "edge": round(edge, 4), "bet_side": side, "bet_outcome": outcome,
                     "entry_price": round(best_ask, 4), "book_depth_usd": depth,
+                    "time_to_start_min": ttm,
                     "eloA": pred["eloA"], "eloB": pred["eloB"],
                     "gamesA": pred["gamesA"], "gamesB": pred["gamesB"],
                 }

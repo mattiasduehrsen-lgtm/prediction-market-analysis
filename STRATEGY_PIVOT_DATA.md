@@ -149,6 +149,23 @@ Investigated the "use per-map win rates (Team A 70% on Mirage)" idea.
   as the series model. SERIES model remains the real edge (+18.8% OOS).
   Phase 1 cost $0 and saved us from chasing noise.
 
+## ★ BEST USE OF bo3 — IN-PLAY SERIES REPRICING (2026-06-05): PROMISING ★
+bo3's unique free value = LIVE match state (current map, series score, map
+completion times). Idea: after map 1 of a Bo3, reprice the series-winner market.
+- Method: pre-match series-model prob -> invert to single-map p -> after map1,
+  P(A wins series | 1-0)=2p-p^2, |0-1)=p^2. Compare to Polymarket price at ~map1
+  completion (bo3 map2 begin_at) from trade shards.
+- analysis/inplay_backtest.py. n=122 (31 OOS).
+- ROI (2c slip): thr0.05 +26.1% (75), thr0.10 +25.3%. WIN RATES 49-56%
+  (healthier than pre-match ~41%). OOS: TRAIN +23.3%, TEST +30.0%.
+- Market diverges from model's post-map1 prob by ~0.10 avg => market does NOT
+  efficiently reprice after a map. Real inefficiency on thin retail live markets.
+- CAVEATS: small sample (31 OOS); bo3 live map-completion LATENCY unmeasured
+  (if bo3 lags >10min the edge is gone before we act); mid-match liquidity unknown.
+- NEXT: PAPER in-play bot — watch bo3 live Bo3s, on map1 completion compute model
+  live prob vs live Polymarket price, paper-bet divergence, RECORD bo3 detection
+  latency + order-book depth. Resolves the two unknowns with zero risk.
+
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with
   PandaScore for now.

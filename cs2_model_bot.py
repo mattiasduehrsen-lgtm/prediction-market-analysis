@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import requests
 
-from cs2_model import CS2Model
+from cs2_model import CS2Model, norm, teq
 
 ROOT = Path(__file__).resolve().parent
 ES_MARKETS = ROOT / "cowork_snapshot" / "esports" / "clob_esports_markets.parquet"
@@ -31,10 +31,55 @@ POLL_INTERVAL = 120
 BET_USD = 10.0
 CLOB = "https://clob.polymarket.com"
 VS_RE = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
-# Skip non-series derivatives (single map / handicap / totals) — the model only
-# rates full-series moneylines.
-SKIP_SLUG_RE = re.compile(r"-game\d+|-map-?\d*\b|-map-|handicap|total|rounds", re.IGNORECASE)
-SKIP_Q_RE = re.compile(r"\bmap \d|handicap|total rounds|over/under|rounds", re.IGNORECASE)
+
+
+def classify_market(slug, question):
+    """series | map | handicap | total — for tagging paper bets so we can
+    measure model edge per market type."""
+    s = f"{slug or ''} {question or ''}".lower()
+    if "handicap" in s:
+        return "handicap"
+    if "total" in s or "over/under" in s or "over / under" in s:
+        return "total"
+    if re.search(r"\bmap\s*\d", s) or re.search(r"-game\d|-map-?\d", s):
+        return "map"
+    return "series"
+
+
+def _clean_team(s):
+    s = re.sub(r"\(.*?\)", "", s)                                   # (-2.5)
+    s = re.sub(r"\s*-\s*map\s*\d+.*$", "", s, flags=re.IGNORECASE)  # - Map 1 Winner
+    s = re.sub(r"\bmap\s*\d+\b.*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s*-\s*(winner|total|handicap).*$", "", s, flags=re.IGNORECASE)
+    return s.strip(" -:")
+
+
+def extract_teams(question):
+    """Pull the two TEAM names out of any team-vs-team CS2 market — series,
+    single-map, or handicap — stripping the '(-2.5)' / '- Map 1 Winner' noise.
+    Returns None for totals (Over/Under) where there are no teams."""
+    if not question:
+        return None
+    core = question.split(": ")[-1]
+    m = VS_RE.split(core)
+    if len(m) != 2:
+        m = VS_RE.split(question)
+        if len(m) != 2:
+            return None
+    a, b = _clean_team(m[0]), _clean_team(m[1])
+    if not a or not b or len(a) > 40 or len(b) > 40:
+        return None
+    return a, b
+
+
+def find_token(tokens, team_name):
+    """Find the (token_id, outcome_name) whose outcome matches a team name —
+    fuzzy, so 'Lavked' matches an outcome like 'Lavked - Map 1 Winner'."""
+    tn = norm(team_name)
+    for oc, tid in tokens.items():
+        if teq(tn, norm(oc)):
+            return tid, oc
+    return None, None
 
 S = requests.Session()
 
@@ -60,7 +105,7 @@ def load_bet_cids():
 
 def write_bet(row):
     new = not BETS.exists()
-    cols = ["ts", "condition_id", "slug", "game_start", "teamA", "teamB",
+    cols = ["ts", "condition_id", "slug", "market_type", "game_start", "teamA", "teamB",
             "model_pA", "market_pA", "edge", "bet_side", "bet_outcome",
             "entry_price", "book_depth_usd", "time_to_start_min",
             "eloA", "eloB", "gamesA", "gamesB"]
@@ -153,19 +198,19 @@ def run():
             for r in cand.itertuples(index=False):
                 if r.condition_id in bet_cids:
                     continue
-                # skip single-map / handicap / totals derivatives — model is
-                # series-moneyline only
-                if SKIP_SLUG_RE.search(r.slug or "") or SKIP_Q_RE.search(r.question or ""):
-                    bet_cids.add(r.condition_id)
-                    continue
-                teams = parse_teams(r.question)
+                # PAPER bot bets ALL team-vs-team CS2 markets — series, single-map,
+                # AND handicaps — tagged by type so we can measure edge per type.
+                # Totals (Over/Under) have no teams to rate and are skipped.
+                mtype = classify_market(r.slug, r.question)
+                teams = extract_teams(r.question)
                 if not teams:
+                    bet_cids.add(r.condition_id)   # totals / unparseable
                     continue
                 a, b = teams
                 pred = model.predict(a, b)
                 if not pred or not pred.get("ok"):
                     event({"type": "skip", "cid": r.condition_id, "slug": r.slug,
-                           "reason": (pred or {}).get("reason", "no_pred")})
+                           "mtype": mtype, "reason": (pred or {}).get("reason", "no_pred")})
                     bet_cids.add(r.condition_id)  # don't re-eval endlessly
                     continue
                 n_eval += 1
@@ -175,7 +220,9 @@ def run():
                     continue
                 tokens = {t.get("outcome"): t.get("token_id")
                           for t in (mkt.get("tokens") or []) if t.get("outcome")}
-                tokA, tokB = tokens.get(a), tokens.get(b)
+                # fuzzy match team -> actual market outcome (handles 'Lavked - Map 1 Winner')
+                tokA, outA = find_token(tokens, a)
+                tokB, outB = find_token(tokens, b)
                 if not tokA or not tokB:
                     continue
                 midA = clob_midpoint(tokA)
@@ -186,11 +233,12 @@ def run():
                 edge = model_pA - market_pA
                 if abs(edge) <= EDGE_THRESHOLD:
                     continue
-                # bet the model's side; entry = best ask of the side we buy
+                # bet the model's side; entry = best ask of the side we buy.
+                # bet_outcome is the ACTUAL market outcome name (for resolution).
                 if edge > 0:
-                    side, outcome, tok = "A", a, tokA
+                    side, outcome, tok = "A", outA, tokA
                 else:
-                    side, outcome, tok = "B", b, tokB
+                    side, outcome, tok = "B", outB, tokB
                 best_ask, depth = clob_book(tok)
                 if best_ask is None:
                     event({"type": "skip_no_liquidity", "cid": r.condition_id, "slug": r.slug})
@@ -198,6 +246,7 @@ def run():
                 ttm = round((r.game_start - now).total_seconds() / 60, 1)
                 row = {
                     "ts": time.time(), "condition_id": r.condition_id, "slug": r.slug,
+                    "market_type": mtype,
                     "game_start": r.game_start.isoformat(), "teamA": a, "teamB": b,
                     "model_pA": model_pA, "market_pA": round(market_pA, 4),
                     "edge": round(edge, 4), "bet_side": side, "bet_outcome": outcome,
@@ -209,7 +258,7 @@ def run():
                 write_bet(row)
                 bet_cids.add(r.condition_id)
                 n_bet += 1
-                print(f"[cs2-bot] PAPER BET {outcome} @ ask {best_ask:.2f} "
+                print(f"[cs2-bot] PAPER BET [{mtype}] {outcome} @ ask {best_ask:.2f} "
                       f"(model {model_pA:.2f} vs mkt {market_pA:.2f}, edge {edge:+.2f}) "
                       f"depth ${depth:.0f}  {a} vs {b}")
                 event({"type": "paper_bet", **row})

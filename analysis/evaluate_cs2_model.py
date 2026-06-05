@@ -69,6 +69,20 @@ def main():
     n = len(resolved); wins = sum(1 for r in resolved if r["status"] == "WIN")
     pnl = sum(float(r["pnl"]) for r in resolved if r["pnl"] != "")
     cost = n * BET_USD
+
+    # Breakdown by market type (series / map / handicap / total) — shows where
+    # the model edge actually holds.
+    by_type = {}
+    for r in resolved:
+        mt = r.get("market_type", "?") or "?"
+        d = by_type.setdefault(mt, {"n": 0, "wins": 0, "pnl": 0.0})
+        d["n"] += 1
+        d["wins"] += 1 if r["status"] == "WIN" else 0
+        d["pnl"] += float(r["pnl"]) if r["pnl"] != "" else 0.0
+    type_summary = {mt: {"n": d["n"], "wr_pct": round(d["wins"]/max(d["n"],1)*100, 1),
+                         "pnl_usd": round(d["pnl"], 2),
+                         "roi_pct": round(d["pnl"]/max(d["n"]*BET_USD, 1)*100, 2)}
+                    for mt, d in sorted(by_type.items())}
     # liquidity reality: median book depth at entry
     depths = [float(r["book_depth_usd"]) for r in rows if r.get("book_depth_usd") not in ("", None)]
     depths.sort()
@@ -79,6 +93,7 @@ def main():
         "wr_pct": round(wins/max(n,1)*100, 1),
         "pnl_usd": round(pnl, 2), "roi_pct": round(pnl/max(cost,1)*100, 2),
         "median_book_depth_usd": med_depth,
+        "by_market_type": type_summary,
         "generated_at": time.time(),
     }
     SUMMARY.write_text(json.dumps(summary, indent=2))

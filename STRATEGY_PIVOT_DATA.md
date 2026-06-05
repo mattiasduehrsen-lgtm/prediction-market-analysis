@@ -165,6 +165,13 @@ completion times). Idea: after map 1 of a Bo3, reprice the series-winner market.
 - NEXT: PAPER in-play bot — watch bo3 live Bo3s, on map1 completion compute model
   live prob vs live Polymarket price, paper-bet divergence, RECORD bo3 detection
   latency + order-book depth. Resolves the two unknowns with zero risk.
+- DEPLOYED 2026-06-05: cs2_inplay_bot.py (watchdog task CS2InplayBot) +
+  analysis/evaluate_inplay.py (CS2InplayEval, 30min). Paper-bets when model live
+  series prob diverges from live Polymarket price by >0.05; logs bo3_detect_lag_s
+  + book_depth_usd. Output: output/cs2_inplay/paper_bets.csv + paper_summary.json.
+  Math + bo3 reachability validated. Waiting on live matches to accumulate data.
+  WATCH: paper_summary.json -> roi_pct (does +30% backtest hold?),
+  median_bo3_lag_s (fast enough to act?), median_book_depth_usd (can we fill?).
 
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with

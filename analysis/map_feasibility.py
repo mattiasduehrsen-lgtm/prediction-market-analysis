@@ -109,22 +109,35 @@ def main():
             cost += price; pnl += (1 - price) if won else -price; n += 1; w += won
         return n, (w/max(n,1)*100), (pnl/max(cost,1e-9)*100)
 
+    def run_set(d, model_col, thr):
+        bets = []
+        for r in d.itertuples(index=False):
+            mp = getattr(r, model_col); edge = mp - r.market
+            if abs(edge) <= thr:
+                continue
+            if edge > 0:
+                price = min(0.99, r.market + 0.02); won = r.A_won
+            else:
+                price = min(0.99, (1 - r.market) + 0.02); won = 1 - r.A_won
+            bets.append((price, won))
+        return roi(bets)
+
     for model_col in ["p_map", "p_overall"]:
         print(f"\n=== betting with {model_col} (slip 2c) ===")
         print(f"  {'thr':>5}{'bets':>6}{'WR':>6}{'ROI':>8}")
         for thr in [0.0, 0.10, 0.15, 0.20]:
-            bets = []
-            for r in j.itertuples(index=False):
-                mp = getattr(r, model_col); edge = mp - r.market
-                if abs(edge) <= thr:
-                    continue
-                if edge > 0:
-                    price = min(0.99, r.market + 0.02); won = r.A_won
-                else:
-                    price = min(0.99, (1 - r.market) + 0.02); won = 1 - r.A_won
-                bets.append((price, won))
-            n, wr, rr = roi(bets)
+            n, wr, rr = run_set(j, model_col, thr)
             print(f"  {thr:>5.2f}{n:>6}{wr:>5.0f}%{rr:>+7.1f}%")
+
+    # OUT-OF-SAMPLE time split — the real rigor check
+    js = j.sort_values("ts")
+    cut = int(len(js) * 0.6)
+    train, test = js.iloc[:cut], js.iloc[cut:]
+    print(f"\n=== OUT-OF-SAMPLE (train={len(train)}, test={len(test)}, thr 0.15, slip 2c) ===")
+    for model_col in ["p_map", "p_overall"]:
+        nt, wrt, rrt = run_set(train, model_col, 0.15)
+        nv, wrv, rrv = run_set(test, model_col, 0.15)
+        print(f"  {model_col:<11} TRAIN n={nt:>3} ROI {rrt:>+6.1f}%   TEST n={nv:>3} ROI {rrv:>+6.1f}%")
 
 if __name__ == "__main__":
     main()

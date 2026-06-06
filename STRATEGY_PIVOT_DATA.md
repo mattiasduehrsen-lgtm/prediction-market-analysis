@@ -173,6 +173,35 @@ completion times). Idea: after map 1 of a Bo3, reprice the series-winner market.
   WATCH: paper_summary.json -> roi_pct (does +30% backtest hold?),
   median_bo3_lag_s (fast enough to act?), median_book_depth_usd (can we fill?).
 
+## ★★ COWORK VERDICT (2026-06-05) — independent deep analysis ★★
+Reproduced all numbers from local data (679,714 deduped trades, 870 live orders).
+- **Pre-match series model edge is a LIQUIDITY MIRAGE.** The +18.8% OOS was on
+  single-print prices, not fillable liquidity. Filter to $ actually tradeable on
+  our side within 3c, 30min pre-match: median $0 (74% of bet-markets had ZERO).
+  Cross-tab: everything +13.8% but ALL fillable subsets NEGATIVE and worse with
+  more liquidity (>=$5 -9.4%, >=$50 -10%, >=$100 -15%). Capped-fill backtest -6.5%.
+- **Negative closing-line value** confirms it independently: model-side price
+  drifts -2.25% to close; only 31% move our way. Smart money disagrees. = not an edge.
+- **Live fade = honest zero** (-0.06% on 416 resolved). Backtest agreed (~0). No gap.
+  Slippage is zero (limit orders) BUT 46% of orders never fill, selectively in the
+  underdog band the model wants -> we miss the GOOD fills.
+- **Paper model bot -14.5%**: drifted into handicap markets (-23.5%, n=69) the model
+  was never validated for; series subset +20% but n=11.
+- **THE ONE SURVIVOR: in-play post-map-1 repricing.** Passes walk-forward + friction
+  + LIQUIDITY (median $69 fillable, ROI IMPROVES with liquidity: >=$100 -> +40.6%).
+  +26.1% (n=75), OOS +30%. Mechanism: thin markets OVERREACT to map 1; value is in
+  the CONTRARIAN subset (back the map-1 LOSER, +37.2%). Bootstrap 90% CI [+8.5%,
+  +43.9%], P(ROI>0)=99.3%. Caveats: small n; bo3 latency is the KILL SWITCH; small
+  capacity (~$25-50/bet); high variance (needs fractional Kelly).
+- **VERDICT:** (1) in-play = the only edge, continue on paper, watch bo3_detect_lag_s,
+  go live small only if latency <1-2min holds + ≥30 more bets. (2) pre-match series
+  model = STOP as a standalone bet, KEEP as the feeder/input to in-play. (3) fade,
+  follow, map, sports, crypto, arb = all STOP (efficient where liquid, unfillable
+  where inefficient).
+- **DATA-INTEGRITY NOTE:** pandas elementwise price*size was intermittently corrupt
+  in this env (constant ~6.1e6; parquet round-trip corrupts). Use numpy.float64 for
+  price*size, don't persist the product to parquet.
+
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with
   PandaScore for now.

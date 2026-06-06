@@ -161,49 +161,55 @@ def run():
     model = CS2Model()
     print(f"[inplay] series Elo for {len(model.elo_by_id)} teams")
     bet_keys = load_bet_keys()
+    logged_detect = set()   # dedup live_detected/skip events per (teams, score)
     cache = {}
     last_hb = 0
     while True:
         try:
             model.maybe_reload()
             now = datetime.now(timezone.utc)
-            # recent matches -> bo_type/status ; recent games -> live state
-            matches = (bo3_get("matches", {"sort": "-start_date", "page[limit]": 50}) or {}).get("results") or []
-            bo_by_id = {m["id"]: m for m in matches}
-            games = (bo3_get("games", {"sort": "-begin_at", "page[limit]": 100}) or {}).get("results") or []
+            # LIVE DETECTION FROM GAMES ONLY (v2). bo3's /matches endpoint sorts
+            # by -start_date = future UPCOMING matches, and its id/status/range
+            # filters are ignored — so we can't get live status or bo_type there.
+            # Games DO carry live state + winners + timestamps. We detect
+            # post-map-1 directly: exactly 1 map completed (has a winner) + a map
+            # currently live. This also auto-excludes Bo1 (no live map after map1)
+            # and deciders (2+ done). Assume Bo3 (W=2): ~99% of CS matches, and
+            # we only bet post-map-1 where Bo3 is the validated case.
+            W = 2
+            games = (bo3_get("games", {"sort": "-begin_at", "page[limit]": 200}) or {}).get("results") or []
             by_match = {}
             for g in games:
                 by_match.setdefault(g.get("match_id"), []).append(g)
 
             n_live = n_bet = 0
             for mid, gs in by_match.items():
-                m = bo_by_id.get(mid)
-                if not m or m.get("status") not in ("live", "current", "running", "started"):
-                    continue
-                bo_type = m.get("bo_type")
-                if bo_type not in (3, 5):
-                    continue
-                W = (bo_type + 1) // 2
                 gs = sorted(gs, key=lambda x: x.get("number") or 0)
                 done = [g for g in gs if g.get("winner_clan_name") and g.get("loser_clan_name")]
                 live_g = [g for g in gs if g.get("state") in ("current", "started")]
-                if not done or not live_g:
+                # post-map-1 ONLY: exactly one map decided + a map in progress
+                if len(done) != 1 or not live_g:
                     continue
                 n_live += 1
-                # teams + current score
-                teams = {}
-                for g in done:
-                    teams[g["winner_clan_name"].strip()] = teams.get(g["winner_clan_name"].strip(), 0) + 1
-                    teams.setdefault(g["loser_clan_name"].strip(), 0)
-                if len(teams) != 2:
-                    continue
-                (tA, aw), (tB, bw) = list(teams.items())
-                if aw + bw >= W or aw + bw == 0:   # decided or no map done
+                g1 = done[0]
+                tA = g1["winner_clan_name"].strip()   # map-1 winner -> 1-0
+                tB = g1["loser_clan_name"].strip()
+                aw, bw = 1, 0
+                if not tA or not tB or tA == tB:
                     continue
                 nA, nB = norm(tA), norm(tB)
+                dkey = (nA, nB, f"{aw}-{bw}")
+                first_see = dkey not in logged_detect
+                if first_see:
+                    logged_detect.add(dkey)
+                    event({"type": "live_detected", "teamA": tA, "teamB": tB,
+                           "score": f"{aw}-{bw}", "live_map": (live_g[0].get("map_name"))})
                 # model pre-match series prob (oriented to tA)
                 pred = model.predict(tA, tB)
                 if not pred or not pred.get("ok"):
+                    if first_see:
+                        event({"type": "skip_model_unmatched", "teamA": tA, "teamB": tB,
+                               "reason": (pred or {}).get("reason", "no_pred")})
                     continue
                 model_pre_A = pred["model_pA"]
                 p = invert(min(max(model_pre_A, 0.02), 0.98), W)
@@ -211,6 +217,8 @@ def run():
                 # find live Polymarket series market
                 pm, pteams = find_pm_market(load_markets(cache), nA, nB, now)
                 if pm is None:
+                    if first_see:
+                        event({"type": "skip_no_pm_market", "teamA": tA, "teamB": tB})
                     continue
                 key = (pm.condition_id, f"{aw}-{bw}")
                 if key in bet_keys:
@@ -252,7 +260,7 @@ def run():
                     pass
                 row = {
                     "ts": time.time(), "condition_id": pm.condition_id, "slug": pm.slug,
-                    "teamA": tA, "teamB": tB, "bo_type": bo_type, "score_state": f"{aw}-{bw}",
+                    "teamA": tA, "teamB": tB, "bo_type": "3(assumed)", "score_state": f"{aw}-{bw}",
                     "map1_winner": tA if aw > bw else tB,
                     "model_pre": round(model_pre_A, 4), "p_single": round(p, 4),
                     "model_live": round(model_live_A, 4), "market_live": round(midA, 4),
@@ -261,7 +269,7 @@ def run():
                     "bo3_detect_lag_s": lag, "A_won_series": "",
                 }
                 write_bet(row); bet_keys.add(key); n_bet += 1
-                print(f"[inplay] PAPER BET [{aw}-{bw} {bo_type}] {outcome} @ {best_ask:.2f} "
+                print(f"[inplay] PAPER BET [{aw}-{bw}] {outcome} @ {best_ask:.2f} "
                       f"(model_live {model_live_A:.2f} vs mkt {midA:.2f}, edge {edge:+.2f}) "
                       f"depth ${depth:.0f} lag {lag}s  {tA} vs {tB}")
                 event({"type": "inplay_paper_bet", **row})

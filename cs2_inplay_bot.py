@@ -25,10 +25,11 @@ OUT.mkdir(parents=True, exist_ok=True)
 BETS = OUT / "paper_bets.csv"
 EVENTS = OUT / "events.jsonl"
 
-EDGE_THRESHOLD = 0.05
+EDGE_THRESHOLD = 0.03   # lowered 0.05->0.03 for more bets/faster validation
 POLL_INTERVAL = 60
 BET_USD = 10.0
-MAX_WINDOW_S = 720   # only bet within ~12 min of map-2 start (edge ~dead by 30 min)
+MAX_WINDOW_S = 720      # only BET within ~12 min of map-2 start (edge ~dead by 30)
+OBS_MAX_S = 3000        # OBSERVE (log latency/liquidity) up to ~50 min in
 CLOB = "https://clob.polymarket.com"
 BO3 = "https://api.bo3.gg/api/v1"
 VS_RE = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
@@ -123,6 +124,18 @@ def write_bet(row):
         if new: w.writeheader()
         w.writerow({k: row.get(k, "") for k in cols})
 
+OBS = OUT / "observations.csv"
+def write_observation(row):
+    cols = ["ts", "condition_id", "slug", "teamA", "teamB", "score_state",
+            "map1_winner", "model_pre", "p_single", "model_live", "market_live",
+            "edge", "model_side", "side_outcome", "best_ask", "book_depth_usd",
+            "bo3_detect_lag_s", "in_window", "would_bet", "A_won_series"]
+    new = not OBS.exists()
+    with OBS.open("a", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        if new: w.writeheader()
+        w.writerow({k: row.get(k, "") for k in cols})
+
 
 def load_markets(cache):
     try:
@@ -163,6 +176,7 @@ def run():
     print(f"[inplay] series Elo for {len(model.elo_by_id)} teams")
     bet_keys = load_bet_keys()
     logged_detect = set()   # dedup live_detected/skip events per (teams, score)
+    observed_keys = set()   # dedup observation rows per (cid, score)
     cache = {}
     last_hb = 0
     while True:
@@ -205,8 +219,9 @@ def run():
                     window_age = time.time() - pd.Timestamp(live_g[0]["begin_at"]).timestamp()
                 except Exception:
                     window_age = None
-                if window_age is None or window_age < -120 or window_age > MAX_WINDOW_S:
-                    continue   # before window (clock skew) or past the edge window / stale
+                if window_age is None or window_age < -120 or window_age > OBS_MAX_S:
+                    continue   # clock skew or too stale to even observe
+                in_window = window_age <= MAX_WINDOW_S   # bettable only inside the edge window
                 nA, nB = norm(tA), norm(tB)
                 dkey = (nA, nB, f"{aw}-{bw}")
                 first_see = dkey not in logged_detect
@@ -231,14 +246,13 @@ def run():
                         event({"type": "skip_no_pm_market", "teamA": tA, "teamB": tB})
                     continue
                 key = (pm.condition_id, f"{aw}-{bw}")
-                if key in bet_keys:
-                    continue
+                if key in observed_keys:
+                    continue   # already captured this market+state
                 # live price for the team that is tA, in the PM market
                 mkt = clob_market(pm.condition_id)
                 if not mkt:
                     continue
                 toks = {t.get("outcome"): t.get("token_id") for t in (mkt.get("tokens") or []) if t.get("outcome")}
-                # map tA -> PM outcome
                 tokA = outA = None
                 for oc, tid in toks.items():
                     if teq(nA, norm(oc)): tokA, outA = tid, oc
@@ -251,34 +265,50 @@ def run():
                 if midA is None:
                     continue
                 edge = model_live_A - midA
-                if abs(edge) <= EDGE_THRESHOLD:
-                    bet_keys.add(key); continue
-                # bet the model's side
+                # side the model favours
                 if edge > 0:
                     side, outcome, tok = "A", outA, tokA
                 else:
                     side, outcome, tok = "B", outB, tokB
                 best_ask, depth = clob_book(tok)
-                if best_ask is None:
-                    event({"type": "skip_no_liquidity", "cid": pm.condition_id, "slug": pm.slug})
-                    bet_keys.add(key); continue
-                # bo3 detection latency: seconds since the live map started (~map-1 completion)
                 lag = round(window_age, 0)
-                row = {
+                would_bet = (abs(edge) > EDGE_THRESHOLD) and (best_ask is not None) and in_window
+
+                # ── OBSERVATION (every priced post-map-1 opportunity, once) ──────
+                # The latency + liquidity gates don't need a profitable bet — just
+                # an observation. Log EVERYTHING so each live match yields data.
+                observed_keys.add(key)
+                obs = {
                     "ts": time.time(), "condition_id": pm.condition_id, "slug": pm.slug,
-                    "teamA": tA, "teamB": tB, "bo_type": "3(assumed)", "score_state": f"{aw}-{bw}",
+                    "teamA": tA, "teamB": tB, "score_state": f"{aw}-{bw}",
                     "map1_winner": tA if aw > bw else tB,
                     "model_pre": round(model_pre_A, 4), "p_single": round(p, 4),
                     "model_live": round(model_live_A, 4), "market_live": round(midA, 4),
-                    "edge": round(edge, 4), "bet_side": side, "bet_outcome": outcome,
-                    "entry_price": round(best_ask, 4), "book_depth_usd": depth,
-                    "bo3_detect_lag_s": lag, "A_won_series": "",
+                    "edge": round(edge, 4), "model_side": side, "side_outcome": outcome,
+                    "best_ask": round(best_ask, 4) if best_ask is not None else "",
+                    "book_depth_usd": depth, "bo3_detect_lag_s": lag,
+                    "in_window": in_window, "would_bet": would_bet, "A_won_series": "",
                 }
-                write_bet(row); bet_keys.add(key); n_bet += 1
-                print(f"[inplay] PAPER BET [{aw}-{bw}] {outcome} @ {best_ask:.2f} "
-                      f"(model_live {model_live_A:.2f} vs mkt {midA:.2f}, edge {edge:+.2f}) "
-                      f"depth ${depth:.0f} lag {lag}s  {tA} vs {tB}")
-                event({"type": "inplay_paper_bet", **row})
+                write_observation(obs)
+                event({"type": "inplay_observation", **obs})
+
+                # ── PAPER BET (only if it clears threshold, window, liquidity) ───
+                if would_bet and key not in bet_keys:
+                    row = {
+                        "ts": time.time(), "condition_id": pm.condition_id, "slug": pm.slug,
+                        "teamA": tA, "teamB": tB, "bo_type": "3(assumed)", "score_state": f"{aw}-{bw}",
+                        "map1_winner": tA if aw > bw else tB,
+                        "model_pre": round(model_pre_A, 4), "p_single": round(p, 4),
+                        "model_live": round(model_live_A, 4), "market_live": round(midA, 4),
+                        "edge": round(edge, 4), "bet_side": side, "bet_outcome": outcome,
+                        "entry_price": round(best_ask, 4), "book_depth_usd": depth,
+                        "bo3_detect_lag_s": lag, "A_won_series": "",
+                    }
+                    write_bet(row); bet_keys.add(key); n_bet += 1
+                    print(f"[inplay] PAPER BET [{aw}-{bw}] {outcome} @ {best_ask:.2f} "
+                          f"(model_live {model_live_A:.2f} vs mkt {midA:.2f}, edge {edge:+.2f}) "
+                          f"depth ${depth:.0f} lag {lag}s  {tA} vs {tB}")
+                    event({"type": "inplay_paper_bet", **row})
 
             if time.time() - last_hb > 300:
                 print(f"[inplay] heartbeat: live_series={n_live} bet_this_cycle={n_bet} "

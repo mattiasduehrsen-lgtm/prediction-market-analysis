@@ -216,6 +216,24 @@ shard reconstruction is how we measured the window).
 - Caveats: small n (70-86); sample composition shifts with delay (carry-forward);
   fillability at the delayed price still to confirm.
 
+## ★ IN-PLAY BOT FIX (2026-06-06) — the operational blocker Cowork flagged ★
+Paper bot had logged 0 in-play bets. ROOT CAUSE: detection keyed live status off
+bo3 /matches sorted -start_date = returns UPCOMING (future) matches, and its
+id/status/range filters are all IGNORED by the API. So live matches were never in
+the status dict -> every match skipped -> live_series=0 forever.
+FIX (cs2_inplay_bot.py): detect entirely from the /games feed (which carries live
+state + winners + timestamps). Post-map-1 = exactly 1 map done (has winner) + a
+map live (state current/started). Auto-excludes Bo1 + deciders. Assume Bo3 (W=2).
+Added debug events: live_detected / skip_model_unmatched / skip_no_pm_market so
+the next live match shows where it falls through.
+- Model coverage on recent live teams: 96% match Elo (66/69). The "9%" Cowork
+  cited was the historical Polymarket-market<->bo3-timeline<->price join, NOT the
+  model leg. Real LIVE limiter = whether Polymarket LISTS the (often low-tier)
+  bo3 match -> will show as skip_no_pm_market.
+- Status: deployed; CS2 quiet now (0 live games) so not yet confirmed end-to-end.
+  Will start logging real bets (+ bo3_detect_lag_s + book_depth) when a live Bo3
+  that Polymarket also lists reaches map 2.
+
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with
   PandaScore for now.

@@ -202,6 +202,20 @@ Reproduced all numbers from local data (679,714 deduped trades, 870 live orders)
   in this env (constant ~6.1e6; parquet round-trip corrupts). Use numpy.float64 for
   price*size, don't persist the product to parquet.
 
+## ★ EDGE-WINDOW RESULT (2026-06-05) — latency is NOT the kill switch ★
+analysis/inplay_latency.py: in-play ROI vs ENTRY DELAY after map-1 completion
+(prices carry-forward from shards; paper bot had 0 logged in-play bets, so this
+shard reconstruction is how we measured the window).
+  delay 0s +17.4% | 60s +23.6% | 5m +26.0% | 10m +36.0% | 15m +28.4% | 30m +8.8%
+  avg|market-model| ~0.09->0.13 (does NOT close over the window).
+- The edge does NOT decay in the first ~15 min — thin markets are STICKY after a
+  map result (attention shifts to map 2). Window dies ~30 min as the post-map-1
+  STATE goes stale (map 2 progressing), not because the market corrected.
+- IMPLICATION: bo3 polling at 60s + a few min detection lag is FINE. We need ~10
+  min, not seconds. The feared latency kill-switch is largely resolved.
+- Caveats: small n (70-86); sample composition shifts with delay (carry-forward);
+  fillability at the delayed price still to confirm.
+
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with
   PandaScore for now.

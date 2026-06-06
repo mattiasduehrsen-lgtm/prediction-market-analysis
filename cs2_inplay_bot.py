@@ -28,6 +28,7 @@ EVENTS = OUT / "events.jsonl"
 EDGE_THRESHOLD = 0.05
 POLL_INTERVAL = 60
 BET_USD = 10.0
+MAX_WINDOW_S = 720   # only bet within ~12 min of map-2 start (edge ~dead by 30 min)
 CLOB = "https://clob.polymarket.com"
 BO3 = "https://api.bo3.gg/api/v1"
 VS_RE = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
@@ -197,6 +198,15 @@ def run():
                 aw, bw = 1, 0
                 if not tA or not tB or tA == tB:
                     continue
+                # EDGE-WINDOW + FRESHNESS GUARD: only bet while map 2 is recent.
+                # Measured edge: strong 0-10 min after map-2 begin, ~dead by 30.
+                # window_age = seconds since the live map started (~map-1 completion).
+                try:
+                    window_age = time.time() - pd.Timestamp(live_g[0]["begin_at"]).timestamp()
+                except Exception:
+                    window_age = None
+                if window_age is None or window_age < -120 or window_age > MAX_WINDOW_S:
+                    continue   # before window (clock skew) or past the edge window / stale
                 nA, nB = norm(tA), norm(tB)
                 dkey = (nA, nB, f"{aw}-{bw}")
                 first_see = dkey not in logged_detect
@@ -252,12 +262,8 @@ def run():
                 if best_ask is None:
                     event({"type": "skip_no_liquidity", "cid": pm.condition_id, "slug": pm.slug})
                     bet_keys.add(key); continue
-                # bo3 detection latency: how long since the live map started (~map completion)
-                lag = None
-                try:
-                    lag = round(time.time() - pd.Timestamp(live_g[0]["begin_at"]).timestamp(), 0)
-                except Exception:
-                    pass
+                # bo3 detection latency: seconds since the live map started (~map-1 completion)
+                lag = round(window_age, 0)
                 row = {
                     "ts": time.time(), "condition_id": pm.condition_id, "slug": pm.slug,
                     "teamA": tA, "teamB": tB, "bo_type": "3(assumed)", "score_state": f"{aw}-{bw}",

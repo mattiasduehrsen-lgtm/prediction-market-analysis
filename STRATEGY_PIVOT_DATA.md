@@ -234,6 +234,25 @@ the next live match shows where it falls through.
   Will start logging real bets (+ bo3_detect_lag_s + book_depth) when a live Bo3
   that Polymarket also lists reaches map 2.
 
+## ★ IN-PLAY BOT WORKING END-TO-END (2026-06-07) — first bets + first real data ★
+User caught it: "live bot has been betting so there ARE live matches." Led to a
+3-bug chain (all fixed), none caught by tests (tests copied the bot's bad assumptions):
+1. LIVE DETECTION used `state` (None/done) — bo3's live flag is `status`="current".
+   Bot saw 0 live forever. THE root cause.
+2. norm() dropped short-name+suffix teams ("9z Team" != "9z"). Fixed: strip
+   team/esports/gaming/clan as whole words anywhere.
+3. parse_teams left "(BO3) - <event>" on the 2nd team -> short names couldn't
+   match the PM market. Fixed: clean suffixes.
+FIRST RESULTS (live):
+- First paper bet: GenOne vs BIG Academy 1-0. model GenOne 66% vs market 82.5%
+  -> CONTRARIAN bet BIG Academy (map-1 loser) @ 0.20. The validated mechanism.
+- **bo3_detect_lag_s = 89s** (Cowork gate1 <=180s: PASS). Latency kill-switch RESOLVED.
+- **book_depth $75-88** (gate4 >=$50: PASS). Liquidity present.
+- Window guard worked: Spirit/9z detected 22min late (lag 1355s) -> in_window=false,
+  observed but NOT bet. Correct.
+- Now logging observations.csv + paper_bets.csv on every live post-map-1. Gates
+  filling. NEXT: accumulate ≥40 bets, confirm ROI >= +10%, then staged live ramp.
+
 ## Data sources NOT yet exhausted (if we want more)
 - Liquipedia API (free) — could supplement match history / rosters; redundant with
   PandaScore for now.

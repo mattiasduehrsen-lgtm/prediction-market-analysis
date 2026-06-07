@@ -98,11 +98,21 @@ def event(ev):
     with EVENTS.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(ev) + "\n")
 
+def _clean_team(s):
+    s = re.sub(r"\(.*?\)", " ", s)                       # (BO3), (+6.5)
+    s = re.sub(r"\s+-\s+.*$", "", s)                     # " - IEM Cologne Major" / "- Map 1 Winner"
+    s = re.sub(r"\bmap\s*\d+\b.*$", "", s, flags=re.IGNORECASE)
+    return s.strip(" -:")
+
 def parse_teams(q):
+    """Extract the two TEAM names from a Polymarket question, stripping the
+    '(BO3) - <event>' / '- Map N' noise so short names like '9z' still match."""
     if not q: return None
     parts = VS_RE.split(q.split(": ")[-1])
-    if len(parts) != 2: return None
-    a, b = parts[0].strip(), parts[1].strip()
+    if len(parts) != 2:
+        parts = VS_RE.split(q)
+        if len(parts) != 2: return None
+    a, b = _clean_team(parts[0]), _clean_team(parts[1])
     if not a or not b or len(a) > 40 or len(b) > 40: return None
     return a, b
 

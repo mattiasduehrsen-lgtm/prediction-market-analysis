@@ -20,8 +20,10 @@ def norm(s):
     s = s.replace("ex-", " ")
     s = re.sub(r"[^a-z0-9 ]", " ", s)
     s = re.sub(r"\bbo\d\b", " ", s)
-    for junk in [" esports", " e sports", " gaming", " team ", " clan "]:
-        s = s.replace(junk, " ")
+    # strip org-suffix words as WHOLE WORDS anywhere (not just space-delimited),
+    # so "9z Team"->"9z", "Team Spirit"->"spirit" both normalize to match the
+    # PandaScore key. (Keeps academy/fe/junior suffixes — those ARE distinct teams.)
+    s = re.sub(r"\b(esports|e sports|gaming|team|clan)\b", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
 

@@ -200,8 +200,13 @@ def run():
             n_live = n_bet = 0
             for mid, gs in by_match.items():
                 gs = sorted(gs, key=lambda x: x.get("number") or 0)
+                # NOTE: bo3's LIVE flag is in `status` (="current"), not `state`
+                # (state is None/done). Done = has a winner. (Bug found 2026-06-07:
+                # bot checked `state` -> never saw a live map -> 0 bets ever.)
                 done = [g for g in gs if g.get("winner_clan_name") and g.get("loser_clan_name")]
-                live_g = [g for g in gs if g.get("state") in ("current", "started")]
+                live_g = [g for g in gs
+                          if g.get("status") in ("current", "started", "live")
+                          and not g.get("winner_clan_name")]
                 # post-map-1 ONLY: exactly one map decided + a map in progress
                 if len(done) != 1 or not live_g:
                     continue

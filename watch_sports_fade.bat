@@ -8,10 +8,9 @@ cd /d "C:\Users\matti\Desktop\prediction-market-analysis"
 set LOCKFILE=watchdog_sports.lock
 set LOGFILE=watchdog_sports.log
 
-if exist %LOCKFILE% (
-    echo [%date% %time%] Already running. Exiting. >> %LOGFILE%
-    exit /b 1
-)
+:: self-heal stale lock (see watch_esports_fade.bat) — never let a leftover lock
+:: from a crash/reboot permanently block restart.
+if exist %LOCKFILE% del /f /q %LOCKFILE%
 echo %date% %time% > %LOCKFILE%
 
 :loop

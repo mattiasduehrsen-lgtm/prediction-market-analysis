@@ -1,7 +1,9 @@
 @echo off
 cd /d "C:\Users\matti\Desktop\prediction-market-analysis"
 set LOCKFILE=watchdog_cs2inplay.lock
-if exist %LOCKFILE% ( echo [%date% %time%] already running >> watchdog_cs2inplay.log & exit /b 1 )
+:: self-heal stale lock (see watch_cs2_model.bat) — never let a leftover lock
+:: from a crash/reboot permanently block restart.
+if exist %LOCKFILE% del /f /q %LOCKFILE%
 echo %date% %time% > %LOCKFILE%
 :loop
 echo [%date% %time%] starting cs2_inplay_bot >> watchdog_cs2inplay.log

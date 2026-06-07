@@ -1,7 +1,10 @@
 @echo off
 cd /d "C:\Users\matti\Desktop\prediction-market-analysis"
 set LOCKFILE=watchdog_cs2model.lock
-if exist %LOCKFILE% ( echo [%date% %time%] already running >> watchdog_cs2model.log & exit /b 1 )
+:: self-heal: delete any STALE lock from a crashed/rebooted instance instead of
+:: exiting on it (that trap silently killed this bot for 2 days, 2026-06-05->07).
+:: The scheduled task's own instance control prevents true double-runs.
+if exist %LOCKFILE% del /f /q %LOCKFILE%
 echo %date% %time% > %LOCKFILE%
 :loop
 echo [%date% %time%] starting cs2_model_bot >> watchdog_cs2model.log

@@ -3,11 +3,11 @@ cd /d C:\Users\matti\Desktop\prediction-market-analysis
 set PYTHONUNBUFFERED=1
 set LOCKFILE=watchdog_esports.lock
 
-:: Prevent multiple instances — exit immediately if lock exists
-if exist %LOCKFILE% (
-    echo [%date% %time%] Already running (lock exists). Exiting. >> watchdog_esports.log
-    exit /b 1
-)
+:: Self-heal stale lock: a leftover lock from a crashed/rebooted instance must
+:: NOT permanently block restart (that trap silently killed cs2_model for 2 days,
+:: and on reboot would block EVERY onstart watchdog incl. this LIVE bot). The
+:: scheduled task's own instance control prevents true double-runs.
+if exist %LOCKFILE% del /f /q %LOCKFILE%
 
 :: Create lock file
 echo %RANDOM%%RANDOM% > %LOCKFILE%

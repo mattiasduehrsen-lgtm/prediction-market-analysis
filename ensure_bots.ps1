@@ -23,3 +23,4 @@ foreach ($key in $map.Keys) {
             Out-File -Append -Encoding utf8 "$root\health_guard.log"
     }
 }
+exit 0

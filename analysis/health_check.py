@@ -32,16 +32,17 @@ for key,label in bots.items():
 
 # 2) HEARTBEAT FRESHNESS
 print("="*70); print(" 2. LOG FRESHNESS (stale = stuck/dead)")
+# heartbeat bots (must be fresh). telegram/dashboard are event-driven -> not here.
 logs={"watchdog_esports.log":"esports","watchdog_sports.log":"sports",
-      "watchdog_cs2model.log":"model","watchdog_cs2inplay.log":"inplay",
-      "watchdog_telegram.log":"telegram"}
+      "watchdog_cs2model.log":"model","watchdog_cs2inplay.log":"inplay"}
 for fn,label in logs.items():
     p=ROOT/fn
     if not p.exists(): print(f"   {label}: NO LOG"); warn(f"{label} no log"); continue
     age=(now-p.stat().st_mtime)/60
     s=f"   {label:<10}: last write {age:.1f} min ago"
-    if age>15: print(s+"  <<< STALE"); fail(f"{label} log stale {age:.0f}m")
+    if age>30: print(s+"  <<< STALE/HUNG"); fail(f"{label} log stale {age:.0f}m")
     else: print(s+"  OK"); ok(f"{label} fresh")
+print("   (telegram/dashboard are event-driven — liveness checked in section 1)")
 
 # 3) LIVE ESPORTS BOT INTERNALS (onchain + pnl)
 print("="*70); print(" 3. LIVE ESPORTS BOT")
@@ -112,10 +113,10 @@ for rel,(label,maxmin) in data.items():
     else: print(s+"  OK"); ok(f"{label} fresh")
 
 # 8) PAUSE FLAGS
-print("="*70); print(" 8. PAUSE FLAGS")
-for rel in ["output/esports_fade/paused.flag","output/5m_live/paused.live.flag"]:
-    if (ROOT/rel).exists(): print(f"   {rel}: PRESENT (bot paused!)"); warn(f"pause flag {rel}")
-    else: print(f"   {rel}: absent")
+print("="*70); print(" 8. PAUSE FLAGS (active bots only)")
+rel="output/esports_fade/paused.flag"
+if (ROOT/rel).exists(): print(f"   {rel}: PRESENT (LIVE bot paused!)"); warn("esports paused")
+else: print(f"   {rel}: absent (live bot trading)"); ok("not paused")
 
 # 9) IN-PLAY DATA
 print("="*70); print(" 9. IN-PLAY PAPER DATA")

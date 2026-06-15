@@ -24,7 +24,9 @@ bots = {"esports_fade_bot":"LIVE fade","sports_fade_bot":"sports","cs2_model_bot
         "cs2_inplay_bot":"inplay paper","telegram_bot":"telegram","main.py dashboard":"dashboard"}
 print("="*70); print(" 1. PROCESSES")
 for key,label in bots.items():
-    n = len([l for l in cmds.splitlines() if key in l])
+    # 'sports_fade_bot' is a substring of 'esports_fade_bot' -> boundary match
+    _pat=re.compile(r"(?<![A-Za-z])"+re.escape(key))
+    n = len([l for l in cmds.splitlines() if _pat.search(l)])
     line=f"   {label:<12} ({key}): {n} proc"
     if n==0: print(line+"  <<< DOWN"); fail(f"{label} DOWN")
     elif n>2: print(line+"  <<< DUPLICATE"); warn(f"{label} {n} procs (dup)")

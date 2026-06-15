@@ -23,12 +23,16 @@ try {
     $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop)
 } catch { Log "ERROR querying processes: $_"; exit 1 }
 $cmds = $procs | ForEach-Object { $_.CommandLine }
+# IMPORTANT: 'sports_fade_bot' is a substring of 'esports_fade_bot', so a plain
+# Contains() would count esports's procs as sports' -> a dead sports bot would be
+# masked by a live esports bot and never revived. Require no letter before the key.
+function Matches-Bot($cmd, $key) { return $cmd -match ("(?<![A-Za-z])" + [regex]::Escape($key)) }
 
 $acted = @()
 foreach ($key in $map.Keys) {
     $task = $map[$key][0]; $lock = "$root\$($map[$key][1])"
     $hblog = $map[$key][2]; $staleMin = $map[$key][3]
-    $n = @($cmds | Where-Object { $_ -and $_.Contains($key) }).Count
+    $n = @($cmds | Where-Object { $_ -and (Matches-Bot $_ $key) }).Count
 
     $reason = $null
     if ($n -eq 0) {
@@ -39,7 +43,7 @@ foreach ($key in $map.Keys) {
     }
     if ($reason) {
         # kill this bot's python (handles the HUNG-but-alive case) so restart isn't a dup
-        $procs | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($key) } |
+        $procs | Where-Object { $_.CommandLine -and (Matches-Bot $_.CommandLine $key) } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         schtasks /end /tn $task 2>$null | Out-Null      # clear stuck "running" state
         Start-Sleep -Milliseconds 800

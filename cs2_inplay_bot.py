@@ -26,7 +26,8 @@ BETS = OUT / "paper_bets.csv"
 EVENTS = OUT / "events.jsonl"
 
 EDGE_THRESHOLD = 0.03   # lowered 0.05->0.03 for more bets/faster validation
-POLL_INTERVAL = 60
+POLL_INTERVAL = 30      # 60->30s: tighter detection, captures more of the 0-10min edge window
+K_MAP = 12.0            # map-1-result Elo update strength (~half series K)
 BET_USD = 10.0
 MAX_WINDOW_S = 720      # only BET within ~12 min of map-2 start (edge ~dead by 30)
 OBS_MAX_S = 3000        # OBSERVE (log latency/liquidity) up to ~50 min in
@@ -47,6 +48,18 @@ def series_prob(p, a, b, W):
     for k in range(need_b):           # opp wins k (<need_b) before A gets need_a
         tot += math.comb(need_a - 1 + k, k) * (p ** need_a) * ((1 - p) ** k)
     return tot
+
+def map1_update_p(p, K=12.0):
+    """A map-1 result is EVIDENCE about single-map strength, not just a score
+    change. The old model used a static pre-match p and only changed the score
+    -> it systematically OVER-rated map-1 LOSERS (the 12%-WR contrarian bets
+    that lost live). This nudges the map-1 WINNER's single-map prob up via an
+    Elo update on the implied rating diff (K=12 ~= half the series K, since a
+    map is ~half a series of information). Theory-based, NOT tuned on results."""
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    d = -400.0 * math.log10(1.0 / p - 1.0)   # implied Elo diff (winner - loser)
+    d += K * (1.0 - p)                        # winner won the map they were 'p' to win
+    return 1.0 / (1.0 + 10 ** (-d / 400.0))
 
 def invert(P, W):
     lo, hi = 0.0, 1.0
@@ -137,7 +150,7 @@ def write_bet(row):
 OBS = OUT / "observations.csv"
 def write_observation(row):
     cols = ["ts", "condition_id", "slug", "teamA", "teamB", "score_state",
-            "map1_winner", "model_pre", "p_single", "model_live", "market_live",
+            "map1_winner", "model_pre", "p_single", "model_live", "model_live_v1", "market_live",
             "edge", "model_side", "side_outcome", "best_ask", "book_depth_usd",
             "bo3_detect_lag_s", "in_window", "would_bet", "A_won_series"]
     new = not OBS.exists()
@@ -253,7 +266,9 @@ def run():
                     continue
                 model_pre_A = pred["model_pA"]
                 p = invert(min(max(model_pre_A, 0.02), 0.98), W)
-                model_live_A = series_prob(p, aw, bw, W)
+                model_live_v1 = series_prob(p, aw, bw, W)          # old (map-1 = score only)
+                p_upd = map1_update_p(p, K_MAP)                    # map-1 result as evidence
+                model_live_A = series_prob(p_upd, aw, bw, W)       # v2 = ACTIVE
                 # find live Polymarket series market
                 pm, pteams = find_pm_market(load_markets(cache), nA, nB, now)
                 if pm is None:
@@ -298,7 +313,8 @@ def run():
                     "teamA": tA, "teamB": tB, "score_state": f"{aw}-{bw}",
                     "map1_winner": tA if aw > bw else tB,
                     "model_pre": round(model_pre_A, 4), "p_single": round(p, 4),
-                    "model_live": round(model_live_A, 4), "market_live": round(midA, 4),
+                    "model_live": round(model_live_A, 4), "model_live_v1": round(model_live_v1, 4),
+                    "market_live": round(midA, 4),
                     "edge": round(edge, 4), "model_side": side, "side_outcome": outcome,
                     "best_ask": round(best_ask, 4) if best_ask is not None else "",
                     "book_depth_usd": depth, "bo3_detect_lag_s": lag,

@@ -3,8 +3,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 rows = list(csv.DictReader((ROOT/"output"/"cs2_inplay"/"paper_results.csv").open(encoding="utf-8")))
 res = [r for r in rows if r.get("status") in ("WIN","LOSS")]
+BET=10.0
 def roi(items):
-    cost=sum(min(0.99,float(r["entry_price"])) for r in items)
+    cost=len(items)*BET            # each bet deploys $10 (correct denominator)
     pnl=sum(float(r["pnl"]) for r in items if r["pnl"]!="")
     n=len(items); w=sum(1 for r in items if r["status"]=="WIN")
     return n, (w/n*100 if n else 0), (pnl/cost*100 if cost else 0)

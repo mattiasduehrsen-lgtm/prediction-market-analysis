@@ -12,7 +12,8 @@ Write-Output ("hibernate-after " + (CurAC $SUB_SLEEP "9d7815a6-7ee4-497e-8888-51
 Write-Output ("lid-close       " + (CurAC $SUB_BTN  "5ca83367-6e45-459f-a27b-476b1d01c936"))
 powercfg /a | Select-String "Hibernation is not available|Hibernation has not"
 
-Write-Output "`n===== TASKS (runAs / state / triggers — AtStartup = survives reboot) ====="
+Write-Output ""
+Write-Output "===== TASKS (AtStartup trigger = survives reboot) ====="
 $tasks = "PolyBotEsports","PolyBotSports","CS2ModelBot","CS2InplayBot","PolyBotTelegram","PolyDashboard","PolyBotHealthGuard"
 foreach($t in $tasks){
     $k = Get-ScheduledTask -TaskName $t
@@ -22,13 +23,16 @@ foreach($t in $tasks){
     Write-Output ("{0,-20} runAs={1,-7} state={2,-7} wake={3,-5} triggers={4}" -f $t,$k.Principal.UserId,$k.State,$wake,$tr)
 }
 
-Write-Output "`n===== GUARD LAST RUN ====="
+Write-Output ""
+Write-Output "===== GUARD LAST RUN ====="
 if(Test-Path "health_guard_lastrun.txt"){ Get-Content "health_guard_lastrun.txt" }
 
-Write-Output "`n===== BOTS ALIVE NOW ====="
+Write-Output ""
+Write-Output "===== BOTS ALIVE NOW ====="
 $cmds = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | ForEach-Object { $_.CommandLine }
 foreach($b in "esports_fade_bot","sports_fade_bot","cs2_model_bot","cs2_inplay_bot","telegram_bot","main.py dashboard"){
     $pat = "(?<![A-Za-z])" + [regex]::Escape($b)
     $n = @($cmds | Where-Object { $_ -and ($_ -match $pat) }).Count
-    Write-Output ("{0,-20} {1} proc {2}" -f $b,$n,$(if($n -eq 0){"<<< DOWN"}else{"OK"}))
+    $tag = "OK"; if($n -eq 0){ $tag = "DOWN" }
+    Write-Output ("{0,-20} {1} proc {2}" -f $b,$n,$tag)
 }

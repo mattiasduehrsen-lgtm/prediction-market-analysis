@@ -46,9 +46,14 @@ DEFAULT_RPCS = [
     "https://1rpc.io/matic",
 ]
 
-POLL_INTERVAL = 3.0          # seconds between getLogs polls. 3s keeps detection
-                             # latency ~3-4s (still 30-50x better than the ~220s
-                             # data-api) while cutting RPC request volume ~33%.
+POLL_INTERVAL = 15.0         # seconds between getLogs polls. Raised 3s->15s on
+                             # 2026-06-17 after the Alchemy key hit its 30M CU cap
+                             # in ~6 days (3s polling 24/7 = ~5M CU/day). At 15s the
+                             # burn is ~1M CU/day so 30M lasts a full month, and
+                             # detection latency is still ~15s vs the ~220s data-api
+                             # it replaced (~15x faster) — a non-issue while the fade
+                             # edge is ~0. Drop back toward 3-5s only if the edge
+                             # proves real and the CU budget is raised.
 MAX_BLOCK_LOOKBACK = 40      # if we fall behind, never scan more than this many blocks
 # Addresses per getLogs topic filter. Alchemy (our primary RPC) handles all 300
 # wallets in ONE filter, so a poll is just 2 getLogs (to + from) instead of 6 —

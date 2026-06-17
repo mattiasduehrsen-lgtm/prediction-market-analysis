@@ -2,6 +2,37 @@
 
 ---
 
+## v1.45 — 2026-06-17
+**On-chain listener `POLL_INTERVAL` 3s → 15s (CU-budget fix, no trading-logic change).**
+
+### Why
+The Alchemy RPC key hit its **30M CU spending cap in ~6 days**. The on-chain
+listener polls `eth_getLogs` every 3s, 24/7 (2 getLogs + 1 blockNumber per poll
+≈ 160 CU) ≈ **~5M CU/day**. Alchemy now returns `429 Too Many Requests`.
+
+### Impact (before the fix)
+The listener auto-rotated to its free public-RPC fallbacks (`conn=True`,
+detections still climbing — **not blind**), but the public nodes are flaky:
+frequent `Read timed out`, lag ~14s vs ~3s on Alchemy.
+
+### Decision
+The fade edge is currently ~0 (daily PnL $0, strategy under reconsideration), so
+paying to raise the Alchemy cap isn't justified. Slowed polling to **15s** →
+**~1M CU/day** so 30M lasts a full month, and cut the public-RPC thrash now.
+Detection latency ~15s is still ~15× better than the ~220s data-api the on-chain
+path replaced — a non-issue at a flat edge.
+
+### Files
+- `onchain_listener.py` — `POLL_INTERVAL = 15.0` (was `3.0`), comment updated.
+- `src/bot/version.py` — v1.45.
+
+### Not done (deliberate, one-change-at-a-time)
+Bigger CU win: **gate polling to active CS2 match windows only** (we poll 24/7
+even when no CS2 is live). Revert toward 3–5s if the edge proves real and the CU
+budget is raised.
+
+---
+
 ## v1.41 — 2026-06-02
 **Elo model filter on the live fade bot (fade + model hybrid).**
 

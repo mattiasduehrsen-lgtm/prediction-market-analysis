@@ -2,6 +2,44 @@
 
 ---
 
+## v1.46 — 2026-06-17
+**On-chain listener polls ONLY during live CS2 match windows (Alchemy CU fix #2, no trading-logic change).**
+
+### Why
+v1.45 slowed polling to 15s, but the bigger waste remained: we poll `eth_getLogs`
+24/7 even though **most of the day has no live CS2 match**, so the target wallets'
+on-chain activity in those hours is all non-esports and dropped anyway.
+
+### What
+- New gate `esports_fade_bot._onchain_gate()` passed to `OnChainListener(gate=...)`.
+- Windows are built from `clob_esports_markets.parquet`. A **real** CS2 match
+  market has a populated `game_start` (prop/futures markets like
+  `will-cs2-market-cap-reach-6-billion-...` don't), so requiring `game_start`
+  cleanly isolates matches. Window = `[game_start − 2h, game_start + 5h]`.
+- When no window is open the listener makes **zero RPC calls** and re-checks every
+  5 min (`POLL_INTERVAL_IDLE`). Window list cached, rebuilt ≤ every 5 min.
+- Heartbeat shows `gate=active` or `gate=IDLE(no-cs2)`.
+
+### Impact
+Measured duty cycle across the live dataset = **~31% active**, so on-chain CU burn
+drops ~3× (≈1M → ≈310K CU/day; 30M lasts ~3 months).
+
+### Safety (why a gate bug can't cost money)
+- Fails **OPEN** on any error or before the first successful load — never silently
+  blinds detection.
+- Generous buffers so pre-match bets and long Bo5s aren't missed.
+- The **data-api poll still backstops** any window we misjudge (catches it slowly).
+- Worst case of a gate bug = a *missed fade*, never a financial loss.
+- Disable entirely via `ONCHAIN_GATE_ENABLED=0`.
+
+### Files
+- `onchain_listener.py` — `gate` param, `POLL_INTERVAL_IDLE`, idle path in `run()`.
+- `esports_fade_bot.py` — `_load_cs2_windows()`, `_onchain_gate()`, gate wired in,
+  `import os`, heartbeat `gate=` field, window constants.
+- `src/bot/version.py` — v1.46.
+
+---
+
 ## v1.45 — 2026-06-17
 **On-chain listener `POLL_INTERVAL` 3s → 15s (CU-budget fix, no trading-logic change).**
 

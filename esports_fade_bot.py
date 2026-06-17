@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv as _csv
 import json
+import os
 import time
 import threading
 from collections import deque
@@ -129,6 +130,17 @@ ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-")
 # a backstop; whichever source sees a tx first wins (deduped by tx hash).
 ONCHAIN_ENABLED = True
 
+# On-chain CU gate: only run the eth_getLogs polling while a CS2 match window is
+# open. Most of the day has no live CS2 -> idling the listener then is the bulk of
+# the Alchemy CU savings (v1.46). Windows are built from clob_esports_markets.parquet
+# (a real match has a populated game_start; prop/futures markets don't). Buffers are
+# generous so we never miss pre-match or long Bo5s; the data-api poll backstops any
+# window we misjudge. Disable via ONCHAIN_GATE_ENABLED=0.
+ONCHAIN_GATE_ENABLED = os.getenv("ONCHAIN_GATE_ENABLED", "1") not in ("0", "false", "False")
+CS2_WINDOW_PRE_S = 2 * 3600      # start polling 2h before scheduled match start
+CS2_WINDOW_POST_S = 5 * 3600     # keep polling 5h after start (covers long Bo5 + delays)
+CS2_WINDOW_REFRESH_S = 300       # rebuild the window list from the parquet at most this often
+
 # Matches single-map / per-game markets: "-game1", "-game2", "-map-2", etc.
 # These are Bo1 outcomes (coin flips); we only want series moneylines.
 # Also catches "-map-handicap" style markets, which are likewise negative-EV.
@@ -217,6 +229,7 @@ class FadeBot:
                     on_signal=self._enqueue_onchain_signal,
                     clob_session=_rq.Session(),  # dedicated session (thread isolation)
                     log=print,
+                    gate=(self._onchain_gate if ONCHAIN_GATE_ENABLED else None),
                 )
                 self.onchain.start()
                 print(f"[fade-bot] on-chain listener started "
@@ -374,6 +387,55 @@ class FadeBot:
         except Exception as e:
             print(f"[fade-bot] token index build failed: {e}")
         return idx
+
+    def _load_cs2_windows(self) -> list[tuple[float, float]]:
+        """Build [(start_ts, end_ts), ...] match windows for OPEN CS2 markets.
+
+        A real CS2 match market has a populated game_start (prop/futures markets
+        like 'will-cs2-market-cap-...' do not), so requiring game_start naturally
+        excludes the non-match noise. Window = [start - PRE, start + POST]."""
+        import pandas as pd
+        p = ES_DIR / "clob_esports_markets.parquet"
+        if not p.exists():
+            return []
+        df = pd.read_parquet(p, columns=["slug", "game_start", "closed", "archived"])
+        cs = df[df["slug"].str.contains("cs2-|-cs2|csgo-|-csgo", case=False, na=False)]
+        cs = cs[(~cs["closed"].astype(bool)) & (~cs["archived"].astype(bool))]
+        gs = pd.to_datetime(cs["game_start"], errors="coerce", utc=True).dropna()
+        out = []
+        for t in gs:
+            start = t.timestamp()
+            out.append((start - CS2_WINDOW_PRE_S, start + CS2_WINDOW_POST_S))
+        return out
+
+    def _onchain_gate(self) -> bool:
+        """Gate for the on-chain listener: True iff a CS2 match window is open now.
+
+        Called from the listener thread every poll. Caches the window list and
+        rebuilds it from the parquet at most every CS2_WINDOW_REFRESH_S. Fails
+        OPEN (returns True) on any error or before the first successful load, so a
+        data glitch can never silently stop detection."""
+        now = time.time()
+        try:
+            if now - getattr(self, "_cs2_windows_at", 0.0) > CS2_WINDOW_REFRESH_S:
+                self._cs2_windows = self._load_cs2_windows()
+                self._cs2_windows_at = now
+        except Exception as e:
+            self._cs2_windows_at = now              # don't hammer on repeated errors
+            if not getattr(self, "_cs2_windows", None):
+                return True                         # never loaded -> fail open
+            print(f"[fade-bot] gate window reload failed (using stale): {e}")
+        windows = getattr(self, "_cs2_windows", None)
+        if windows is None:
+            return True                             # not loaded yet -> fail open
+        active = any(s <= now <= e for s, e in windows)
+        if active != getattr(self, "_gate_active", None):
+            self._gate_active = active
+            open_n = sum(1 for s, e in windows if s <= now <= e)
+            print(f"[fade-bot] on-chain gate -> "
+                  f"{'ACTIVE (CS2 match window open, %d)' % open_n if active else 'IDLE (no live CS2 match)'} "
+                  f"[{len(windows)} windows known]")
+        return active
 
     def get_market(self, condition_id: str) -> dict | None:
         """Return {outcomes, tokens} for a conditionId, fetching on miss."""
@@ -1209,7 +1271,8 @@ class FadeBot:
                     if getattr(self, "onchain", None):
                         o = self.onchain
                         lag = f"{o.last_detect_lag:.0f}s" if o.last_detect_lag is not None else "n/a"
-                        oc_str = (f" | onchain[conn={o.connected} detected={o.n_detected} "
+                        gstr = "IDLE(no-cs2)" if getattr(o, "gated", False) else "active"
+                        oc_str = (f" | onchain[conn={o.connected} gate={gstr} detected={o.n_detected} "
                                   f"emitted={o.n_emitted} dropped={o.n_dropped} last_lag={lag}]")
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} "
                           f"signals={n_signals_now} fades={n_fades_now} "

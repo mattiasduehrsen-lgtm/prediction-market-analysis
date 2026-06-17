@@ -46,14 +46,17 @@ DEFAULT_RPCS = [
     "https://1rpc.io/matic",
 ]
 
-POLL_INTERVAL = 15.0         # seconds between getLogs polls. Raised 3s->15s on
-                             # 2026-06-17 after the Alchemy key hit its 30M CU cap
-                             # in ~6 days (3s polling 24/7 = ~5M CU/day). At 15s the
-                             # burn is ~1M CU/day so 30M lasts a full month, and
-                             # detection latency is still ~15s vs the ~220s data-api
-                             # it replaced (~15x faster) — a non-issue while the fade
-                             # edge is ~0. Drop back toward 3-5s only if the edge
-                             # proves real and the CU budget is raised.
+POLL_INTERVAL = 15.0         # seconds between getLogs polls WHEN ACTIVE. Raised
+                             # 3s->15s on 2026-06-17 after the Alchemy key hit its
+                             # 30M CU cap in ~6 days (3s polling 24/7 = ~5M CU/day).
+                             # At 15s the burn is ~1M CU/day, and detection latency
+                             # is still ~15s vs the ~220s data-api it replaced
+                             # (~15x faster) — a non-issue while the fade edge is ~0.
+POLL_INTERVAL_IDLE = 300.0   # When the caller's gate() says no CS2 match window is
+                             # open, we make NO RPC calls at all and just re-check
+                             # this often. Most of the day has no live CS2, so this
+                             # is the bulk of the CU savings. The data-api poll in
+                             # the bot still backstops any window we misjudge.
 MAX_BLOCK_LOOKBACK = 40      # if we fall behind, never scan more than this many blocks
 # Addresses per getLogs topic filter. Alchemy (our primary RPC) handles all 300
 # wallets in ONE filter, so a poll is just 2 getLogs (to + from) instead of 6 —
@@ -71,11 +74,14 @@ def _pad_addr(addr: str) -> str:
 class OnChainListener(threading.Thread):
     def __init__(self, wallets: set[str], token_index: dict,
                  on_signal, clob_session: requests.Session | None = None,
-                 log=print):
+                 log=print, gate=None):
         """
         wallets:      set of lowercased target proxy-wallet addresses
         token_index:  {token_id(str) -> (condition_id, outcome, slug)}
         on_signal:    callback(trade_dict) — bot enqueues for process_trade
+        gate:         optional callable() -> bool. When it returns False we make
+                      NO RPC calls (idle) — used to poll only during live CS2
+                      match windows. None = always poll (back-compat).
         """
         super().__init__(daemon=True, name="onchain-listener")
         self.wallets = set(w.lower() for w in wallets)
@@ -83,6 +89,8 @@ class OnChainListener(threading.Thread):
         self.on_signal = on_signal
         self.clob = clob_session or requests.Session()
         self.log = log
+        self.gate = gate
+        self.gated = False           # True while idled by the gate (no live match)
         self.w3: Web3 | None = None
         self._rpc_idx = 0            # rotates across endpoints on failure
         self._consec_errors = 0      # trip a rotation after repeated errors
@@ -218,6 +226,26 @@ class OnChainListener(threading.Thread):
     # ── main loop ────────────────────────────────────────────────────────
     def run(self):
         while not self._stop.is_set():
+            # ── CU-saving gate ──────────────────────────────────────────────
+            # When no live/imminent CS2 match window is open there is nothing to
+            # fade, so make NO RPC calls at all. Fail OPEN on any gate error so a
+            # data glitch can never silently blind the listener.
+            if self.gate is not None:
+                try:
+                    active = bool(self.gate())
+                except Exception:
+                    active = True
+                if not active:
+                    if not self.gated:
+                        self.log("[onchain] gate IDLE — no live CS2 match; pausing polls")
+                    self.gated = True
+                    self.last_block = None     # re-init fresh on resume (don't scan the gap)
+                    self._stop.wait(POLL_INTERVAL_IDLE)
+                    continue
+                if self.gated:
+                    self.log("[onchain] gate ACTIVE — CS2 match window open; resuming polls")
+                    self.gated = False
+
             if not self.w3 and not self._connect():
                 time.sleep(5)
                 continue

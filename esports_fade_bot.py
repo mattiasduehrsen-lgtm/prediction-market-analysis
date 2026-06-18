@@ -96,13 +96,17 @@ MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET = 30  # debounce rapid repeats
 ENTRY_SLIPPAGE = 0.01         # add 1c to our BUY price so order fills (v1.9 pattern)
 MIN_ENTRY_PRICE = 0.05        # don't place orders below 5c (no depth)
 MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
-# LIVE-only quality filter. Live data through 2026-05-18 showed 0/5 WR at
-# our_entry in [0.20, 0.40), vs 67-91% WR at [0.40, 0.80]. The 20-40c bucket
-# is where the fade is most often "right, but the market knows" — target is
-# selling into bad news, we're catching the falling knife at a price the
-# crowd has already moved past. Cut it on LIVE only; PAPER keeps collecting
-# so we can keep validating the rule.
-LIVE_MIN_OUR_ENTRY = 0.40
+# LIVE-only longshot floor. Originally 0.40, from a 0/5 WR sample in [0.20,0.40)
+# through 2026-05-18. BUT that sample predates the v1.41 Elo MODEL FILTER, which
+# now independently screens every fade for value (only fires when the model says
+# our side is underpriced by > MODEL_FILTER_MIN_EDGE). With the model filter live,
+# 0.40 was redundantly blocking the strategy's strongest setups: in 48h (2026-06-18)
+# ALL 10 model-APPROVED fades were killed by the 0.40 floor (underdog buys at
+# 0.25-0.39). Lowered to 0.20 (2026-06-18, v1.47): trust the model filter for the
+# 0.20-0.40 band, keep a floor only against extreme sub-0.20 longshots (favorite
+# almost always wins, liquidity/resolution risk high). Daily loss + risk caps still
+# bound downside. Revisit if model-approved sub-0.40 fades underperform on LIVE.
+LIVE_MIN_OUR_ENTRY = 0.20
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 LIVE_FILL_POLL_INTERVAL = 0.5 # seconds between fill checks (was 2.0 — quartered 2026-05-20 for latency)
 LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds

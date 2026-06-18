@@ -2,6 +2,43 @@
 
 ---
 
+## v1.47 — 2026-06-18
+**Two fixes after 48h of ZERO live orders despite 1066 target signals.**
+
+### Diagnosis
+`_why_no_trades.py` over 48h: 1066 signals, **0 orders**. Top skip reasons —
+`skip_single_map` 321 (deliberate), `skip_debounce` 284 (deliberate),
+**`skip_model_unmatched` 253**, `skip_model_filter` 63 (filter working),
+`model_filter_pass`/`fade_signal` **10** → but **`skip_entry_price_floor` 10**
+killed every one. Two fixable blockers.
+
+### Fix 1 — CS2 model name-collision bug
+`name_to_id` was built first-writer-wins, so when two teams normalize to the same
+key (`Team Falcons` [308 games] and a minor `Falcons` [7 games] both → `falcons`)
+the **low-games minor team often claimed the name** → `predict()` returned
+`low_games` → every real matchup against that team was wrongly skipped. This blocked
+**238 series-moneyline fades across 5 matchups** (vit-fal2 ×89, tdk-nem ×116,
+sparta-inox ×10, …). Fix: `CS2Model._register()` resolves collisions by **preferring
+the higher-games team** (the established roster = the intended team). Verified
+Vitality/Falcons, TDK/Nemiga, Sparta/Inox now evaluate `ok=True`. Affects all three
+model-using bots (esports live filter, cs2_model, cs2_inplay).
+
+### Fix 2 — entry-price floor 0.40 → 0.20
+`LIVE_MIN_OUR_ENTRY` was 0.40 (from a 0/5-WR sample in [0.20,0.40) collected
+*before* the v1.41 model filter existed). The model filter now screens every fade
+for value, so 0.40 was redundantly blocking the strategy's best setups — **all 10
+model-approved fades in 48h** were underdog buys at 0.25–0.39. Lowered to 0.20:
+trust the model filter for the 0.20–0.40 band, keep only an extreme-longshot guard.
+Daily loss/risk caps still bound downside.
+
+### Files
+- `cs2_model.py` — `_register()` collision resolver (prefer more games).
+- `esports_fade_bot.py` — `LIVE_MIN_OUR_ENTRY` 0.40 → 0.20.
+- `analysis/_why_no_trades.py` — new skip-reason diagnostic.
+- `src/bot/version.py` — v1.47.
+
+---
+
 ## v1.46 — 2026-06-17
 **On-chain listener polls ONLY during live CS2 match windows (Alchemy CU fix #2, no trading-logic change).**
 

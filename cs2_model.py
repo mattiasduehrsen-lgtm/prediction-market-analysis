@@ -46,6 +46,22 @@ class CS2Model:
         self._mtime = 0.0
         self.load()
 
+    def _register(self, n, tid):
+        """Map normalized name -> team id, resolving collisions by PREFERRING THE
+        TEAM WITH MORE PRIOR GAMES. Multiple teams can normalize to the same name
+        (e.g. 'Team Falcons' [308 games] and a minor 'Falcons' [7 games] both ->
+        'falcons'). First-writer-wins used to hand the name to whichever was loaded
+        first — often the low-games minor team — which then false-rejected every
+        real matchup as low_games. The established roster (more games) is the
+        intended team for a CS2 market, so it wins the name."""
+        if not n:
+            return
+        cur = self.name_to_id.get(n)
+        if cur is None:
+            self.name_to_id[n] = tid
+        elif cur != tid and self.elo_by_id.get(tid, (0, 0))[1] > self.elo_by_id.get(cur, (0, 0))[1]:
+            self.name_to_id[n] = tid
+
     def load(self):
         elo_path = GD / "pandascore" / "cs2_elo_final.parquet"
         teams_path = GD / "pandascore" / "cs2_teams.parquet"
@@ -56,7 +72,8 @@ class CS2Model:
             elo = pd.read_parquet(elo_path)
             self.elo_by_id = {int(r.team_id): (float(r.elo), int(r.games))
                               for r in elo.itertuples(index=False)}
-            # name/acronym -> id from teams table; also from elo history names
+            # name/acronym -> id from teams table; also from elo history names.
+            # Collisions resolve to the higher-games team (see _register).
             self.name_to_id.clear(); self.id_to_name.clear()
             if teams_path.exists():
                 t = pd.read_parquet(teams_path)
@@ -64,9 +81,7 @@ class CS2Model:
                     if r.id is None: continue
                     self.id_to_name[int(r.id)] = r.name
                     for nm in (r.name, r.acronym, r.slug):
-                        n = norm(nm)
-                        if n and n not in self.name_to_id:
-                            self.name_to_id[n] = int(r.id)
+                        self._register(norm(nm), int(r.id))
             # also pull names from elo history (covers teams not in teams table)
             hist = GD / "pandascore" / "cs2_elo_history.parquet"
             if hist.exists():
@@ -74,10 +89,8 @@ class CS2Model:
                 for r in h.itertuples(index=False):
                     for tid, nm in [(r.teamA_id, r.teamA_name), (r.teamB_id, r.teamB_name)]:
                         if tid is None: continue
-                        n = norm(nm)
                         self.id_to_name.setdefault(int(tid), nm)
-                        if n and n not in self.name_to_id:
-                            self.name_to_id[n] = int(tid)
+                        self._register(norm(nm), int(tid))
         except Exception as e:
             print(f"[cs2-model] load failed: {e}")
 

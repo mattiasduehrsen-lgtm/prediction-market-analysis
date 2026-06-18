@@ -2,6 +2,36 @@
 
 ---
 
+## v1.49 — 2026-06-18
+**Fade-of-SELL mispricing — 4th blocker (orders placed but never filled).**
+
+### Why
+After v1.47/v1.48 the bot finally *placed* orders again — but all 3 came back
+`canceled, shares=0`. We bid **Vitality @ 0.30 for a token trading at ~0.70**, so
+the order rested far below market and timed out. Root cause: when fading a target's
+**SELL** we correctly buy the *same* outcome they sold, but `our_entry` was
+`1 - their_price` for **both** branches. For the SELL branch that's the *complement*
+price. Target sold Vitality @0.705 → we bid `1-0.705 = 0.295` for Vitality.
+
+It also **corrupted the model edge**: `model_p(Vitality)=0.66` vs the bogus `0.295`
+entry = fake **+0.37** edge that passed the filter. With the correct `0.705` entry
+the edge is ~−0.04 → correctly *rejected*.
+
+### Fix
+Fade-SELL branch: `our_entry = their_price` (the bought outcome's own price).
+Fade-BUY unchanged (`1 - their_price` is correct there — we buy the other side).
+
+### Effect
+- Fade-of-SELL orders now price at market → **can fill**.
+- The model filter sees the **true** edge → only real-edge fades trade (so some
+  phantom-edge fade-SELLs that used to "pass" will now correctly be skipped).
+
+### Files
+- `esports_fade_bot.py` — move `our_entry` into each fade branch; SELL → `their_price`.
+- `src/bot/version.py` — v1.49.
+
+---
+
 ## v1.48 — 2026-06-18
 **Phantom-exposure fix — the 3rd blocker behind 2 days of zero trades.**
 

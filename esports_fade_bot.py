@@ -727,11 +727,19 @@ class FadeBot:
         # FOLLOW: we BUY the same outcome's token at the same price (target wins → we win)
         if strategy == "fade":
             if their_side == "BUY":
+                # target bullish their_outcome → fade = buy the OTHER side, whose
+                # price is ~1 - their_price.
                 our_outcome = other
+                our_entry = round(1 - their_price, 4)
             else:
-                # target SELL = exiting / shorting their_outcome → fade = buy what they sold
+                # target SELL = exiting / shorting their_outcome → fade = buy the
+                # SAME outcome they sold. We buy their_outcome, so our entry is
+                # that outcome's OWN price (their_price), NOT 1 - their_price.
+                # (Bug through v1.48: used 1 - their_price here, so we bid the
+                # complement — e.g. 0.295 for a Vitality token trading at 0.705 —
+                # which never filled AND produced a phantom model edge. v1.49.)
                 our_outcome = their_outcome
-            our_entry = round(1 - their_price, 4)
+                our_entry = round(their_price, 4)
         else:  # follow
             if their_side == "BUY":
                 our_outcome = their_outcome

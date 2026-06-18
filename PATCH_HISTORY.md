@@ -2,6 +2,41 @@
 
 ---
 
+## v1.48 — 2026-06-18
+**Phantom-exposure fix — the 3rd blocker behind 2 days of zero trades.**
+
+### Why
+`market_exposure` — read by both the **per-market $ cap** (`MAX_PER_MARKET_USD`)
+and the **opposite-side hedge guard** — was incremented at **signal time** in
+`process_trade`, before the order was placed/confirmed. Any signal that was then
+floored, errored, or never filled left **fake exposure** on that `(market,outcome)`.
+That phantom $ then blocked the entire market: furia-9z showed **$45 exposure +
+opposite-side block with ZERO real orders** (verified: cid absent from both
+`live_orders.jsonl` and `live_results.csv`).
+
+### Fix
+- LIVE: `market_exposure` is incremented **only on a confirmed matched fill**
+  inside `place_live_order` (by actual matched `cost`).
+- PAPER: unchanged (still counts every simulated fade at signal time).
+- A restart also clears the stranded phantom (rebuild from `live_orders.jsonl` = $0).
+
+Now the cap + hedge guard gate on **real positions**, so unfilled/failed attempts
+can't self-block a market.
+
+### Known related (not changed — smaller, separate)
+The per-wallet daily-fade counter (`fades_by_wallet_today`, `MAX_FADES_PER_WALLET_PER_DAY`)
+still counts *attempts* not fills. Left for a focused follow-up.
+
+### Files
+- `esports_fade_bot.py` — guard signal-time increment with `if not self.live`;
+  add fill-time increment in `place_live_order`.
+- `src/bot/version.py` — v1.48.
+
+Combined with v1.47 (model name-collision + floor 0.40→0.20), this clears all
+three identified blockers.
+
+---
+
 ## v1.47 — 2026-06-18
 **Two fixes after 48h of ZERO live orders despite 1066 target signals.**
 

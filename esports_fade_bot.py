@@ -899,9 +899,16 @@ class FadeBot:
             "signal_lag_s":    round(signal_seen_at - float(t.get("timestamp") or signal_seen_at), 3),
         }
 
-        # Update exposure trackers (paper-side counters always; live-risk only
-        # when we'll actually place an order — see entry-price filter below)
-        self.market_exposure[exp_key] = prior + bet
+        # Update exposure trackers.
+        #  - PAPER: count every simulated fade (paper has no real fills).
+        #  - LIVE: do NOT count here. market_exposure must reflect ACTUAL matched
+        #    fills — otherwise a signal that is floored, errors, or never fills
+        #    still inflates exposure, and that phantom $ then blocks the WHOLE
+        #    market via the per-market cap + opposite-side guard. This is exactly
+        #    what stranded furia-9z with $45 of exposure and ZERO real orders
+        #    (2026-06-18). LIVE exposure is added in place_live_order on a fill.
+        if not self.live:
+            self.market_exposure[exp_key] = prior + bet
         self.fades_today += 1
         if strategy == "fade":
             self.fades_by_wallet_today[wallet] = self.fades_by_wallet_today.get(wallet, 0) + 1
@@ -1106,6 +1113,14 @@ class FadeBot:
                 **{k: trade.get(k) for k in ("fade_condition", "fade_slug", "our_outcome",
                                               "target_wallet", "strategy")},
             }) + "\n")
+
+        # Reflect the ACTUAL matched fill in the per-market exposure tracker that
+        # the cap + opposite-side guards read. Only real fills count (see the note
+        # at the signal-time increment) so unfilled/failed attempts can't leave
+        # phantom exposure that blocks the market. (2026-06-18, v1.48)
+        if final_matched > 0:
+            ek = (trade.get("fade_condition"), trade.get("our_outcome"))
+            self.market_exposure[ek] = self.market_exposure.get(ek, 0.0) + cost
 
     def take_profit_sweep(self):
         """SELL any open CTF positions where the current best bid >= TP_MIN_PRICE.

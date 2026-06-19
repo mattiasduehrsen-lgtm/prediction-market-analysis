@@ -39,7 +39,10 @@ def teq(x, y):
 
 
 class CS2Model:
-    def __init__(self):
+    def __init__(self, game: str = "cs2"):
+        # game selects which Elo parquet set to load: cs2_* (default, unchanged)
+        # or lol_* for League. The matching/predict logic is game-agnostic.
+        self.game = game.lower()
         self.elo_by_id: dict[int, tuple[float, int]] = {}
         self.name_to_id: dict[str, int] = {}
         self.id_to_name: dict[int, str] = {}
@@ -63,8 +66,8 @@ class CS2Model:
             self.name_to_id[n] = tid
 
     def load(self):
-        elo_path = GD / "pandascore" / "cs2_elo_final.parquet"
-        teams_path = GD / "pandascore" / "cs2_teams.parquet"
+        elo_path = GD / "pandascore" / f"{self.game}_elo_final.parquet"
+        teams_path = GD / "pandascore" / f"{self.game}_teams.parquet"
         if not elo_path.exists():
             return
         try:
@@ -83,7 +86,7 @@ class CS2Model:
                     for nm in (r.name, r.acronym, r.slug):
                         self._register(norm(nm), int(r.id))
             # also pull names from elo history (covers teams not in teams table)
-            hist = GD / "pandascore" / "cs2_elo_history.parquet"
+            hist = GD / "pandascore" / f"{self.game}_elo_history.parquet"
             if hist.exists():
                 h = pd.read_parquet(hist, columns=["teamA_id", "teamA_name", "teamB_id", "teamB_name"])
                 for r in h.itertuples(index=False):
@@ -96,11 +99,11 @@ class CS2Model:
 
     def maybe_reload(self):
         try:
-            m = (GD / "pandascore" / "cs2_elo_final.parquet").stat().st_mtime
+            m = (GD / "pandascore" / f"{self.game}_elo_final.parquet").stat().st_mtime
         except OSError:
             return
         if m > self._mtime:
-            print("[cs2-model] reloading Elo (refreshed)")
+            print(f"[{self.game}-model] reloading Elo (refreshed)")
             self.load()
 
     def match_team(self, name):

@@ -9,10 +9,14 @@ Outputs:
   prints accuracy / Brier / log-loss / calibration on a held-out recent window
 """
 from __future__ import annotations
-import math
+import math, sys
 from pathlib import Path
 from collections import defaultdict
 import pandas as pd
+
+GAME = (sys.argv[1] if len(sys.argv) > 1 else "cs2").lower()
+if GAME not in ("cs2", "lol"):
+    raise SystemExit(f"unknown game {GAME!r}; use cs2 or lol")
 
 ROOT = Path(__file__).resolve().parents[1]
 GD = ROOT / "cowork_snapshot" / "gamedata" / "pandascore"
@@ -22,7 +26,7 @@ BASE = 1500.0
 MIN_GAMES = 10   # only score predictions once both teams have this many prior matches
 
 def main():
-    df = pd.read_parquet(GD / "cs2_matches.parquet").sort_values("begin_at").reset_index(drop=True)
+    df = pd.read_parquet(GD / f"{GAME}_matches.parquet").sort_values("begin_at").reset_index(drop=True)
     elo = defaultdict(lambda: BASE)
     games = defaultdict(int)
     out = []
@@ -44,10 +48,10 @@ def main():
         elo[b] = eb + K * ((1 - actualA) - (1 - pA))
         games[a] += 1; games[b] += 1
     hist = pd.DataFrame(out)
-    hist.to_parquet(GD / "cs2_elo_history.parquet")
+    hist.to_parquet(GD / f"{GAME}_elo_history.parquet")
     # also dump final ratings
     fin = pd.DataFrame([{"team_id": k, "elo": v, "games": games[k]} for k, v in elo.items()])
-    fin.sort_values("elo", ascending=False).to_parquet(GD / "cs2_elo_final.parquet")
+    fin.sort_values("elo", ascending=False).to_parquet(GD / f"{GAME}_elo_final.parquet")
 
     # ── Evaluate on matches where both teams have >= MIN_GAMES history ───────
     ev = hist[(hist["gamesA"] >= MIN_GAMES) & (hist["gamesB"] >= MIN_GAMES)].copy()

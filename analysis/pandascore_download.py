@@ -1,26 +1,40 @@
-"""Download CS2/CSGO match history + teams from PandaScore (free tier) to laptop.
+"""Download esports match history + teams from PandaScore (free tier) to laptop.
 
-Resumable: appends raw match objects to cs2_matches_raw.jsonl, dedups by id.
+Game-parameterized: `python pandascore_download.py [cs2|lol]` (default cs2).
+  cs2 -> /csgo/matches/past + /csgo/teams -> cs2_matches_raw.jsonl
+  lol -> /lol/matches/past  + /lol/teams  -> lol_matches_raw.jsonl
+
+Resumable: appends raw match objects to <game>_matches_raw.jsonl, dedups by id.
 Respects the 1000 req/hour rate limit (watches X-Rate-Limit-Remaining).
 Chunks by month to stay under PandaScore's pagination cap (page*per_page<=10000).
 
-Run:  .venv\\Scripts\\python.exe analysis\\pandascore_download.py
+Run:  .venv\\Scripts\\python.exe analysis\\pandascore_download.py lol
 Safe to re-run / interrupt.
 """
 from __future__ import annotations
-import os, json, time
+import os, sys, json, time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import requests
 from dotenv import load_dotenv
+
+GAME = (sys.argv[1] if len(sys.argv) > 1 else "cs2").lower()
+# (matches endpoint, teams endpoint, file prefix)
+GAME_CFG = {
+    "cs2": ("/csgo/matches/past", "/csgo/teams", "cs2"),
+    "lol": ("/lol/matches/past",  "/lol/teams",  "lol"),
+}
+if GAME not in GAME_CFG:
+    raise SystemExit(f"unknown game {GAME!r}; use one of {list(GAME_CFG)}")
+MATCH_EP, TEAMS_EP, PREFIX = GAME_CFG[GAME]
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 TOKEN = os.environ["PANDASCORE_TOKEN"].strip()
 OUT = ROOT / "cowork_snapshot" / "gamedata" / "pandascore"
 OUT.mkdir(parents=True, exist_ok=True)
-RAW = OUT / "cs2_matches_raw.jsonl"
-TEAMS = OUT / "cs2_teams_raw.jsonl"
+RAW = OUT / f"{PREFIX}_matches_raw.jsonl"
+TEAMS = OUT / f"{PREFIX}_teams_raw.jsonl"
 
 S = requests.Session()
 S.headers.update({"Authorization": f"Bearer {TOKEN}", "Accept": "application/json"})
@@ -86,7 +100,7 @@ def download_matches():
         page = 1
         month_new = 0
         while True:
-            data = get("/csgo/matches/past", {
+            data = get(MATCH_EP, {
                 "range[begin_at]": rng, "per_page": PER_PAGE, "page": page,
                 "sort": "begin_at",
             })
@@ -116,7 +130,7 @@ def download_teams():
     fh = TEAMS.open("a", encoding="utf-8")
     page = 1; total = 0
     while True:
-        data = get("/csgo/teams", {"per_page": PER_PAGE, "page": page})
+        data = get(TEAMS_EP, {"per_page": PER_PAGE, "page": page})
         if not data:
             break
         added = 0
@@ -131,8 +145,8 @@ def download_teams():
     print(f"[pandascore] teams done. total={len(seen)}")
 
 if __name__ == "__main__":
-    print("=== downloading CS2 teams ===")
+    print(f"=== downloading {GAME.upper()} teams ({TEAMS_EP}) ===")
     download_teams()
-    print("=== downloading CS2 match history ===")
+    print(f"=== downloading {GAME.upper()} match history ({MATCH_EP}) ===")
     download_matches()
     print("ALL DONE")

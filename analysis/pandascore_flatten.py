@@ -1,15 +1,20 @@
-"""Flatten cs2_matches_raw.jsonl -> cs2_matches.parquet (finished 2-team matches).
-Also flatten teams. Safe to run on partial download; re-run as data grows.
+"""Flatten <game>_matches_raw.jsonl -> <game>_matches.parquet (finished 2-team
+matches). Also flatten teams. Game-parameterized: `flatten.py [cs2|lol]` (default
+cs2). Safe to run on partial download; re-run as data grows.
 """
 from __future__ import annotations
-import json
+import sys, json
 from pathlib import Path
 import pandas as pd
 
+GAME = (sys.argv[1] if len(sys.argv) > 1 else "cs2").lower()
+if GAME not in ("cs2", "lol"):
+    raise SystemExit(f"unknown game {GAME!r}; use cs2 or lol")
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "cowork_snapshot" / "gamedata" / "pandascore"
-RAW = OUT / "cs2_matches_raw.jsonl"
-TEAMS = OUT / "cs2_teams_raw.jsonl"
+RAW = OUT / f"{GAME}_matches_raw.jsonl"
+TEAMS = OUT / f"{GAME}_teams_raw.jsonl"
 
 def flatten_matches():
     rows = []
@@ -45,7 +50,7 @@ def flatten_matches():
     if len(df):
         df["begin_at"] = pd.to_datetime(df["begin_at"], errors="coerce", utc=True)
         df = df.dropna(subset=["begin_at", "winner_id"]).sort_values("begin_at").reset_index(drop=True)
-        df.to_parquet(OUT / "cs2_matches.parquet")
+        df.to_parquet(OUT / f"{GAME}_matches.parquet")
     print(f"[flatten] matches: {len(df)} finished 2-team with winner")
     if len(df):
         print(f"   date range: {df['begin_at'].min()} .. {df['begin_at'].max()}")
@@ -64,7 +69,7 @@ def flatten_teams():
                          "acronym": t.get("acronym"), "slug": t.get("slug"),
                          "location": t.get("location")})
     df = pd.DataFrame(rows).drop_duplicates("id")
-    df.to_parquet(OUT / "cs2_teams.parquet")
+    df.to_parquet(OUT / f"{GAME}_teams.parquet")
     print(f"[flatten] teams: {len(df)}")
 
 if __name__ == "__main__":

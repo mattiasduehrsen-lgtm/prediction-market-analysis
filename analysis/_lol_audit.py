@@ -14,22 +14,31 @@ ES = ROOT / "cowork_snapshot" / "esports" / "clob_esports_markets.parquet"
 LOL_PATTERNS = ["lol-worlds","lol-lcs","lol-lec","lol-lck","lol-lpl","lol-msi","-lol-","league-of-legends"]
 SINGLE_MAP_RE = re.compile(r"-game\d+|-map-?\d*\b|-map-", re.I)
 
-print("="*72); print(" 1) LoL MARKET COVERAGE")
+print("="*72); print(" 1) LoL MARKET COVERAGE  (watch for Valorant 'league' contamination)")
 df = pd.read_parquet(ES, columns=["slug","tokens","closed","archived","game_start"])
-lol = df[df["slug"].str.contains("league-|lol-|-lol|lck|lpl|lec|lcs|worlds|msi", case=False, na=False)].copy()
-op = lol[(~lol["closed"].astype(bool)) & (~lol["archived"].astype(bool))]
-print(f"  LoL markets total={len(lol)}  open={len(op)}")
-# how many match build_clob_index patterns (i.e. would even be INDEXED)?
-def matches_index(s):
-    s=s.lower(); return any(p in s for p in LOL_PATTERNS)
-covered = lol["slug"].apply(matches_index).sum()
-print(f"  slugs matching build_clob_index LoL patterns: {covered}/{len(lol)}"
-      f"  (unmatched = markets we'd MISS at index time)")
-# series vs single-map among open
-op_series = op[~op["slug"].apply(lambda s: bool(SINGLE_MAP_RE.search(s or "")))]
-print(f"  open: series(moneyline)={len(op_series)}  single-map/prop={len(op)-len(op_series)}")
-print("  recent LoL slugs:")
-for s in lol["slug"].tail(12): print("     ", s)
+def is_valorant(s): s=s.lower(); return ("vct" in s or "valorant" in s)
+# TRUE LoL: lol- prefix, league-of-legends, or a LoL-specific league tag — NOT valorant
+def is_true_lol(s):
+    s=s.lower()
+    if is_valorant(s): return False
+    return ("lol-" in s or "league-of-legends" in s
+            or any(t in s for t in ["-lck","-lpl","-lcs","-lec","lol-worlds","lol-msi"]))
+broad = df[df["slug"].str.contains("league|lol|lck|lpl|lec|lcs|worlds|msi", case=False, na=False)]
+val = broad[broad["slug"].apply(is_valorant)]
+truelol = df[df["slug"].apply(is_true_lol)].copy()
+print(f"  broad 'league/lol/...' matches={len(broad)}  of which Valorant(VCT)={len(val)}  TRUE-LoL={len(truelol)}")
+op = truelol[(~truelol["closed"].astype(bool)) & (~truelol["archived"].astype(bool))]
+def n_team_tokens(toks):
+    toks = list(toks) if toks is not None else []
+    return len([t for t in toks if t.get("outcome")])
+# head-to-head = exactly 2 outcomes and not a 'will-...-win' futures slug
+op_h2h = op[op["tokens"].apply(lambda t: n_team_tokens(t)==2) & ~op["slug"].str.startswith("will-")]
+op_series = op_h2h[~op_h2h["slug"].apply(lambda s: bool(SINGLE_MAP_RE.search(s or "")))]
+print(f"  TRUE-LoL: total={len(truelol)} open={len(op)} open_head2head={len(op_h2h)} open_series_moneyline={len(op_series)}")
+print("  recent TRUE-LoL slugs:")
+for s in truelol["slug"].tail(12): print("     ", s)
+if len(truelol)==0:
+    print("  >>> NO real LoL markets in the index at all.")
 
 print("="*72); print(" 2) TEAM MATCHING on REAL LoL market outcomes (the key metric)")
 mod = M.CS2Model(game="lol")
@@ -37,7 +46,8 @@ print(f"  lol model teams={len(mod.elo_by_id)}  names indexed={len(mod.name_to_i
 ok=unmatched=lowgames=0; ex_unmatched=[]; ex_low=[]
 checked=0
 for _,r in op_series.iterrows():
-    outs=[t.get("outcome") for t in (r["tokens"] or []) if t.get("outcome")]
+    toks = list(r["tokens"]) if r["tokens"] is not None else []
+    outs=[t.get("outcome") for t in toks if t.get("outcome")]
     if len(outs)!=2: continue
     checked+=1
     pred=mod.predict(outs[0],outs[1])

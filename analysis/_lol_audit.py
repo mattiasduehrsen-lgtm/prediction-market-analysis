@@ -49,12 +49,23 @@ for s in all_h2h["slug"].tail(15): print("       h2h:", s)
 fut = truelol[truelol["slug"].str.startswith("will-")]
 print(f"  futures ('will-...'): {len(fut)} / {len(truelol)} true-LoL markets")
 
+print("="*72); print(" 1b) GAME-LABEL mismatch (target selector uses slug.split('-')[0])")
+firsttok = truelol["slug"].str.split("-").str[0].value_counts()
+print("  first-token (=target 'game' label) for TRUE-LoL markets:")
+for tok,c in firsttok.head(10).items(): print(f"     {tok!r}: {c}")
+print("  -> target selector only keeps game in ['cs2','league']; LoL H2H markets")
+print("     that start with 'lol'/'arch' are NOT labeled 'league' -> excluded.")
+h2h_tok = all_h2h["slug"].str.split("-").str[0].value_counts()
+print("  first-token for LoL HEAD-TO-HEAD markets specifically:")
+for tok,c in h2h_tok.head(8).items(): print(f"     {tok!r}: {c}")
+
 print("="*72); print(" 2) TEAM MATCHING on REAL LoL market outcomes (the key metric)")
 mod = M.CS2Model(game="lol")
 print(f"  lol model teams={len(mod.elo_by_id)}  names indexed={len(mod.name_to_id)}")
 ok=unmatched=lowgames=0; ex_unmatched=[]; ex_low=[]
 checked=0
-for _,r in op_series.iterrows():
+# none open, so measure match rate on the historical head-to-head markets (real LoL matches)
+for _,r in all_h2h.iterrows():
     toks = list(r["tokens"]) if r["tokens"] is not None else []
     outs=[t.get("outcome") for t in toks if t.get("outcome")]
     if len(outs)!=2: continue

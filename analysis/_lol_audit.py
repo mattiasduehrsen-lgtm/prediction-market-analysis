@@ -1,9 +1,10 @@
 """LoL readiness audit — replays every CS2 problem class against real LoL data.
 Run on the laptop (needs lol Elo + markets parquet). Read-only."""
-import re, json
+import re, json, sys
 from collections import Counter, defaultdict
 from pathlib import Path
 import pandas as pd
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cs2_model as M
 
 ROOT = Path(r"C:\Users\matti\Desktop\prediction-market-analysis")

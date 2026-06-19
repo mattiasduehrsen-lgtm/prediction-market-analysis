@@ -124,7 +124,13 @@ TP_SWEEP_INTERVAL = 60.0
 # Games where per-game OOS backtest cleared ~+100% ROI on a real sample:
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
 # Dota/Valorant samples too small to trust right now — add later.
-ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-")
+ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-", "lol-", "arch-lol-")
+# LoL is OBSERVE-ONLY (paper) for now: no validated live edge + unknown book depth.
+# LoL slugs are priced via the LoL Elo model and their order-book depth is logged,
+# but NO real order is ever placed (see _observe_lol). NB: Valorant VCT slugs
+# contain "league" — they are explicitly excluded in _is_lol_slug.
+LOL_OBSERVE_ONLY = True
+LOL_PREFIXES = ("lol-", "arch-lol-", "league-")
 
 # On-chain real-time signal source (v1.40). The data-api /trades feed is ~220s
 # stale; the Polygon chain tip is ~2s. We watch ERC-1155 TransferSingle events
@@ -209,15 +215,28 @@ class FadeBot:
         # the main loop drains into process_trade (single-threaded — no races).
         # ── Elo model filter (v1.41) ────────────────────────────────────────
         self.cs2_model = None
+        self.lol_model = None
         if MODEL_FILTER_ENABLED:
             try:
                 from cs2_model import CS2Model
                 self.cs2_model = CS2Model()
-                print(f"[fade-bot] Elo model filter ON "
+                print(f"[fade-bot] CS2 Elo model ON "
                       f"({len(self.cs2_model.elo_by_id)} teams, min_edge={MODEL_FILTER_MIN_EDGE})")
             except Exception as e:
-                print(f"[fade-bot] Elo model load failed (filter disabled): {e}")
+                print(f"[fade-bot] CS2 Elo model load failed (filter disabled): {e}")
                 self.cs2_model = None
+            # LoL model: used for OBSERVE-ONLY paper pricing of LoL markets.
+            try:
+                from cs2_model import CS2Model
+                self.lol_model = CS2Model(game="lol")
+                if self.lol_model.elo_by_id:
+                    print(f"[fade-bot] LoL Elo model ON (observe-only) "
+                          f"({len(self.lol_model.elo_by_id)} teams)")
+                else:
+                    print("[fade-bot] LoL Elo model empty (no lol_*.parquet yet) — LoL obs will log unmatched")
+            except Exception as e:
+                print(f"[fade-bot] LoL Elo model load failed: {e}")
+                self.lol_model = None
 
         import queue as _queue
         self.onchain_queue: "_queue.Queue" = _queue.Queue(maxsize=2000)
@@ -393,19 +412,25 @@ class FadeBot:
         return idx
 
     def _load_cs2_windows(self) -> list[tuple[float, float]]:
-        """Build [(start_ts, end_ts), ...] match windows for OPEN CS2 markets.
+        """Build [(start_ts, end_ts), ...] match windows for OPEN CS2 *and LoL*
+        markets, so the on-chain listener polls during both (LoL is observe-only).
 
-        A real CS2 match market has a populated game_start (prop/futures markets
-        like 'will-cs2-market-cap-...' do not), so requiring game_start naturally
-        excludes the non-match noise. Window = [start - PRE, start + POST]."""
+        A real match market has a populated game_start (prop/futures markets like
+        'will-cs2-market-cap-...' / 'will-...-win-worlds' do not), so requiring
+        game_start excludes that noise. Valorant VCT is EXCLUDED (its slugs carry
+        'league'). Window = [start - PRE, start + POST]."""
         import pandas as pd
         p = ES_DIR / "clob_esports_markets.parquet"
         if not p.exists():
             return []
         df = pd.read_parquet(p, columns=["slug", "game_start", "closed", "archived"])
-        cs = df[df["slug"].str.contains("cs2-|-cs2|csgo-|-csgo", case=False, na=False)]
-        cs = cs[(~cs["closed"].astype(bool)) & (~cs["archived"].astype(bool))]
-        gs = pd.to_datetime(cs["game_start"], errors="coerce", utc=True).dropna()
+        sl = df["slug"].fillna("").str.lower()
+        is_cs2 = sl.str.contains("cs2-|-cs2|csgo-|-csgo")
+        is_lol = (sl.str.startswith(("lol-", "arch-lol-", "league-"))
+                  | sl.str.contains("league-of-legends"))
+        is_val = sl.str.contains("vct|valorant")
+        m = df[(is_cs2 | (is_lol & ~is_val)) & (~df["closed"].astype(bool)) & (~df["archived"].astype(bool))]
+        gs = pd.to_datetime(m["game_start"], errors="coerce", utc=True).dropna()
         out = []
         for t in gs:
             start = t.timestamp()
@@ -612,6 +637,94 @@ class FadeBot:
     # Backwards-compat alias (name was CS2-only before)
     is_cs2 = is_target_game
 
+    def _is_lol_slug(self, slug: str) -> bool:
+        """True for League of Legends markets. EXCLUDES Valorant VCT, whose slugs
+        also contain 'league' (e.g. '...-emea-league-stage') — the contamination
+        found in the LoL audit."""
+        s = (slug or "").lower()
+        if "vct" in s or "valorant" in s:
+            return False
+        return s.startswith(("lol-", "arch-lol-", "league-")) or "league-of-legends" in s
+
+    def _clob_book(self, token_id: str):
+        """Return (best_ask, depth_usd_within_2c) for a token, or (None, 0.0).
+        depth = $ liquidity available at <= best_ask + 2c (can we actually fill?)."""
+        try:
+            r = self.session.get("https://clob.polymarket.com/book",
+                                 params={"token_id": str(token_id)}, timeout=6)
+            if r.status_code != 200:
+                return None, 0.0
+            asks = sorted(((float(a["price"]), float(a["size"]))
+                           for a in (r.json().get("asks") or [])), key=lambda x: x[0])
+            if not asks:
+                return None, 0.0
+            best = asks[0][0]
+            depth = sum(p * s for p, s in asks if p <= best + 0.02)
+            return best, round(depth, 2)
+        except Exception:
+            return None, 0.0
+
+    def _observe_lol(self, *, slug, cid, wallet, their_side, their_outcome,
+                     their_price, our_outcome, our_entry, our_token_id, other,
+                     strategy, tx):
+        """PAPER-ONLY observation of a LoL fade opportunity. Prices it with the
+        LoL Elo model and logs LIVE order-book depth — the liquidity test that
+        decides whether LoL is even tradeable. NEVER places an order."""
+        # Debounce: one observation per (wallet, market) per window.
+        dkey = ("lolobs", wallet, cid)
+        nowt = time.time()
+        if nowt - self.last_signal_ts.get(dkey, 0.0) < MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET:
+            return
+        self.last_signal_ts[dkey] = nowt
+
+        model_p = model_edge = None
+        m_games_ours = m_games_other = None
+        reason = "no_model"
+        if self.lol_model is not None and self.lol_model.elo_by_id:
+            pred = self.lol_model.predict(our_outcome, other)
+            if pred and pred.get("ok"):
+                model_p = pred["model_pA"]
+                model_edge = round(model_p - our_entry, 4)
+                m_games_ours, m_games_other = pred.get("gamesA"), pred.get("gamesB")
+                reason = "ok"
+            else:
+                reason = (pred or {}).get("reason", "no_pred")
+
+        best_ask, depth = self._clob_book(our_token_id) if our_token_id else (None, 0.0)
+        fillable_bet = depth >= (LIVE_BET_USD if self.live else PAPER_BET_USD)
+        would_fade = (model_edge is not None and model_edge > MODEL_FILTER_MIN_EDGE
+                      and best_ask is not None and fillable_bet)
+
+        row = {
+            "ts": round(nowt, 2), "slug": slug, "condition_id": cid,
+            "target_wallet": wallet, "strategy": strategy,
+            "their_side": their_side, "their_outcome": their_outcome,
+            "their_price": their_price, "our_outcome": our_outcome,
+            "our_entry": our_entry,
+            "model_p": round(model_p, 4) if model_p is not None else "",
+            "model_edge": model_edge if model_edge is not None else "",
+            "model_reason": reason,
+            "games_ours": m_games_ours if m_games_ours is not None else "",
+            "games_other": m_games_other if m_games_other is not None else "",
+            "best_ask": round(best_ask, 4) if best_ask is not None else "",
+            "book_depth_usd": depth,
+            "fillable_bet": int(fillable_bet),
+            "would_fade": int(bool(would_fade)),
+        }
+        # dedicated CSV for liquidity analysis + event log
+        path = OUT_DIR / "lol_observations.csv"
+        newfile = not path.exists()
+        try:
+            with path.open("a", encoding="utf-8", newline="") as fh:
+                w = _csv.DictWriter(fh, fieldnames=list(row.keys()))
+                if newfile:
+                    w.writeheader()
+                w.writerow(row)
+        except Exception as e:
+            print(f"[fade-bot] lol_obs write failed: {e}")
+        self.write_event({"type": "lol_observation", **row})
+        self.lol_obs_count = getattr(self, "lol_obs_count", 0) + 1
+
     def write_event(self, ev: dict):
         # Auto-add a wall-clock timestamp to every event so downstream tools
         # can filter by time. Doesn't overwrite an existing `ts` field —
@@ -749,6 +862,18 @@ class FadeBot:
                 our_outcome = other
                 our_entry = round(1 - their_price, 4)
         our_token_id = mkt["tokens"].get(our_outcome)
+
+        # ── LoL: OBSERVE-ONLY (no real money) ───────────────────────────────
+        # Price via the LoL Elo model + log live book depth (the liquidity test),
+        # then STOP. LoL never reaches the live-order path below. CS2/CSGO fall
+        # through unchanged. (Valorant excluded inside _is_lol_slug.)
+        if LOL_OBSERVE_ONLY and self._is_lol_slug(slug):
+            self._observe_lol(slug=slug, cid=condition_id, wallet=wallet,
+                              their_side=their_side, their_outcome=their_outcome,
+                              their_price=their_price, our_outcome=our_outcome,
+                              our_entry=our_entry, our_token_id=our_token_id,
+                              other=other, strategy=strategy, tx=tx)
+            return
 
         bet = LIVE_BET_USD if self.live else PAPER_BET_USD
 
@@ -1301,9 +1426,10 @@ class FadeBot:
                         gstr = "IDLE(no-cs2)" if getattr(o, "gated", False) else "active"
                         oc_str = (f" | onchain[conn={o.connected} gate={gstr} detected={o.n_detected} "
                                   f"emitted={o.n_emitted} dropped={o.n_dropped} last_lag={lag}]")
+                    lol_str = f" lol_obs={getattr(self,'lol_obs_count',0)}" if getattr(self,'lol_obs_count',0) else ""
                     print(f"[fade-bot] heartbeat: trades_scanned={n_trades_seen} "
                           f"signals={n_signals_now} fades={n_fades_now} "
-                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}{oc_str}")
+                          f"unique_tx={len(self.seen_tx_set)} targets={len(self.target_wallets)}{pnl_str}{lol_str}{oc_str}")
 
                     # ── Signal-stall detection ─────────────────────────────
                     now = time.time()

@@ -2,6 +2,38 @@
 
 ---
 
+## v1.50 — 2026-06-19
+**LoL observe-only paper wiring (no real money on League).**
+
+### Context
+Built a validated **LoL Elo model** (65.5% accuracy, Brier 0.215, excellent
+calibration, 20,878 matches / 1,034 teams) by parameterizing the CS2 pipeline by
+game. The LoL audit showed the model + matching are ready (top teams match 100%,
+235/294 historical H2H markets matchable), but two questions remain open: live
+model edge, and **order-book liquidity** (the mirage that killed CS2 pre-match) —
+plus LoL H2H markets are sparse/minor-team-skewed. So: observe, don't bet.
+
+### What this adds (all paper / zero risk)
+- `self.lol_model = CS2Model(game="lol")` loaded alongside the CS2 model.
+- `_is_lol_slug()` — detects LoL, **excludes Valorant VCT** (slugs contain
+  "league" — the contamination the audit found).
+- `process_trade` routes LoL slugs to `_observe_lol()`: prices via the LoL model,
+  logs **live order-book depth** (`_clob_book`), writes
+  `output/esports_fade/lol_observations.csv` + a `lol_observation` event, then
+  **returns without placing**. CS2/CSGO live path is unchanged.
+- On-chain gate (`_load_cs2_windows`) now opens during **LoL** match windows too
+  (Valorant excluded) so the listener actually detects LoL trades.
+- `ESPORTS_PREFIXES` + heartbeat `lol_obs=` counter.
+
+### Still OFF
+`LOL_OBSERVE_ONLY = True` — no LIVE LoL orders. Flip only after the observations
+show a real, fillable edge.
+
+### Files
+- `esports_fade_bot.py`, `src/bot/version.py`.
+
+---
+
 ## v1.49 — 2026-06-18
 **Fade-of-SELL mispricing — 4th blocker (orders placed but never filled).**
 

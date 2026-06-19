@@ -39,6 +39,15 @@ print("  recent TRUE-LoL slugs:")
 for s in truelol["slug"].tail(12): print("     ", s)
 if len(truelol)==0:
     print("  >>> NO real LoL markets in the index at all.")
+# CRITICAL: across the FULL archive (open+closed), are there ANY 2-team head-to-head
+# match markets to fade? (futures like 'will-...-win' are not fadeable head-to-head)
+all_h2h = truelol[truelol["tokens"].apply(lambda t: n_team_tokens(t)==2)
+                  & ~truelol["slug"].str.startswith("will-")]
+print(f"\n  >>> TRUE-LoL 2-team HEAD-TO-HEAD across ENTIRE archive (open+closed): {len(all_h2h)}")
+for s in all_h2h["slug"].tail(15): print("       h2h:", s)
+# how many futures vs other
+fut = truelol[truelol["slug"].str.startswith("will-")]
+print(f"  futures ('will-...'): {len(fut)} / {len(truelol)} true-LoL markets")
 
 print("="*72); print(" 2) TEAM MATCHING on REAL LoL market outcomes (the key metric)")
 mod = M.CS2Model(game="lol")

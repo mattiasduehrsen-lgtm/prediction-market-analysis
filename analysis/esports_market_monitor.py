@@ -146,10 +146,10 @@ def main():
             try: prev = json.loads(lines[-1])
             except Exception: prev = None
 
-    # ── alerts on material change ───────────────────────────────────────────
+    # ── alerts on material change (only when we have a prior to diff against) ─
     alerts = []
     pg, ppg = snap["per_game"], (prev or {}).get("per_game", {})
-    for g, d in pg.items():
+    for g, d in (pg.items() if prev is not None else []):
         pd_ = ppg.get(g, {})
         if g not in ppg and d["open"] > 0:
             alerts.append(f"NEW GAME on Polymarket: {g} ({d['open']} open, {d['h2h_moneyline']} H2H)")

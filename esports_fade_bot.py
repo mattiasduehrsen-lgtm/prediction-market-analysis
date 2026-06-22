@@ -246,6 +246,10 @@ class FadeBot:
                 from onchain_listener import OnChainListener
                 import requests as _rq
                 token_index = self._build_token_index()
+                try:
+                    self._token_index_mtime = (ES_DIR / "clob_esports_markets.parquet").stat().st_mtime
+                except OSError:
+                    self._token_index_mtime = 0.0
                 self.onchain = OnChainListener(
                     wallets=self.target_wallets,
                     token_index=token_index,
@@ -571,6 +575,45 @@ class FadeBot:
             self.daily_pnl_mtime = cur_mtime
         except Exception as e:
             print(f"[fade-bot] daily_pnl reload failed: {e}")
+
+    def maybe_reload_token_index(self):
+        """Hot-reload the esports market index so we pick up NEWLY-created markets
+        (CS2 or LoL) WITHOUT a restart. CRITICAL: the on-chain listener drops any
+        trade on a token it doesn't know, so a stale index = blind to new markets.
+        We saw this directly — a 3-day-old process had missed ~1,400 new tokens —
+        and it's the #1 way we'd miss LoL the moment GRID lists it. The refresh task
+        rewrites the parquet ~hourly; this re-reads on mtime change."""
+        if not getattr(self, "onchain", None):
+            return
+        try:
+            m = (ES_DIR / "clob_esports_markets.parquet").stat().st_mtime
+        except OSError:
+            return
+        if m <= getattr(self, "_token_index_mtime", 0.0):
+            return
+        try:
+            idx = self._build_token_index()
+            if idx:
+                before = len(self.onchain.token_index or {})
+                self.onchain.token_index = idx
+                self._token_index_mtime = m
+                self.write_event({"type": "token_index_reloaded",
+                                  "tokens": len(idx), "added": len(idx) - before})
+                print(f"[fade-bot] token index reloaded: {len(idx)} tokens "
+                      f"({len(idx) - before:+d} vs prev)")
+        except Exception as e:
+            print(f"[fade-bot] token index reload failed: {e}")
+
+    def _model_for_slug(self, slug: str):
+        """Route a market to the right Elo model: CS2 -> cs2_model, LoL -> lol_model
+        (Valorant excluded). Returns None if no model covers the slug. Keeps CS2
+        behaviour identical; lets a LoL go-live be a clean LOL_OBSERVE_ONLY flip."""
+        s = (slug or "").lower()
+        if s.startswith(("cs2-", "csgo-")):
+            return self.cs2_model
+        if self._is_lol_slug(s):
+            return self.lol_model
+        return None
 
     def maybe_reload_targets(self):
         """Hot-reload fade_targets.json AND follow_targets.json on mtime change.
@@ -978,15 +1021,19 @@ class FadeBot:
         # Only place a real-money fade if the Elo model also likes our side.
         # our_entry ≈ market price of our fade side; model gives its probability.
         # edge = model_prob(our side) − market_price(our side). Require > min.
-        if self.live and MODEL_FILTER_ENABLED and self.cs2_model is not None and strategy == "fade":
-            slug_l = (slug or "").lower()
-            if not slug_l.startswith(MODEL_FILTER_GAMES_PREFIXES):
+        if self.live and MODEL_FILTER_ENABLED and strategy == "fade":
+            # Route to the right Elo model (CS2->cs2_model, LoL->lol_model). CS2
+            # behaviour is identical; LoL only reaches here if LOL_OBSERVE_ONLY is
+            # off (otherwise it returned at the observe branch above), so this is
+            # the clean go-live path for League.
+            model = self._model_for_slug(slug)
+            if model is None or not getattr(model, "elo_by_id", None):
                 self.write_event({"type": "skip_model_no_coverage", "tx": tx,
-                                  "slug": slug, "reason": "non_cs2_game"})
+                                  "slug": slug, "reason": "no_model_for_game"})
                 return
             other_outcome = [o for o in mkt["outcomes"] if o != our_outcome]
             other_outcome = other_outcome[0] if other_outcome else ""
-            pred = self.cs2_model.predict(our_outcome, other_outcome)
+            pred = model.predict(our_outcome, other_outcome)
             if not pred or not pred.get("ok"):
                 self.write_event({"type": "skip_model_unmatched", "tx": tx, "slug": slug,
                                   "our_outcome": our_outcome, "other": other_outcome,
@@ -1510,8 +1557,11 @@ class FadeBot:
 
                     last_summary = now
                     self.maybe_reload_targets()
+                    self.maybe_reload_token_index()   # pick up new markets w/o restart
                     if self.cs2_model is not None:
                         self.cs2_model.maybe_reload()
+                    if self.lol_model is not None:
+                        self.lol_model.maybe_reload()
                     if self.live:
                         self.maybe_reload_daily_pnl()
                         self.refresh_daily_risk()

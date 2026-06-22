@@ -20,7 +20,10 @@ CLOB = "https://clob.polymarket.com"
 # Tight esports keyword patterns — only patterns that ONLY appear in true esports slugs
 ESPORTS_PATTERNS = [
     "csgo-","cs2-","-cs2","-csgo",
-    "lol-worlds","lol-lcs","lol-lec","lol-lck","lol-lpl","lol-msi","-lol-",
+    # LoL: keep the specific league tags AND a bare "lol-"/"arch-lol-" so GRID-era
+    # head-to-head slugs (e.g. "lol-t1-geng-2026", "arch-lol-...") are indexed.
+    # Valorant is unaffected — its slugs are "vct-"/"valorant-", never "lol".
+    "lol-","arch-lol-","lol-worlds","lol-lcs","lol-lec","lol-lck","lol-lpl","lol-msi","-lol-",
     "dota-2","dota-international","-dota-",
     "valorant-","-vct-","valorant-champions",
     "rocket-league","-rlcs",

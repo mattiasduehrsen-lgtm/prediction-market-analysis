@@ -45,7 +45,18 @@ def main():
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     df["won"] = determine_won(df)
     df["pnl"] = pnl_for_price(df["price"], df["won"].values)
-    df["game"] = df["mkt_slug"].fillna("").str.split("-").str[0]
+    # Game classification. NOT just slug.split('-')[0] — that labels LoL markets
+    # 'lol'/'arch' (e.g. 'lol-t1-geng', 'arch-lol-...') and would EXCLUDE those
+    # bettors from the 'league' targets. Map all LoL slug variants -> 'league'
+    # (Valorant 'vct'/'valorant' excluded — its slugs carry 'league' too).
+    def _game_of(slug: str) -> str:
+        s = (slug or "").lower()
+        if "vct" in s or "valorant" in s: return "valorant"
+        if s.startswith(("cs2-", "csgo-")) or "-cs2" in s or "-csgo" in s: return "cs2"
+        if (s.startswith(("lol-", "arch-lol-", "league-")) or "league-of-legends" in s
+                or "-lol-" in s): return "league"
+        return s.split("-")[0]
+    df["game"] = df["mkt_slug"].fillna("").map(_game_of)
 
     # Games where per-game OOS backtest cleared ~+100% ROI on a real sample.
     # cs2: +144% ROI on 176k trades (1000 targets)

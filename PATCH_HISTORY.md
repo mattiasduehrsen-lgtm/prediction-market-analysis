@@ -2,6 +2,36 @@
 
 ---
 
+## v1.51 — 2026-06-22
+**LoL readiness hardening — 100% ready to capture League the moment GRID lists markets, zero manual steps.**
+
+Five pre-emptive fixes against every way we'd otherwise miss the opening:
+
+1. **Periodic token-index reload** (`maybe_reload_token_index`, called from the main
+   loop). The bot built `token_index` **once at startup** and went blind to markets
+   created afterward — a 3-day-old process had missed ~1,400 tokens, and the on-chain
+   listener silently drops trades on unknown tokens. Now it hot-reloads the parquet on
+   mtime change → new CS2/LoL markets detected **without a restart**. The #1 miss-risk.
+2. **`build_clob_index` LoL patterns widened** (`lol-`, `arch-lol-`) so GRID-era
+   head-to-head slugs (e.g. `lol-t1-geng-2026`) get indexed. Valorant unaffected.
+3. **`identify_active_targets` game classifier** maps all LoL slug variants
+   (`lol-`/`arch-lol-`/`league-of-legends`/`-lol-`) → `league` (Valorant excluded), so
+   LoL bettors are captured regardless of GRID's slug format. Was `slug.split('-')[0]`,
+   which mislabeled `lol-`/`arch-` markets and excluded those bettors.
+4. **Model routing** (`_model_for_slug` + `lol_model.maybe_reload()`): the live model
+   filter routes CS2→`cs2_model`, LoL→`lol_model`. **CS2 behaviour identical.** Makes a
+   LoL go-live a clean `LOL_OBSERVE_ONLY` flip (still OFF).
+5. **LoL Elo daily refresh** (`run_lol_elo_refresh.bat` + `LoLEloRefresh` task) keeps
+   `lol_*.parquet` current; the bot hot-reloads it.
+
+Verified: routing, index patterns, and target classifier all correct; CS2 path unchanged.
+
+### Files
+- `esports_fade_bot.py`, `analysis/build_clob_index.py`,
+  `analysis/identify_active_targets.py`, `run_lol_elo_refresh.bat`, `src/bot/version.py`.
+
+---
+
 ## v1.50 — 2026-06-19
 **LoL observe-only paper wiring (no real money on League).**
 

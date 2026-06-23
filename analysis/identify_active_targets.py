@@ -183,9 +183,19 @@ def main():
     live_df = targets[(targets["roi"] < LIVE_ROI_THRESHOLD)
                       & (targets["recent_roi"].fillna(0) < LIVE_RECENT_ROI_THRESHOLD)]
     live_df = live_df.sort_values("roi").drop_duplicates("proxyWallet")
-    live_subset = list(live_df["proxyWallet"].head(LIVE_WALLET_CAP))
-    print(f"\nLIVE subset: {len(live_subset)} high-conviction wallets "
-          f"(ROI<{LIVE_ROI_THRESHOLD}%, recent_roi<{LIVE_RECENT_ROI_THRESHOLD}%, cap {LIVE_WALLET_CAP})")
+    # RESERVE CS2 SLOTS. CS2 is the only LIVE-tradeable game; LoL is observe-only.
+    # The GRID LoL market explosion (54k+ markets) floods this list with league
+    # losers that, ranked by worst ROI, crowded CS2 out ENTIRELY (CS2 -> 0 live
+    # targets on 2026-06-23, silently killing live trading). So take ALL CS2
+    # qualifiers first, then fill the remaining cap with league/other. CS2
+    # qualifiers are few (~tens), so LoL still gets the bulk for observe-only.
+    cs2_live = live_df[live_df["game"] == "cs2"]
+    other_live = live_df[live_df["game"] != "cs2"]
+    ordered = pd.concat([cs2_live, other_live]).drop_duplicates("proxyWallet")
+    live_subset = list(ordered["proxyWallet"].head(LIVE_WALLET_CAP))
+    n_cs2 = int((ordered.head(LIVE_WALLET_CAP)["game"] == "cs2").sum())
+    print(f"\nLIVE subset: {len(live_subset)} wallets (cs2={n_cs2} reserved-first, "
+          f"rest league/other; ROI<{LIVE_ROI_THRESHOLD}%, recent_roi<{LIVE_RECENT_ROI_THRESHOLD}%, cap {LIVE_WALLET_CAP})")
 
     import os
     now_iso  = pd.Timestamp.utcnow().isoformat()

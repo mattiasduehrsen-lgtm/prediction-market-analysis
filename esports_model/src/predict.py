@@ -39,6 +39,11 @@ SEED_ALIASES = {
         "TL": "Team Liquid", "FLY": "FlyQuest", "100T": "100 Thieves",
         "KC": "Karmine Corp", "MKOI": "Movistar KOI", "GX": "GiantX",
         "SK": "SK Gaming", "VIT": "Team Vitality", "AL": "Anyone's Legends",
+        "CTBC": "CTBC Flying Oyster", "CFO": "CTBC Flying Oyster",
+        "NIP": "Ninjas in Pyjamas", "Dplus": "Dplus KIA", "DRX": "DRX",
+        "NS": "Nongshim RedForce", "Nongshim": "Nongshim RedForce",
+        "BRO": "OKSavingsBank BRION", "BRION": "OKSavingsBank BRION",
+        "PSG": "PSG Talon", "PNG": "Paris Saint-Germain Talon",
     },
     "cs2": {
         "NAVI": "Natus Vincere", "G2": "G2 Esports", "FAZE": "FaZe Clan",

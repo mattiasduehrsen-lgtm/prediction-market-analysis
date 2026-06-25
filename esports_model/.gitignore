@@ -1,0 +1,4 @@
+# Large, fully-regenerable intermediates (rebuild via src/features.py)
+artifacts/*_features.parquet
+__pycache__/
+src/__pycache__/

@@ -1,0 +1,118 @@
+{
+  "n_markets": 1600,
+  "model": [
+    {
+      "threshold": 0.0,
+      "n": 1600,
+      "hit_rate": 0.4138,
+      "roi_pct": 7.6,
+      "total_pnl": 121.57
+    },
+    {
+      "threshold": 0.03,
+      "n": 1267,
+      "hit_rate": 0.4191,
+      "roi_pct": 15.14,
+      "total_pnl": 191.79
+    },
+    {
+      "threshold": 0.05,
+      "n": 1077,
+      "hit_rate": 0.4169,
+      "roi_pct": 20.43,
+      "total_pnl": 219.98
+    },
+    {
+      "threshold": 0.08,
+      "n": 795,
+      "hit_rate": 0.3987,
+      "roi_pct": 28.65,
+      "total_pnl": 227.74
+    },
+    {
+      "threshold": 0.1,
+      "n": 612,
+      "hit_rate": 0.402,
+      "roi_pct": 42.4,
+      "total_pnl": 259.47
+    },
+    {
+      "threshold": 0.15,
+      "n": 351,
+      "hit_rate": 0.3903,
+      "roi_pct": 74.19,
+      "total_pnl": 260.4
+    }
+  ],
+  "baseline": [
+    {
+      "threshold": 0.0,
+      "n": 1600,
+      "hit_rate": 0.425,
+      "roi_pct": 8.05,
+      "total_pnl": 128.73
+    },
+    {
+      "threshold": 0.03,
+      "n": 1232,
+      "hit_rate": 0.4148,
+      "roi_pct": 14.91,
+      "total_pnl": 183.74
+    },
+    {
+      "threshold": 0.05,
+      "n": 1053,
+      "hit_rate": 0.4017,
+      "roi_pct": 17.37,
+      "total_pnl": 182.89
+    },
+    {
+      "threshold": 0.08,
+      "n": 772,
+      "hit_rate": 0.3925,
+      "roi_pct": 27.77,
+      "total_pnl": 214.37
+    },
+    {
+      "threshold": 0.1,
+      "n": 623,
+      "hit_rate": 0.39,
+      "roi_pct": 37.84,
+      "total_pnl": 235.76
+    },
+    {
+      "threshold": 0.15,
+      "n": 372,
+      "hit_rate": 0.371,
+      "roi_pct": 63.74,
+      "total_pnl": 237.12
+    }
+  ],
+  "dose_response": [
+    {
+      "bucket": "0-5%",
+      "n": 523,
+      "roi_pct": -18.82
+    },
+    {
+      "bucket": "5-10%",
+      "n": 465,
+      "roi_pct": -8.49
+    },
+    {
+      "bucket": "10-15%",
+      "n": 261,
+      "roi_pct": -0.36
+    },
+    {
+      "bucket": "15-20%",
+      "n": 142,
+      "roi_pct": 54.03
+    },
+    {
+      "bucket": ">20%",
+      "n": 209,
+      "roi_pct": 87.88
+    }
+  ]
+}

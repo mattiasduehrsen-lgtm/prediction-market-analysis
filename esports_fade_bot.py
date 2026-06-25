@@ -83,6 +83,11 @@ MAX_FADES_PER_WALLET_PER_DAY = 3  # v1.39 — cap fades per target wallet per UT
 # markets (LoL — no model), are SKIPPED on LIVE (logged). PAPER is unaffected.
 MODEL_FILTER_ENABLED = True
 MODEL_FILTER_MIN_EDGE = 0.07   # v1.43: lowered 0.10->0.07 for more trades/faster
+# Shadow A/B (v1.53): log the Cowork esports_model Predictor's call next to the
+# live Elo filter on every CS2 fade. PURELY OBSERVATIONAL — never changes a trade.
+# Disable with SHADOW_MODEL_ENABLED=0 (env). Trading is unaffected if it fails.
+import os as _os_sh
+SHADOW_MODEL_ENABLED = _os_sh.getenv("SHADOW_MODEL_ENABLED", "1") not in ("0", "false", "False")
                                # validation. Backtest: fade+model still positive
                                # below 0.10 (thr 0.0 +13.8%, 0.10 +30%), so a
                                # modest loosening trades a bit of per-bet edge for
@@ -237,6 +242,30 @@ class FadeBot:
             except Exception as e:
                 print(f"[fade-bot] LoL Elo model load failed: {e}")
                 self.lol_model = None
+
+        # ── SHADOW MODEL (Cowork esports_model Predictor) — A/B, never trades ──
+        # Loads the gradient-boosted win-prob model and logs its decision alongside
+        # the live Elo filter on every CS2 fade, WITHOUT changing what we trade.
+        # Fully fail-safe: any import/load error leaves shadow off and trading
+        # completely unaffected (e.g. if sklearn isn't installed).
+        self.shadow = {}
+        if SHADOW_MODEL_ENABLED:
+            try:
+                import sys as _sys
+                _sp = str(ROOT / "esports_model" / "src")
+                if _sp not in _sys.path:
+                    _sys.path.insert(0, _sp)
+                from predict import Predictor as _Pred
+                for _g in ("cs2", "lol"):
+                    try:
+                        self.shadow[_g] = _Pred(_g)
+                    except Exception as _e:
+                        print(f"[fade-bot] shadow model {_g} load failed: {_e}")
+                if self.shadow:
+                    print(f"[fade-bot] SHADOW model ON (A/B only, never trades): {list(self.shadow)}")
+            except Exception as e:
+                print(f"[fade-bot] shadow model disabled ({e}) — trading unaffected")
+                self.shadow = {}
 
         import queue as _queue
         self.onchain_queue: "_queue.Queue" = _queue.Queue(maxsize=2000)
@@ -614,6 +643,33 @@ class FadeBot:
         if self._is_lol_slug(s):
             return self.lol_model
         return None
+
+    def _shadow_compare(self, slug, our_outcome, other_outcome, our_entry, elo_p, elo_edge, tx):
+        """A/B: log the Cowork esports_model Predictor's call next to the live Elo
+        filter. PURELY OBSERVATIONAL — never affects the trade. Exception-safe so a
+        shadow error can never touch the trading path."""
+        try:
+            s = (slug or "").lower()
+            g = "cs2" if s.startswith(("cs2-", "csgo-")) else ("lol" if self._is_lol_slug(s) else None)
+            pred = self.shadow.get(g) if g else None
+            if pred is None:
+                return
+            elo_pass = int(elo_edge > MODEL_FILTER_MIN_EDGE)
+            r = pred.predict(our_outcome, other_outcome)
+            row = {"type": "shadow_compare", "tx": tx, "slug": slug, "game": g,
+                   "our_outcome": our_outcome, "our_entry": our_entry,
+                   "elo_p": round(elo_p, 4), "elo_edge": round(elo_edge, 4), "elo_pass": elo_pass}
+            if r.get("ok"):
+                sp = r["model_prob_a"]; se = sp - our_entry
+                spass = int(se > MODEL_FILTER_MIN_EDGE)
+                row.update({"shadow_ok": True, "shadow_p": round(sp, 4),
+                            "shadow_edge": round(se, 4), "shadow_pass": spass,
+                            "agree_pass": int(elo_pass == spass)})
+            else:
+                row.update({"shadow_ok": False, "shadow_reason": r.get("error", "")[:60]})
+            self.write_event(row)
+        except Exception:
+            pass  # shadow must NEVER affect trading
 
     def maybe_reload_targets(self):
         """Hot-reload fade_targets.json AND follow_targets.json on mtime change.
@@ -1041,6 +1097,11 @@ class FadeBot:
                 return
             model_p_ours = pred["model_pA"]            # model prob of our_outcome
             model_edge = model_p_ours - our_entry      # vs market price of our side
+            # SHADOW A/B: log the gradient-boosted model's call on this same fade.
+            # Observational only — the trade decision below stays on the Elo filter.
+            if self.shadow:
+                self._shadow_compare(slug, our_outcome, other_outcome, our_entry,
+                                     model_p_ours, model_edge, tx)
             if model_edge <= MODEL_FILTER_MIN_EDGE:
                 self.write_event({"type": "skip_model_filter", "tx": tx, "slug": slug,
                                   "our_outcome": our_outcome, "our_entry": our_entry,

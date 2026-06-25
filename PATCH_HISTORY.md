@@ -2,6 +2,37 @@
 
 ---
 
+## v1.53 — 2026-06-24
+**Shadow A/B of the Cowork esports_model win-prob model (no trading change).**
+
+The Cowork-built gradient-boosted win-prob model (`esports_model/`) was made
+runnable here and reproduces its numbers (CS2 0.652 acc, +74% edge at 15¢). Before
+trusting it with money, this patch runs it in **shadow mode**:
+- Loads the `Predictor` (fail-safe; `SHADOW_MODEL_ENABLED`, off-on-error so missing
+  sklearn/artifacts can't affect the bot).
+- On every CS2 fade reaching the live Elo filter, logs a `shadow_compare` event with
+  **both** models' prob / edge / pass-decision and whether they agree.
+- **The trade decision stays 100% on the Elo filter**; the shadow path is fully
+  exception-wrapped — trading is unaffected no matter what.
+
+Goal: gather `shadow_compare` data, then evaluate on resolved markets whether the new
+model actually beats the Elo filter **before** any go-live. Predictor resolves 98% of
+real CS2 / 93% of LoL market matchups (alias table added).
+
+Files: `esports_fade_bot.py`, `esports_model/` (runnable + `backtest_lol.py` + aliases),
+`src/bot/version.py`.
+
+---
+
+## v1.52 — 2026-06-23
+**Reserve CS2 target slots — fix CS2 live targets crowded to 0 by the GRID LoL explosion.**
+GRID listed ~54k LoL markets; the v1.51 classifier captured their losing bettors as
+`league`, which by worst-ROI consumed the entire 300-wallet LIVE cap → CS2 dropped to
+**0 live targets** (silently killing live trading). Fix (`identify_active_targets`):
+take all CS2 qualifiers first, then fill the cap with league/other.
+
+---
+
 ## v1.51 — 2026-06-22
 **LoL readiness hardening — 100% ready to capture League the moment GRID lists markets, zero manual steps.**
 

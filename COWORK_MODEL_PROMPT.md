@@ -20,6 +20,31 @@ validated, profitable algorithm. The *only* reason rigor matters below is so the
 you build actually wins with **real money** live — not so you can talk us out of shipping it.
 Be ambitious and creative; try things that might not be in the textbook.
 
+## Status & work order (read first — the snapshot is now refreshed)
+
+The data is ready to proceed — the earlier "no LoL data / stale market" gaps are fixed:
+- `cowork_snapshot/gamedata/pandascore/` now has the **full LoL set** (`lol_matches_raw.jsonl`
+  = 20,880 matches 2022→2026, `lol_elo_*`, `lol_teams`) alongside CS2.
+- `cowork_snapshot/esports/clob_esports_markets.parquet` is **refreshed post-GRID** (LoL slugs
+  279 → 55,337).
+
+**Build order:**
+1. **CS2 FIRST.** It has the full resolved-market price history, so you can do BOTH halves —
+   the win-prob model AND the edge-vs-market backtest. Begin by reproducing the baseline Elo
+   numbers, then set up the strict time-based train/test split, then beat it.
+2. **LoL SECOND.** The win-prob model is fully buildable now (20.8k match outcomes). But its
+   **edge-vs-market backtest will be thin** — the 55k new LoL markets are mostly upcoming /
+   unresolved, so validate the LoL model on **match outcomes**, and treat its price-edge as
+   **forward-looking** (it accumulates as those matches resolve). Same game-parameterized
+   pipeline as CS2.
+
+**This is a different edge than the "whale" backtests.** Those (`backtest_*results.json`) are
+"copy/fade good or bad wallets" — and we already run a wallet-fade strategy live, with the Elo
+model as a value *filter*. Trust the **OOS** file (`backtest_oos_results.json`), not the
+in-sample `+806%` (that's look-ahead). THIS mission is a separate, complementary edge: **beat
+the price directly with a better win-prob model.** A stronger model also improves our live
+fade filter, so it pays off either way.
+
 ## What we have now (the baseline to beat)
 
 A plain match-level **Elo** model (`K=32`, base `1500`, updated per match on win/loss only).

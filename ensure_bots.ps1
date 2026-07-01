@@ -18,6 +18,7 @@ $map = [ordered]@{
     "cs2_inplay_bot"    = @("CS2InplayBot",    "watchdog_cs2inplay.lock","watchdog_cs2inplay.log",30)
     "telegram_bot"      = @("PolyBotTelegram", "watchdog_telegram.lock", "", 0)
     "main.py dashboard" = @("PolyDashboard",   "watchdog_dashboard.lock","", 0)
+    "price_capture"     = @("PriceCapture",    "watchdog_pricecap.lock", "watchdog_pricecap.log", 30)
 }
 try {
     $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop)
@@ -53,6 +54,6 @@ foreach ($key in $map.Keys) {
         Log "RESTARTED $key [$reason] via $task"
     }
 }
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  checked 6 bots, acted $($acted.Count): $($acted -join ', ')" |
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  checked $($map.Keys.Count) bots, acted $($acted.Count): $($acted -join ', ')" |
     Out-File -Encoding utf8 "$root\health_guard_lastrun.txt"
 exit 0

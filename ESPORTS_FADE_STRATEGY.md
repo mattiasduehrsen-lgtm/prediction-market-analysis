@@ -207,3 +207,26 @@ CS2 markets attract emotionally-attached bettors (favorite team fans, scene insi
 | `MAX_FADES_PER_DAY` | 500 | Sanity ceiling |
 | `POLL_INTERVAL` | 2.0s | Polymarket data-api polling cadence |
 | `ENTRY_SLIPPAGE` | $0.01 | +1¢ buffer on BUY (v1.9 pattern) |
+
+---
+
+## v1.54 TURNAROUND (2026-07-01) — CURRENT STRATEGY
+
+**The table above is historical.** War-room analysis found the fade-everything
+config at **−1.5% realized** on 567 fills; the entire loss was one high-frequency
+wallet plus spread costs on unfiltered fades. The strategy is now:
+
+1. **Model-edge gate (primary):** a fade fires ONLY if the v2 gradient-boosted
+   win-prob model (`esports_model/`) rates our side underpriced by
+   `MODEL_FILTER_MIN_EDGE = 0.10` (validated +20.6% ROI @3¢ friction, monotonic
+   dose-response, triple-confirmed incl. live shadow A/B). Elo is fallback only.
+2. **Entry floor lowered to 0.10** — model-confirmed cheap entries were the only
+   profitable segment (+17.8%); the old 0.40/0.20 floor blocked the edge.
+3. **Toxic-wallet filter:** targets we've faded ≥20× at a net loss are auto-excluded
+   (self-maintaining from `live_results.csv`).
+4. **Quarter-Kelly sizing** implemented but **OFF** (`KELLY_ENABLED=0`) until the
+   gate shows positive ROI on its first ~50 live fills. Flat $15 until then.
+5. **Price-capture logger** (`price_capture.py`, task `PriceCapture`) logs bid/ask/
+   depth for all near-start esports markets → unblocks prop/arb/LoL backtests.
+
+Full analysis: `COWORK_WARROOM_RESULTS_2026-07-01.md`. History: `PATCH_HISTORY.md`.

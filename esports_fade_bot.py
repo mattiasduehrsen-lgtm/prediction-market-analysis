@@ -85,6 +85,17 @@ MODEL_FILTER_ENABLED = True
 MODEL_FILTER_MIN_EDGE = 0.10   # v1.54 (Ship #1): the validated gate. On feasibility +
                                # OOS + live shadow data, edge>=0.10 = +20.6% @3c friction
                                # (monotonic dose-response). Below it, fades are ~breakeven.
+# ── Quarter-Kelly sizing (Ship #4) — DEPLOYED DARK, default OFF ─────────────────
+# stake = equity * min(0.25*(q-p)/(1-p), 2.5%), then capped by market-cap headroom
+# and 25% of ask-side book depth; floor $1. Replayed on the 393 gated bets:
+# $1,000 -> $5,421 vs $2,216 flat — 2.4x growth, never >2.5%/bet. Per the war-room
+# rule, do NOT size up an unproven stream: enable (KELLY_ENABLED=1) only after the
+# v1.54 gate shows positive ROI on its first ~50 live fills. Until then flat $15.
+import os as _os_k
+KELLY_ENABLED = _os_k.getenv("KELLY_ENABLED", "0") in ("1", "true", "True")
+KELLY_FRACTION = 0.25
+KELLY_CAP_PCT = 0.025          # never risk >2.5% of equity on one bet
+KELLY_MIN_USD = 1.0
 # Shadow A/B (v1.53): log the Cowork esports_model Predictor's call next to the
 # live Elo filter on every CS2 fade. PURELY OBSERVATIONAL — never changes a trade.
 # Disable with SHADOW_MODEL_ENABLED=0 (env). Trading is unaffected if it fails.
@@ -608,6 +619,10 @@ class FadeBot:
             else:
                 # Snapshot is from a previous day — today's realized PnL is 0
                 self.daily_pnl = 0.0
+            # Wallet equity for Kelly sizing (refreshed every eval cycle, ~10 min).
+            eq = d.get("wallet_total_equity_usd")
+            if eq:
+                self.wallet_equity = float(eq)
             self.daily_pnl_mtime = cur_mtime
         except Exception as e:
             print(f"[fade-bot] daily_pnl reload failed: {e}")
@@ -1102,6 +1117,19 @@ class FadeBot:
                     r2 = v2.predict(our_outcome, other_outcome)
                     if r2.get("ok"):
                         model_p_ours = r2["model_prob_a"]; used = "v2"
+                        # Keep the Elo-vs-v2 comparison stream alive (shadow_compare
+                        # events) so we can continuously verify v2 stays ahead of Elo
+                        # now that v2 is the PRIMARY. Roles are swapped vs v1.53 but
+                        # the event schema is identical (elo_* vs shadow_* fields).
+                        try:
+                            em = self._model_for_slug(slug)
+                            ep = em.predict(our_outcome, other_outcome) if em else None
+                            if ep and ep.get("ok"):
+                                self._shadow_compare(slug, our_outcome, other_outcome,
+                                                     our_entry, ep["model_pA"],
+                                                     ep["model_pA"] - our_entry, tx)
+                        except Exception:
+                            pass
                 except Exception:
                     model_p_ours = None
             if model_p_ours is None:   # v2 unavailable/unmatched -> Elo fallback
@@ -1129,6 +1157,29 @@ class FadeBot:
                               "our_outcome": our_outcome, "our_entry": our_entry,
                               "model_p": round(model_p_ours, 4),
                               "model_edge": round(model_edge, 4), "model": used})
+
+            # ── Quarter-Kelly sizing (Ship #4, OFF until gate proves out) ──────
+            if KELLY_ENABLED:
+                try:
+                    equity = float(getattr(self, "wallet_equity", 0) or 0)
+                    q, p = model_p_ours, our_entry
+                    if equity > 0 and 0 < p < 1 and q > p:
+                        frac = min(KELLY_FRACTION * (q - p) / (1 - p), KELLY_CAP_PCT)
+                        stake = equity * frac
+                        # cap by per-market headroom and 25% of ask-side depth
+                        stake = min(stake, MAX_PER_MARKET_USD - prior)
+                        _, depth = self._clob_book(our_token_id) if our_token_id else (None, 0.0)
+                        if depth:
+                            stake = min(stake, 0.25 * depth)
+                        if stake >= KELLY_MIN_USD:
+                            bet = round(stake, 2)
+                            self.write_event({"type": "kelly_sized", "tx": tx,
+                                              "stake": bet, "equity": round(equity, 2),
+                                              "q": round(q, 4), "p": p,
+                                              "depth_cap": round(depth or 0, 2)})
+                except Exception as e:
+                    self.write_event({"type": "kelly_error", "error": str(e)[:80], "tx": tx})
+                    # fall through with flat bet — sizing must never block a gated trade
 
         shares_est = round(bet / max(our_entry, 0.05), 2)
 

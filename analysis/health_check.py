@@ -21,7 +21,8 @@ def ps(cmd):
 # 1) PROCESSES
 cmds = ps("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | ForEach-Object { $_.CommandLine }")
 bots = {"esports_fade_bot":"LIVE fade","sports_fade_bot":"sports","cs2_model_bot":"model paper",
-        "cs2_inplay_bot":"inplay paper","telegram_bot":"telegram","main.py dashboard":"dashboard"}
+        "cs2_inplay_bot":"inplay paper","telegram_bot":"telegram","main.py dashboard":"dashboard",
+        "price_capture":"price cap"}
 print("="*70); print(" 1. PROCESSES")
 for key,label in bots.items():
     # 'sports_fade_bot' is a substring of 'esports_fade_bot' -> boundary match
@@ -36,7 +37,8 @@ for key,label in bots.items():
 print("="*70); print(" 2. LOG FRESHNESS (stale = stuck/dead)")
 # heartbeat bots (must be fresh). telegram/dashboard are event-driven -> not here.
 logs={"watchdog_esports.log":"esports","watchdog_sports.log":"sports",
-      "watchdog_cs2model.log":"model","watchdog_cs2inplay.log":"inplay"}
+      "watchdog_cs2model.log":"model","watchdog_cs2inplay.log":"inplay",
+      "watchdog_pricecap.log":"pricecap"}
 for fn,label in logs.items():
     p=ROOT/fn
     if not p.exists(): print(f"   {label}: NO LOG"); warn(f"{label} no log"); continue
@@ -77,7 +79,8 @@ except Exception as e: warn(f"pnl read {e}")
 print("="*70); print(" 5. SCHEDULED TASKS")
 tasks=["PolyBotEsports","PolyBotSports","PolyBotTelegram","PolyDashboard","CS2ModelBot",
        "CS2InplayBot","PolyBotHealthGuard","CS2EloRefresh","CS2ModelEval","CS2InplayEval",
-       "PolyBotEsportsRefresh","EsportsMarketMonitor","LoLEloRefresh","EsportsModelState"]
+       "PolyBotEsportsRefresh","EsportsMarketMonitor","LoLEloRefresh","EsportsModelState",
+       "PriceCapture"]
 out=ps("foreach($t in @('"+"','".join(tasks)+"')){ $i=Get-ScheduledTaskInfo -TaskName $t -ErrorAction SilentlyContinue; "
        "$s=(Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue).State; "
        "if($i){ Write-Output ($t+'|'+$s+'|'+$i.LastTaskResult+'|'+$i.NextRunTime) } else { Write-Output ($t+'|MISSING') } }")

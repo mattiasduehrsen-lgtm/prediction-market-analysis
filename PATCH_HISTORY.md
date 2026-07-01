@@ -2,6 +2,36 @@
 
 ---
 
+## v1.54 — 2026-07-01
+**Turnaround: the live fade was losing −1.5% — this fixes it (both changes independently verified).**
+
+War-room analysis (Cowork + reproduced on our own data) found the live fade operation
+at **−1.5% realized** on 567 fills. Root causes fixed:
+
+### Ship #1 — Model-edge gate (replaces Elo-0.07 filter + entry floor)
+- The model filter now **gates on the v2 gradient-boosted Predictor** (`esports_model/`),
+  not Elo. Threshold **0.07 → 0.10**; entry floor **0.20 → 0.10**.
+- Validated 3 ways: `feasibility_joined` **+20.6% @3¢** at edge≥0.10 (monotonic); the
+  strictly-OOS `REPORT.md` backtest; the live shadow A/B (model-pass +79% vs Elo +63%).
+- Falls back to Elo when v2 can't price a matchup; **fail-safe** to Elo throughout if v2
+  didn't load. Low-price *model-confirmed* entries were the only profitable segment
+  (+17.8%) — the floor was blocking the edge; the gate does quality control now.
+
+### Ship #2 — Toxic-wallet filter (`identify_active_targets`)
+- Drop any wallet we've faded **≥20× at a net loss** on real fills — self-maintaining
+  from `live_results.csv`.
+- This alone flips the P&L: the **entire −$96 loss was one high-frequency wallet**
+  (`0x47138dc1`: 95 fills, −10.1%). Without it the rest is ~breakeven; the gate takes
+  it positive.
+
+### Next
+Quarter-Kelly sizing (after the gate proves out live) + a price-capture logger to unblock
+prop/arb/LoL backtests.
+
+Files: `esports_fade_bot.py`, `analysis/identify_active_targets.py`, `src/bot/version.py`.
+
+---
+
 ## v1.53 — 2026-06-24
 **Shadow A/B of the Cowork esports_model win-prob model (no trading change).**
 

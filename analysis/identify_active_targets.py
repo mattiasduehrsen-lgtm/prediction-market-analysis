@@ -15,6 +15,32 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 ES_DIR = ROOT / "cowork_snapshot" / "esports"
 BET = 5.0
+# Ship #2 (2026-07-01): drop targets PROVEN toxic on our own real fills. The war-room
+# analysis found the ENTIRE live loss (-1.5% ROI) was one high-frequency wallet
+# (0x47138dc1: 95 fills, -10.1%) — high-freq wallets lose too shallowly to fade past
+# the spread. Exclude any wallet we've faded >= this many times at negative realized
+# ROI. Self-maintaining from live_results.csv, so future toxic wallets drop out too.
+TOXIC_MIN_FILLS = 20
+
+
+def toxic_from_fills() -> set:
+    """Wallets we've faded >=TOXIC_MIN_FILLS times for a net loss (lowercased)."""
+    p = ROOT / "output" / "esports_fade" / "live_results.csv"
+    if not p.exists():
+        p = ES_DIR.parent / "live" / "live_results.csv"   # snapshot fallback (dev)
+    if not p.exists():
+        return set()
+    try:
+        r = pd.read_csv(p)
+        r = r[r["cost_usd"].fillna(0) > 0]
+        g = r.groupby("target_wallet").agg(fills=("cost_usd", "size"),
+                                           staked=("cost_usd", "sum"),
+                                           pnl=("realized_pnl", "sum"))
+        tox = g[(g.fills >= TOXIC_MIN_FILLS) & (g.pnl < 0)]
+        return set(str(w).lower() for w in tox.index)
+    except Exception as e:
+        print(f"[targets] toxic_from_fills failed ({e}) — no exclusion")
+        return set()
 
 
 def determine_won(df):
@@ -192,6 +218,13 @@ def main():
     cs2_live = live_df[live_df["game"] == "cs2"]
     other_live = live_df[live_df["game"] != "cs2"]
     ordered = pd.concat([cs2_live, other_live]).drop_duplicates("proxyWallet")
+    # Ship #2: drop wallets proven toxic on our real fills (self-maintaining).
+    toxic = toxic_from_fills()
+    if toxic:
+        before = len(ordered)
+        ordered = ordered[~ordered["proxyWallet"].str.lower().isin(toxic)]
+        print(f"[targets] excluded {before - len(ordered)} proven-toxic wallet(s) "
+              f"from LIVE (>= {TOXIC_MIN_FILLS} fills, net loss): {sorted(toxic)}")
     live_subset = list(ordered["proxyWallet"].head(LIVE_WALLET_CAP))
     n_cs2 = int((ordered.head(LIVE_WALLET_CAP)["game"] == "cs2").sum())
     print(f"\nLIVE subset: {len(live_subset)} wallets (cs2={n_cs2} reserved-first, "

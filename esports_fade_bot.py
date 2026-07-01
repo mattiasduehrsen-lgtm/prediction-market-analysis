@@ -82,7 +82,9 @@ MAX_FADES_PER_WALLET_PER_DAY = 3  # v1.39 — cap fades per target wallet per UT
 # under-priced. CS2/CSGO markets where teams can't be matched, and non-CS2
 # markets (LoL — no model), are SKIPPED on LIVE (logged). PAPER is unaffected.
 MODEL_FILTER_ENABLED = True
-MODEL_FILTER_MIN_EDGE = 0.07   # v1.43: lowered 0.10->0.07 for more trades/faster
+MODEL_FILTER_MIN_EDGE = 0.10   # v1.54 (Ship #1): the validated gate. On feasibility +
+                               # OOS + live shadow data, edge>=0.10 = +20.6% @3c friction
+                               # (monotonic dose-response). Below it, fades are ~breakeven.
 # Shadow A/B (v1.53): log the Cowork esports_model Predictor's call next to the
 # live Elo filter on every CS2 fade. PURELY OBSERVATIONAL — never changes a trade.
 # Disable with SHADOW_MODEL_ENABLED=0 (env). Trading is unaffected if it fails.
@@ -111,7 +113,12 @@ MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 # 0.20-0.40 band, keep a floor only against extreme sub-0.20 longshots (favorite
 # almost always wins, liquidity/resolution risk high). Daily loss + risk caps still
 # bound downside. Revisit if model-approved sub-0.40 fades underperform on LIVE.
-LIVE_MIN_OUR_ENTRY = 0.20
+# v1.54 (Ship #1): lowered 0.20 -> 0.10. The war-room analysis proved the entry-price
+# floor was blocking exactly where the edge lives: model-CONFIRMED low-price entries
+# (<=0.35) were the ONLY profitable fills (+17.8%). Blind underdog fades lose; but a
+# 0.10-priced underdog that the v2 model also likes by >=0.10 is the best segment, not
+# the worst. The model-edge gate now does the quality control the floor used to fake.
+LIVE_MIN_OUR_ENTRY = 0.10
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 LIVE_FILL_POLL_INTERVAL = 0.5 # seconds between fill checks (was 2.0 — quartered 2026-05-20 for latency)
 LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
@@ -1078,42 +1085,50 @@ class FadeBot:
         # our_entry ≈ market price of our fade side; model gives its probability.
         # edge = model_prob(our side) − market_price(our side). Require > min.
         if self.live and MODEL_FILTER_ENABLED and strategy == "fade":
-            # Route to the right Elo model (CS2->cs2_model, LoL->lol_model). CS2
-            # behaviour is identical; LoL only reaches here if LOL_OBSERVE_ONLY is
-            # off (otherwise it returned at the observe branch above), so this is
-            # the clean go-live path for League.
-            model = self._model_for_slug(slug)
-            if model is None or not getattr(model, "elo_by_id", None):
-                self.write_event({"type": "skip_model_no_coverage", "tx": tx,
-                                  "slug": slug, "reason": "no_model_for_game"})
-                return
+            # MODEL-EDGE GATE (v1.54, Ship #1). Bet only when the win-prob model rates
+            # OUR fade side underpriced by >= MODEL_FILTER_MIN_EDGE (now 0.10). PRIMARY
+            # model = the v2 gradient-boosted Predictor (self.shadow), which the live
+            # shadow A/B + a triple-confirmed OOS backtest showed beats Elo (+20.6% @3c
+            # at edge>=0.10). Fall back to the Elo model only when v2 can't price the
+            # matchup, or entirely if v2 failed to load (fail-safe = old Elo behaviour).
             other_outcome = [o for o in mkt["outcomes"] if o != our_outcome]
             other_outcome = other_outcome[0] if other_outcome else ""
-            pred = model.predict(our_outcome, other_outcome)
-            if not pred or not pred.get("ok"):
-                self.write_event({"type": "skip_model_unmatched", "tx": tx, "slug": slug,
-                                  "our_outcome": our_outcome, "other": other_outcome,
-                                  "reason": (pred or {}).get("reason", "no_pred")})
-                return
-            model_p_ours = pred["model_pA"]            # model prob of our_outcome
-            model_edge = model_p_ours - our_entry      # vs market price of our side
-            # SHADOW A/B: log the gradient-boosted model's call on this same fade.
-            # Observational only — the trade decision below stays on the Elo filter.
-            if self.shadow:
-                self._shadow_compare(slug, our_outcome, other_outcome, our_entry,
-                                     model_p_ours, model_edge, tx)
+            game = ("cs2" if slug.lower().startswith(("cs2-", "csgo-"))
+                    else ("lol" if self._is_lol_slug(slug) else None))
+            v2 = self.shadow.get(game) if game else None
+            model_p_ours = None; used = None
+            if v2 is not None:
+                try:
+                    r2 = v2.predict(our_outcome, other_outcome)
+                    if r2.get("ok"):
+                        model_p_ours = r2["model_prob_a"]; used = "v2"
+                except Exception:
+                    model_p_ours = None
+            if model_p_ours is None:   # v2 unavailable/unmatched -> Elo fallback
+                model = self._model_for_slug(slug)
+                if model is None or not getattr(model, "elo_by_id", None):
+                    self.write_event({"type": "skip_model_no_coverage", "tx": tx,
+                                      "slug": slug, "reason": "no_model_for_game"})
+                    return
+                pred = model.predict(our_outcome, other_outcome)
+                if not pred or not pred.get("ok"):
+                    self.write_event({"type": "skip_model_unmatched", "tx": tx, "slug": slug,
+                                      "our_outcome": our_outcome, "other": other_outcome,
+                                      "reason": (pred or {}).get("reason", "no_pred")})
+                    return
+                model_p_ours = pred["model_pA"]; used = "elo_fallback"
+            model_edge = model_p_ours - our_entry      # model prob(our side) - price
             if model_edge <= MODEL_FILTER_MIN_EDGE:
                 self.write_event({"type": "skip_model_filter", "tx": tx, "slug": slug,
                                   "our_outcome": our_outcome, "our_entry": our_entry,
                                   "model_p": round(model_p_ours, 4),
                                   "model_edge": round(model_edge, 4),
-                                  "min_edge": MODEL_FILTER_MIN_EDGE})
+                                  "min_edge": MODEL_FILTER_MIN_EDGE, "model": used})
                 return
             self.write_event({"type": "model_filter_pass", "tx": tx, "slug": slug,
                               "our_outcome": our_outcome, "our_entry": our_entry,
                               "model_p": round(model_p_ours, 4),
-                              "model_edge": round(model_edge, 4),
-                              "eloA": pred["eloA"], "eloB": pred["eloB"]})
+                              "model_edge": round(model_edge, 4), "model": used})
 
         shares_est = round(bet / max(our_entry, 0.05), 2)
 

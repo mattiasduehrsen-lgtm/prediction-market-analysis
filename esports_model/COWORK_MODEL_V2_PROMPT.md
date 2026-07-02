@@ -18,10 +18,14 @@ price**, not just accuracy. Don't tell us it can't be done — iterate until it'
 
 ## The three biggest levers (ranked by the v1 report)
 
-1. **Tournament tier / event strength — THE #1 missing feature.** `serie.tier` is empty
-   in 100% of free PandaScore. S-tier LAN vs B-tier online is hugely predictive. Get it
-   from **Liquipedia or HLTV** (event tier/prize pool/LAN-flag), join by event name +
-   date, and add tier + LAN flag as features. This is the single highest-value addition.
+1. **Tournament tier / event strength — THE #1 missing feature, and it's ALREADY LOCAL.**
+   `serie.tier` is empty in 100% of free PandaScore — but **bo3.gg carries `tier`
+   (s/a/b/c/d) + `tier_rank` on every match** (99.9% coverage in
+   `cowork_snapshot/gamedata/bo3/matches.jsonl`, 22k matches; tournament object adds
+   `event_level/scope/type` + city for LAN inference). No scraping needed: join
+   bo3↔PandaScore by team names + date (see RESEARCH_GAME_CONTEXT_2026-07-02.md),
+   add tier + LAN as features. NB the local bo3 dump ends ~Jun 4 — refresh via
+   `analysis/bo3_download.py` if you need recent matches.
 2. **CS2 map-level Elo.** We already built `cowork_snapshot/gamedata/cs2_map_elo_history.parquet`
    and `cs2_map_elo_final.parquet`. Fold per-map ratings into the series model (e.g.
    map-Elo aggregated to a series-win prob, or as features) — series outcomes hinge on

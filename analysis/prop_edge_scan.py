@@ -46,7 +46,7 @@ print(f"captured quotes: {len(q):,} rows | markets with a pre-start quote: {len(
 
 # 2) join resolution (winner outcome per cid)
 res = pd.read_parquet(RES)
-wcol = next((c for c in ("winner", "winner_outcome", "outcome") if c in res.columns), None)
+wcol = next((c for c in ("winning_outcome", "winner", "winner_outcome") if c in res.columns), None)
 ccol = next((c for c in ("condition_id", "cid") if c in res.columns), None)
 if not wcol or not ccol:
     print(f"resolutions schema unexpected: {list(res.columns)}"); raise SystemExit

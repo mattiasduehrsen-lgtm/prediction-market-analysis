@@ -79,13 +79,22 @@ def get(path, params, tries=4):
     return None
 
 def load_seen():
-    seen = set()
+    """Returns (seen_ids, newest_begin_at_or_None). One pass; begin_at is parsed
+    from the same json we already decode for the id, so this costs nothing extra
+    and lets incremental runs resume from the data itself (no state file to drift)."""
+    seen, max_dt = set(), None
     if RAW.exists():
         with RAW.open(encoding="utf-8") as fh:
             for line in fh:
-                try: seen.add(json.loads(line)["id"])
-                except Exception: pass
-    return seen
+                try:
+                    m = json.loads(line)
+                    seen.add(m["id"])
+                    b = m.get("begin_at")
+                    if b and (max_dt is None or b > max_dt):
+                        max_dt = b
+                except Exception:
+                    pass
+    return seen, max_dt
 
 def month_ranges(start: datetime, end: datetime):
     cur = start
@@ -97,13 +106,27 @@ def month_ranges(start: datetime, end: datetime):
         yield cur, min(nxt, end)
         cur = nxt
 
-def download_matches():
-    seen = load_seen()
-    print(f"[pandascore] resume: {len(seen)} matches already saved")
+def download_matches(full: bool = False):
+    seen, max_dt = load_seen()
     now = datetime.now(timezone.utc)
+    # TOKEN-BUDGET FIX (2026-07-01): incremental by default. The old behaviour
+    # re-walked EVERY month since 2022 on EVERY run (~250-600 requests per game,
+    # 99% re-fetching already-saved data) — with 8 games on schedules that would
+    # collide with the 1,000 req/hr free-tier cap and starve the live refreshes.
+    # Now: resume from (newest saved match - 7d overlap) -> ~2-5 requests/run.
+    # First run for a game (no file) or explicit `full` arg = full backfill.
+    start = START
+    if not full and max_dt:
+        try:
+            resume = datetime.fromisoformat(max_dt.replace("Z", "+00:00")) - timedelta(days=7)
+            start = max(START, resume)
+        except Exception:
+            pass
+    mode = "FULL backfill" if start == START else f"incremental since {start.date()}"
+    print(f"[pandascore] resume: {len(seen)} matches saved; mode={mode}")
     fh = RAW.open("a", encoding="utf-8")
     total_new = 0
-    for mstart, mend in month_ranges(START, now):
+    for mstart, mend in month_ranges(start, now):
         rng = f"{mstart.strftime('%Y-%m-%dT%H:%M:%SZ')},{mend.strftime('%Y-%m-%dT%H:%M:%SZ')}"
         page = 1
         month_new = 0
@@ -128,7 +151,7 @@ def download_matches():
     fh.close()
     print(f"[pandascore] matches done. total_new={total_new}, grand_total={len(seen)}")
 
-def download_teams():
+def download_teams(full: bool = False):
     seen = set()
     if TEAMS.exists():
         with TEAMS.open(encoding="utf-8") as f:
@@ -136,9 +159,14 @@ def download_teams():
                 try: seen.add(json.loads(line)["id"])
                 except Exception: pass
     fh = TEAMS.open("a", encoding="utf-8")
-    page = 1; total = 0
+    page = 1; total = 0; stale_pages = 0
+    # TOKEN-BUDGET FIX: on incremental runs, sort by -modified_at so new/changed
+    # teams come FIRST, and stop after 2 consecutive pages with nothing new
+    # (~50 pages -> ~2-3 per run). Full backfill (no file / `full`) walks everything.
+    incremental = bool(seen) and not full
+    params_extra = {"sort": "-modified_at"} if incremental else {}
     while True:
-        data = get(TEAMS_EP, {"per_page": PER_PAGE, "page": page})
+        data = get(TEAMS_EP, {"per_page": PER_PAGE, "page": page, **params_extra})
         if not data:
             break
         added = 0
@@ -146,6 +174,10 @@ def download_teams():
             if t.get("id") in seen: continue
             seen.add(t["id"]); fh.write(json.dumps(t)+"\n"); added += 1; total += 1
         fh.flush()
+        if incremental:
+            stale_pages = stale_pages + 1 if added == 0 else 0
+            if stale_pages >= 2:
+                break
         if len(data) < PER_PAGE or page >= 100:  # 10k cap
             break
         page += 1
@@ -153,8 +185,9 @@ def download_teams():
     print(f"[pandascore] teams done. total={len(seen)}")
 
 if __name__ == "__main__":
-    print(f"=== downloading {GAME.upper()} teams ({TEAMS_EP}) ===")
-    download_teams()
-    print(f"=== downloading {GAME.upper()} match history ({MATCH_EP}) ===")
-    download_matches()
+    FULL = "full" in [a.lower() for a in sys.argv[2:]]
+    print(f"=== downloading {GAME.upper()} teams ({TEAMS_EP}){' [FULL]' if FULL else ''} ===")
+    download_teams(full=FULL)
+    print(f"=== downloading {GAME.upper()} match history ({MATCH_EP}){' [FULL]' if FULL else ''} ===")
+    download_matches(full=FULL)
     print("ALL DONE")

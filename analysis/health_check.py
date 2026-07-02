@@ -80,7 +80,7 @@ print("="*70); print(" 5. SCHEDULED TASKS")
 tasks=["PolyBotEsports","PolyBotSports","PolyBotTelegram","PolyDashboard","CS2ModelBot",
        "CS2InplayBot","PolyBotHealthGuard","CS2EloRefresh","CS2ModelEval","CS2InplayEval",
        "PolyBotEsportsRefresh","EsportsMarketMonitor","LoLEloRefresh","EsportsModelState",
-       "PriceCapture"]
+       "PriceCapture","DormantEloRefresh"]
 out=ps("foreach($t in @('"+"','".join(tasks)+"')){ $i=Get-ScheduledTaskInfo -TaskName $t -ErrorAction SilentlyContinue; "
        "$s=(Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue).State; "
        "if($i){ Write-Output ($t+'|'+$s+'|'+$i.LastTaskResult+'|'+$i.NextRunTime) } else { Write-Output ($t+'|MISSING') } }")

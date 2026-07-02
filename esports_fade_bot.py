@@ -255,7 +255,8 @@ class FadeBot:
                 from cs2_model import CS2Model
                 self.lol_model = CS2Model(game="lol")
                 if self.lol_model.elo_by_id:
-                    print(f"[fade-bot] LoL Elo model ON (observe-only) "
+                    print(f"[fade-bot] LoL Elo model ON "
+                          f"({'OBSERVE-ONLY' if LOL_OBSERVE_ONLY else 'LIVE via gate'}) "
                           f"({len(self.lol_model.elo_by_id)} teams)")
                 else:
                     print("[fade-bot] LoL Elo model empty (no lol_*.parquet yet) — LoL obs will log unmatched")
@@ -282,7 +283,8 @@ class FadeBot:
                     except Exception as _e:
                         print(f"[fade-bot] shadow model {_g} load failed: {_e}")
                 if self.shadow:
-                    print(f"[fade-bot] SHADOW model ON (A/B only, never trades): {list(self.shadow)}")
+                    print(f"[fade-bot] v2 model ON (PRIMARY live gate since v1.54; "
+                          f"Elo comparison logged): {list(self.shadow)}")
             except Exception as e:
                 print(f"[fade-bot] shadow model disabled ({e}) — trading unaffected")
                 self.shadow = {}

@@ -132,7 +132,16 @@ MAX_ENTRY_PRICE = 0.95        # don't pay >95c (essentially resolved)
 LIVE_MIN_OUR_ENTRY = 0.10
 SEEN_TX_PRIME_LIMIT = 2000    # how many recent tx hashes to load from CSV on startup
 LIVE_FILL_POLL_INTERVAL = 0.5 # seconds between fill checks (was 2.0 — quartered 2026-05-20 for latency)
-LIVE_FILL_TIMEOUT = 12.0      # cancel if not matched within this many seconds
+LIVE_FILL_TIMEOUT = 12.0      # taker: cancel if not matched within this many seconds
+# ── Maker-first execution (Ship #3, 2026-07-02) ────────────────────────────────
+# Mean fill cost measured at ~1.7c/fill (533 fills) ≈ most of the raw edge. Post
+# GTC AT the signal price (no +1c) unless the model edge is big enough to justify
+# paying the spread. Maker orders wait longer, then cancel — never chase.
+# Monitor: exec_mode is tagged on live_order events + live_orders.jsonl; compare
+# maker-fill WR vs taker-fill WR after ~100 fills (adverse-selection check).
+MAKER_FIRST_ENABLED = os.getenv("MAKER_FIRST_ENABLED", "1") not in ("0", "false", "False")
+MAKER_TAKER_EDGE = 0.15       # edge >= this -> pay up (taker), the edge covers it
+MAKER_FILL_TIMEOUT = 90.0     # maker rest time before cancel (books are slow pre-match)
 # Take-profit sweep: DISABLED by default.
 # At a threshold like 0.95 the EV of selling = 0.95 = EV of holding (0.95 * 1),
 # but selling gives up the last ~5c × shares when markets resolve fully in our
@@ -1106,6 +1115,7 @@ class FadeBot:
         # Only place a real-money fade if the Elo model also likes our side.
         # our_entry ≈ market price of our fade side; model gives its probability.
         # edge = model_prob(our side) − market_price(our side). Require > min.
+        gate_edge = None   # set by the gate below; drives maker-vs-taker execution
         if self.live and MODEL_FILTER_ENABLED and strategy == "fade":
             # MODEL-EDGE GATE (v1.54, Ship #1). Bet only when the win-prob model rates
             # OUR fade side underpriced by >= MODEL_FILTER_MIN_EDGE (now 0.10). PRIMARY
@@ -1153,6 +1163,7 @@ class FadeBot:
                     return
                 model_p_ours = pred["model_pA"]; used = "elo_fallback"
             model_edge = model_p_ours - our_entry      # model prob(our side) - price
+            gate_edge = round(model_edge, 4)           # -> trade dict (maker/taker)
             if model_edge <= MODEL_FILTER_MIN_EDGE:
                 self.write_event({"type": "skip_model_filter", "tx": tx, "slug": slug,
                                   "our_outcome": our_outcome, "our_entry": our_entry,
@@ -1217,6 +1228,7 @@ class FadeBot:
             "our_bet":        bet,
             "our_shares_est": shares_est,
             "our_token_id":   our_token_id,
+            "model_edge":     gate_edge,
             "tx_hash":        tx,
             # LATENCY INSTRUMENTATION:
             "their_fill_ts":   float(t.get("timestamp") or 0),
@@ -1295,7 +1307,23 @@ class FadeBot:
         if not token_id:
             self.write_event({"type": "live_skip_no_token", "tx": trade.get("tx_hash")})
             return
-        price = round(min(MAX_ENTRY_PRICE, trade["our_entry"] + ENTRY_SLIPPAGE), 2)
+        # ── MAKER-FIRST EXECUTION (Ship #3, 2026-07-02) ────────────────────────
+        # Measured mean fill cost was ~1.7c (533 fills) — most of the raw edge.
+        # Post GTC AT the signal price (maker) and wait longer; pay the +1c taker
+        # slippage ONLY when the model edge is big enough to be worth chasing
+        # (>= MAKER_TAKER_EDGE) or when we have no edge reading (Elo-era behaviour).
+        # On maker timeout we CANCEL and let it go — chasing spread on a thin edge
+        # is exactly how the pre-v1.54 config bled out.
+        m_edge = trade.get("model_edge")
+        maker = (MAKER_FIRST_ENABLED and m_edge is not None
+                 and m_edge < MAKER_TAKER_EDGE)
+        if maker:
+            price = round(min(MAX_ENTRY_PRICE, trade["our_entry"]), 2)
+            fill_timeout = MAKER_FILL_TIMEOUT
+        else:
+            price = round(min(MAX_ENTRY_PRICE, trade["our_entry"] + ENTRY_SLIPPAGE), 2)
+            fill_timeout = LIVE_FILL_TIMEOUT
+        exec_mode = "maker" if maker else "taker"
         if price < MIN_ENTRY_PRICE:
             self.write_event({"type": "live_skip_price_too_low", "price": price, "tx": trade.get("tx_hash")})
             return
@@ -1317,6 +1345,7 @@ class FadeBot:
             init_stat = (resp or {}).get("status", "")
             print(f"[fade-bot]   LIVE order posted: id={order_id} status={init_stat} price={price} shares={shares}")
             self.write_event({"type": "live_order_placed", "order_id": order_id,
+                              "exec_mode": exec_mode,
                               "status": init_stat, "price": price, "shares": shares,
                               "token_id": str(token_id), "tx": trade.get("tx_hash"),
                               "fade_condition": trade.get("fade_condition"),
@@ -1364,7 +1393,7 @@ class FadeBot:
         final_avg_price = price
         t0 = time.time()
         if order_id:
-            while time.time() - t0 < LIVE_FILL_TIMEOUT:
+            while time.time() - t0 < fill_timeout:
                 time.sleep(LIVE_FILL_POLL_INTERVAL)
                 try:
                     o = self.client.get_order(order_id) or {}
@@ -1408,6 +1437,7 @@ class FadeBot:
         print(f"[fade-bot]   LIVE final: id={order_id} status={final_status} "
               f"matched={final_matched:.2f}@{final_avg_price:.4f} cost=${cost}")
         self.write_event({"type": "live_order_final", "order_id": order_id,
+                          "exec_mode": exec_mode,
                           "status": final_status, "matched": final_matched,
                           "avg_price": final_avg_price, "cost_usd": cost,
                           "tx": trade.get("tx_hash"),
@@ -1435,8 +1465,9 @@ class FadeBot:
                 "requested_price": price,
                 "requested_shares": shares,
                 "token_id": str(token_id),
+                "exec_mode": exec_mode,
                 **{k: trade.get(k) for k in ("fade_condition", "fade_slug", "our_outcome",
-                                              "target_wallet", "strategy")},
+                                              "target_wallet", "strategy", "model_edge")},
             }) + "\n")
 
         # Reflect the ACTUAL matched fill in the per-market exposure tracker that

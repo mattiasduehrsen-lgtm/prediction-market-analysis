@@ -2,6 +2,29 @@
 
 ---
 
+## v1.56 — 2026-07-02
+**Maker-first execution (Ship #3 — the last unshipped war-room item).**
+
+Mean fill cost was measured at **~1.7¢/fill** (533 fills) — most of the raw fade edge.
+Now: gated fades post GTC **at the signal price** (maker, no +1¢) with a **90s**
+rest-then-cancel; the +1¢ taker path is used only when `model_edge ≥ 0.15` (the edge
+covers the spread) or when no edge reading exists. Never chases on maker timeout.
+`exec_mode` + `model_edge` tagged on live-order events and `live_orders.jsonl` →
+after ~100 fills compare maker-fill WR vs taker WR (adverse-selection check).
+Kill switch: `MAKER_FIRST_ENABLED=0`.
+
+**Also this session (analysis, no code):** in-play +40.2% on 122 paper bets
+decomposed — all 5 go/no-go gates pass, BUT the honest win-rate-vs-price binomial is
+only p≈0.05 (contrarian ≤0.30), resting on ~3 excess wins → **stays paper**; revisit
+pre-registered at contrarian n≥100 & p<0.02. Contrarian weekly ROI was positive 4/4
+weeks — promising mechanism (market overreacts to map-1), insufficient proof.
+Alchemy monthly cap reset confirmed; restart reconnects to fast RPC.
+
+Files: `esports_fade_bot.py`, `src/bot/version.py`, `analysis/_inplay_deep.py`,
+`analysis/_inplay_sig.py`.
+
+---
+
 ## v1.55 — 2026-07-01
 **Net-widening: LoL goes LIVE + all-esports data pipeline + book-depth guard.**
 

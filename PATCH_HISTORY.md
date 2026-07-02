@@ -2,6 +2,32 @@
 
 ---
 
+## v1.57 — 2026-07-02
+**Model v2 + decision layer (Cowork v2 pass, independently verified + retrained natively).**
+
+- **v2 prob engine live**: 5-seed GBM ensemble (CS2: v1 features; LoL: +roster-staleness).
+  OOS CS2 .6554/.2150/ECE .0115 (all better than v1). Full local retrain — numbers
+  reproduce, sklearn pickle-skew eliminated. Fixed a fuzzy-matcher false positive
+  (4-char team keys swallowed junk queries → confident probs for nonexistent teams;
+  now ≥60% containment coverage required; CS2 market coverage still 98%, LoL 88%).
+- **The v2 money finding**: tier/map/roster as *features* HURT edge (model agrees with
+  the market more; paired bootstrap P=0.04) — but as a *bet filter* they print.
+  Decision layer in the gate: **entry > 0.20** (≤20¢ = −64% at quoted prices — the fat
+  unfiltered tail was never fillable) **+ CS2 tier known & non-S** (unknown −16%,
+  tier-S −5.7%). OOS filtered mid-range: **v2 +6.1% > v1 +1.4% > Elo −1.4%**;
+  all ≥5¢ **+10.7%**. Filter fit pre-Feb, evaluated once on Feb–Jun.
+- **Live tier feed**: `analysis/build_tier_index.py` → `tier_index.parquet` from the
+  weekly bo3 dump (21,434 pairs incl. upcoming; runs in `run_bo3_download.bat`);
+  bot `_tier_for()` hot-loads and resolves team-pair+date. LoL: price rule only.
+- Effective gated-fade entry floor moves 0.10 → 0.20 (supersedes v1.54's floor for
+  gated bets; v1.54's evidence was 21 live fills ≤0.35 — v2's is 70 backtest bets
+  ≤0.20 at −64% plus the tail-fillability analysis).
+
+Files: `esports_model/*` (v2), `esports_fade_bot.py`, `analysis/build_tier_index.py`,
+`run_bo3_download.bat`, `src/bot/version.py`.
+
+---
+
 ## v1.56 — 2026-07-02
 **Maker-first execution (Ship #3 — the last unshipped war-room item).**
 

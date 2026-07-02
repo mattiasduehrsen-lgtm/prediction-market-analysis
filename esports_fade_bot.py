@@ -780,6 +780,54 @@ class FadeBot:
             return False
         return s.startswith(("lol-", "arch-lol-", "league-")) or "league-of-legends" in s
 
+    def _tier_for(self, out_a: str, out_b: str, slug: str):
+        """tier_ord (s=4,a=3,b=2,c=1,d=0) for a CS2 matchup, or None if unknown.
+        Source: cowork_snapshot/gamedata/bo3/tier_index.parquet (built weekly from
+        the bo3 dump by analysis/build_tier_index.py; includes UPCOMING matches).
+        Match = normalized team pair + market-slug date within +/-2 days."""
+        import re as _re
+        p = ROOT / "cowork_snapshot" / "gamedata" / "bo3" / "tier_index.parquet"
+        try:
+            mt = p.stat().st_mtime
+        except OSError:
+            return None
+        if mt > getattr(self, "_tieridx_mtime", 0.0):
+            try:
+                import pandas as _pd
+                df = _pd.read_parquet(p)
+                idx = {}
+                for r in df.itertuples(index=False):
+                    idx.setdefault((r.a, r.b), []).append((r.date, int(r.tier_ord)))
+                self._tieridx = idx
+                self._tieridx_mtime = mt
+                print(f"[fade-bot] tier index loaded: {len(df):,} rows")
+            except Exception as e:
+                print(f"[fade-bot] tier index load failed: {e}")
+                return None
+        idx = getattr(self, "_tieridx", None)
+        if not idx:
+            return None
+        def _tn(s):
+            s = (s or "").lower()
+            s = _re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg)\b", " ", s)
+            return _re.sub(r"[^a-z0-9]", "", s)
+        na, nb = _tn(out_a), _tn(out_b)
+        ents = idx.get((min(na, nb), max(na, nb)))
+        if not ents:
+            return None
+        md = _re.search(r"(\d{4}-\d{2}-\d{2})", slug or "")
+        if not md:
+            return ents[-1][1]
+        from datetime import date as _date
+        try:
+            target = _date.fromisoformat(md.group(1))
+            best = min(ents, key=lambda e: abs((_date.fromisoformat(e[0]) - target).days))
+            if abs((_date.fromisoformat(best[0]) - target).days) <= 2:
+                return best[1]
+        except Exception:
+            return ents[-1][1]
+        return None
+
     def _clob_book(self, token_id: str):
         """Return (best_ask, depth_usd_within_2c) for a token, or (None, 0.0).
         depth = $ liquidity available at <= best_ask + 2c (can we actually fill?)."""
@@ -1175,6 +1223,33 @@ class FadeBot:
                               "our_outcome": our_outcome, "our_entry": our_entry,
                               "model_p": round(model_p_ours, 4),
                               "model_edge": round(model_edge, 4), "model": used})
+
+            # ── v2 DECISION LAYER (v1.57, REPORT_V2 §3) ────────────────────────
+            # OOS-validated on 1,600 CS2 markets, filter fit pre-Feb / eval Feb-Jun:
+            # turns the fillable 5-15c mid-range from -6.6% to +4-6% ROI.
+            # Rule 1 (all games): entry must be > 0.20 — the <=20c bucket ran -64%
+            #   at quoted prices (thin longshot books; the fat "tail" ROI there was
+            #   never fillable). Supersedes the v1.54 floor of 0.10 for gated fades.
+            # Rule 2 (CS2 only — bo3 tier feed): tier must be KNOWN (-16% on
+            #   unjoined/obscure events) and NON-S (sharp markets; -5.7% measured).
+            #   LoL gets rule 1 only: no LoL tier feed, filter validated on CS2.
+            if our_entry <= 0.20:
+                self.write_event({"type": "skip_bet_filter", "tx": tx, "slug": slug,
+                                  "reason": "entry<=0.20 thin-longshot bucket",
+                                  "our_entry": our_entry})
+                return
+            if game == "cs2":
+                tier_ord = self._tier_for(our_outcome, other_outcome, slug)
+                if tier_ord is None:
+                    self.write_event({"type": "skip_bet_filter", "tx": tx, "slug": slug,
+                                      "reason": "tier unknown", "our_entry": our_entry})
+                    return
+                if tier_ord >= 4:
+                    self.write_event({"type": "skip_bet_filter", "tx": tx, "slug": slug,
+                                      "reason": "tier-S sharp market", "tier_ord": tier_ord})
+                    return
+                self.write_event({"type": "bet_filter_pass", "tx": tx, "slug": slug,
+                                  "tier_ord": tier_ord, "our_entry": our_entry})
 
             # ── BOOK-DEPTH GUARD (v1.55) ───────────────────────────────────────
             # With LoL live and entries allowed down to 0.10, never fire a gated

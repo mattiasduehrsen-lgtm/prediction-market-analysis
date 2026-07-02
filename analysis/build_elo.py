@@ -15,8 +15,9 @@ from collections import defaultdict
 import pandas as pd
 
 GAME = (sys.argv[1] if len(sys.argv) > 1 else "cs2").lower()
-if GAME not in ("cs2", "lol"):
-    raise SystemExit(f"unknown game {GAME!r}; use cs2 or lol")
+GAMES_OK = ("cs2", "lol", "dota2", "valorant", "rl", "ow", "codmw", "r6siege")
+if GAME not in GAMES_OK:
+    raise SystemExit(f"unknown game {GAME!r}; use one of {GAMES_OK}")
 
 ROOT = Path(__file__).resolve().parents[1]
 GD = ROOT / "cowork_snapshot" / "gamedata" / "pandascore"

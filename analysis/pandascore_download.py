@@ -21,8 +21,16 @@ from dotenv import load_dotenv
 GAME = (sys.argv[1] if len(sys.argv) > 1 else "cs2").lower()
 # (matches endpoint, teams endpoint, file prefix)
 GAME_CFG = {
-    "cs2": ("/csgo/matches/past", "/csgo/teams", "cs2"),
-    "lol": ("/lol/matches/past",  "/lol/teams",  "lol"),
+    "cs2":      ("/csgo/matches/past",     "/csgo/teams",     "cs2"),
+    "lol":      ("/lol/matches/past",      "/lol/teams",      "lol"),
+    # v1.55 net-widening: every esport PandaScore covers that Polymarket/GRID could
+    # list. Data first, models next, wiring when the markets appear.
+    "dota2":    ("/dota2/matches/past",    "/dota2/teams",    "dota2"),
+    "valorant": ("/valorant/matches/past", "/valorant/teams", "valorant"),
+    "rl":       ("/rl/matches/past",       "/rl/teams",       "rl"),
+    "ow":       ("/ow/matches/past",       "/ow/teams",       "ow"),
+    "codmw":    ("/codmw/matches/past",    "/codmw/teams",    "codmw"),
+    "r6siege":  ("/r6siege/matches/past",  "/r6siege/teams",  "r6siege"),
 }
 if GAME not in GAME_CFG:
     raise SystemExit(f"unknown game {GAME!r}; use one of {list(GAME_CFG)}")

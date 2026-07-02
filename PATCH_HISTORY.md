@@ -2,6 +2,28 @@
 
 ---
 
+## v1.55 — 2026-07-01
+**Net-widening: LoL goes LIVE + all-esports data pipeline + book-depth guard.**
+
+1. **LoL LIVE.** Both pre-registered go-live gates passed on 155 observe-only samples:
+   median book depth **$318** (71% fillable at bet size) and **would_fade=28** (edge
+   exists at threshold). LoL fades route through the **same v1.54 model-edge gate**
+   (v2 LoL model primary, edge≥0.10, Elo fallback) + all existing caps. The observe
+   stream still logs every LoL signal (feeds `backtest_lol.py`). Kill switch:
+   `LOL_OBSERVE_ONLY=1` env → back to observe-only.
+2. **Book-depth guard** on every gated fade (all games): skip if ask-side depth
+   within 2¢ < bet (`skip_thin_book`). With entries to 0.10 and a second live game,
+   never fire into an empty book. Kelly reuses the same book call.
+3. **All-esports pipeline.** `pandascore_download/flatten/build_elo` accept
+   `dota2/valorant/rl/ow/codmw/r6siege`; `run_allgames_download.bat` (task
+   `AllGamesDownload`) pulls history + builds validated Elo per game — model ready
+   the moment GRID lists H2H markets (the market monitor alerts when they appear).
+
+Files: `esports_fade_bot.py`, `analysis/pandascore_{download,flatten}.py`,
+`analysis/build_elo.py`, `run_allgames_download.bat`, `src/bot/version.py`.
+
+---
+
 ## v1.54 — 2026-07-01
 **Turnaround: the live fade was losing −1.5% — this fixes it (both changes independently verified).**
 

@@ -148,11 +148,13 @@ TP_SWEEP_INTERVAL = 60.0
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
 # Dota/Valorant samples too small to trust right now — add later.
 ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-", "lol-", "arch-lol-")
-# LoL is OBSERVE-ONLY (paper) for now: no validated live edge + unknown book depth.
-# LoL slugs are priced via the LoL Elo model and their order-book depth is logged,
-# but NO real order is ever placed (see _observe_lol). NB: Valorant VCT slugs
-# contain "league" — they are explicitly excluded in _is_lol_slug.
-LOL_OBSERVE_ONLY = True
+# LoL WENT LIVE 2026-07-01 (v1.55) after both pre-registered go-live gates passed on
+# 155 observe-only samples: median book depth $318 (71% fillable at bet size) and
+# would_fade=28 (real edge exists at the threshold). LoL fades route through the SAME
+# v1.54 model-edge gate (v2 LoL model primary, edge>=0.10, Elo fallback) + a book-depth
+# guard. The observe stream STILL logs every LoL signal (feeds backtest_lol.py) —
+# setting this back to True reverts LoL to observe-only (the kill switch).
+LOL_OBSERVE_ONLY = os.getenv("LOL_OBSERVE_ONLY", "0") in ("1", "true", "True")
 LOL_PREFIXES = ("lol-", "arch-lol-", "league-")
 
 # On-chain real-time signal source (v1.40). The data-api /trades feed is ~220s
@@ -984,17 +986,20 @@ class FadeBot:
                 our_entry = round(1 - their_price, 4)
         our_token_id = mkt["tokens"].get(our_outcome)
 
-        # ── LoL: OBSERVE-ONLY (no real money) ───────────────────────────────
-        # Price via the LoL Elo model + log live book depth (the liquidity test),
-        # then STOP. LoL never reaches the live-order path below. CS2/CSGO fall
-        # through unchanged. (Valorant excluded inside _is_lol_slug.)
-        if LOL_OBSERVE_ONLY and self._is_lol_slug(slug):
+        # ── LoL: observe ALWAYS, trade only if live-enabled (v1.55) ─────────
+        # Every LoL signal is logged with model edge + live book depth — this data
+        # stream feeds backtest_lol.py and must keep flowing whether or not LoL
+        # trades. If the kill switch (LOL_OBSERVE_ONLY=1) is set, stop here;
+        # otherwise fall through to the SAME gate + caps + order path as CS2.
+        # (Valorant excluded inside _is_lol_slug.)
+        if self._is_lol_slug(slug):
             self._observe_lol(slug=slug, cid=condition_id, wallet=wallet,
                               their_side=their_side, their_outcome=their_outcome,
                               their_price=their_price, our_outcome=our_outcome,
                               our_entry=our_entry, our_token_id=our_token_id,
                               other=other, strategy=strategy, tx=tx)
-            return
+            if LOL_OBSERVE_ONLY:
+                return
 
         bet = LIVE_BET_USD if self.live else PAPER_BET_USD
 
@@ -1158,6 +1163,18 @@ class FadeBot:
                               "model_p": round(model_p_ours, 4),
                               "model_edge": round(model_edge, 4), "model": used})
 
+            # ── BOOK-DEPTH GUARD (v1.55) ───────────────────────────────────────
+            # With LoL live and entries allowed down to 0.10, never fire a gated
+            # fade into a book that can't fill our bet within 2c of the ask.
+            # (One /book call per gate PASS only — a few per day.)
+            depth = 0.0
+            if our_token_id:
+                _ba, depth = self._clob_book(our_token_id)
+                if depth < bet:
+                    self.write_event({"type": "skip_thin_book", "tx": tx, "slug": slug,
+                                      "ask_depth": round(depth, 2), "bet": bet})
+                    return
+
             # ── Quarter-Kelly sizing (Ship #4, OFF until gate proves out) ──────
             if KELLY_ENABLED:
                 try:
@@ -1168,7 +1185,6 @@ class FadeBot:
                         stake = equity * frac
                         # cap by per-market headroom and 25% of ask-side depth
                         stake = min(stake, MAX_PER_MARKET_USD - prior)
-                        _, depth = self._clob_book(our_token_id) if our_token_id else (None, 0.0)
                         if depth:
                             stake = min(stake, 0.25 * depth)
                         if stake >= KELLY_MIN_USD:

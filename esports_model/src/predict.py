@@ -13,11 +13,7 @@ import numpy as np, pandas as pd, joblib
 
 ART = Path(__file__).resolve().parent.parent / "artifacts"
 BASE, DECAY_HALF, S = 1500.0, 180.0, 173.7178
-FEATS = ["elo_diff", "elo_prob", "delo_diff", "glicko_mu_diff", "glicko_phi_a",
-         "glicko_phi_b", "glicko_prob", "loggames_diff", "form10_diff",
-         "form10_a", "form10_b", "streak_diff", "rest_a", "rest_b", "rest_diff",
-         "h2h_a", "h2h_n", "num_games", "same_region", "patch", "new_a", "new_b",
-         "games_a", "games_b"]
+PHI_MAX, GAP_DAYS = 350/173.7178, 45.0
 
 
 def _norm(s):
@@ -56,8 +52,9 @@ SEED_ALIASES = {
 class Predictor:
     def __init__(self, game, default_num_games=3):
         self.game = game; self.default_num_games = default_num_games
-        b = joblib.load(ART / f"{game}_model.joblib")
-        self.clf, self.iso = b["clf"], b["iso"]
+        b = joblib.load(ART / f"{game}_model_v2.joblib")
+        self.clfs, self.isos, self.feats = b["clfs"], b["isos"], b["feats"]
+        self.bet_filter = b.get("bet_filter", {})
         st = pd.read_parquet(ART / f"{game}_team_state.parquet")
         st["nkey"] = st.name.map(_norm)
         # keep the most-played row per name key
@@ -87,11 +84,15 @@ class Predictor:
         a = self.aliases.get(n)
         if a and a in self.state:
             return self.state[a]
-        # 2) conservative fuzzy: substring match, but ONLY if it's unambiguous
-        #    (exactly one state key contains/!is-contained-by n) to avoid mispicks.
+        # 2) conservative fuzzy: substring match, ONLY if unambiguous (exactly one
+        #    candidate) AND the containment covers >=60% of the longer string.
+        #    The coverage ratio kills Falcons-class false positives: without it,
+        #    a tiny key like 'trea' (team TrEa) matched arbitrary junk queries
+        #    ('zzznotreal') and returned a confident prob for a nonexistent team.
         if len(n) >= 4:
             cands = [row for k, row in self.state.items()
-                     if len(k) >= 4 and (n in k or k in n)]
+                     if len(k) >= 4 and (n in k or k in n)
+                     and min(len(k), len(n)) / max(len(k), len(n)) >= 0.6]
             if len(cands) == 1:
                 return cands[0]
         return None
@@ -135,13 +136,53 @@ class Predictor:
             "new_a": int(ra.games < 5), "new_b": int(rb.games < 5),
             "games_a": ra.games, "games_b": rb.games,
         }
-        X = pd.DataFrame([[feat[k] for k in FEATS]], columns=FEATS)
-        raw = self.clf.predict_proba(X)[0, 1]
-        prob = float(self.iso.transform([raw])[0])
+        # v2 roster-staleness features (used by the LoL shipped model)
+        def idle_days(r):
+            return max((now_ns - r.last_played_ns) / 86400e9, 0.0)
+        def phi_infl(r):
+            phi2 = (r.glicko_phi / S) ** 2
+            sig = getattr(r, "glicko_sigma", 0.06)
+            periods = idle_days(r) / 7.0
+            return S * min(math.sqrt(phi2 + sig * sig * periods), PHI_MAX)
+        def act90(r):
+            rec = getattr(r, "recent30_ns", None)
+            if rec is None: return 0
+            cut = now_ns - int(90 * 86400e9)
+            return int(sum(1 for x in rec if x >= cut))
+        def postgap(r):
+            return 0 if idle_days(r) >= GAP_DAYS else int(getattr(r, "postgap", 20))
+        pia, pib = phi_infl(ra), phi_infl(rb)
+        aa, ab = act90(ra), act90(rb)
+        feat.update({
+            "phi_infl_a": pia, "phi_infl_b": pib, "phi_infl_diff": pia - pib,
+            "act90_a": aa, "act90_b": ab, "act90_diff": aa - ab,
+            "longgap_a": int(idle_days(ra) >= GAP_DAYS), "longgap_b": int(idle_days(rb) >= GAP_DAYS),
+            "postgap_a": postgap(ra), "postgap_b": postgap(rb),
+        })
+        X = pd.DataFrame([[feat[k] for k in self.feats]], columns=self.feats)
+        probs = [float(iso.transform([clf.predict_proba(X)[0, 1]])[0])
+                 for clf, iso in zip(self.clfs, self.isos)]
+        prob = float(np.mean(probs))
         return {"ok": True, "game": self.game, "team_a": team_a, "team_b": team_b,
                 "model_prob_a": round(prob, 4), "model_prob_b": round(1 - prob, 4),
                 "elo_prob_a": round(float(elo_prob), 4), "glicko_prob_a": round(glicko_prob, 4),
                 "games_a": int(ra.games), "games_b": int(rb.games)}
+
+    def bet_ok(self, entry_price, tier_ord=None):
+        """Shipped v2 decision layer. entry_price = vig-normalized price you would
+        PAY (incl. fee). tier_ord: bo3.gg-style ordinal (s=4,a=3,b=2,c=1,d=0) from
+        the live tier feed; None = unknown.
+        Validated OOS (2025-09 -> 2026-06 CS2 markets): filter turns the 5-15c
+        mid-range from -6.6% ROI to +4.1% and keeps the fillable tail (+27.8%).
+        Returns (ok: bool, reason: str)."""
+        f = self.bet_filter or {}
+        if entry_price <= f.get("min_entry_price", 0.20):
+            return False, f"entry price {entry_price:.2f} <= {f.get('min_entry_price', 0.20)} (thin longshot book; -64% ROI bucket)"
+        if f.get("require_tier_known", True) and tier_ord is None:
+            return False, "event tier unknown (unjoined/obscure event; -16% ROI bucket)"
+        if tier_ord is not None and tier_ord > f.get("max_tier_ord", 3):
+            return False, "tier-S event (sharp market; June fade analysis -5.7%)"
+        return True, "ok"
 
 
 if __name__ == "__main__":

@@ -1,10 +1,14 @@
 """Run the walk-forward pass and dump FINAL per-team state for the predictor.
-Mirrors the rating updates in features.py exactly."""
+Mirrors the rating updates in features.py exactly.
+
+v2: also stores the roster-staleness state the LoL shipped model needs
+(recent match timestamps for act90, post-gap counter, Glicko sigma for
+time-inflated phi)."""
 import math, sys, json
 from pathlib import Path
 import numpy as np, pandas as pd
 import pyarrow.parquet as pq
-from features import load_matches, team_region, Glicko, _streak, PS, OUT
+from features import load_matches, team_region, Glicko, _streak, PS, OUT, GAP_DAYS
 
 BASE = 1500.0; K = 32.0; DK = 40.0; DECAY_HALF = 180.0
 
@@ -16,9 +20,16 @@ def build_state(game):
     hist = {}; games_ct = {}; gl = Glicko()
     h2h = {}
     names = {}
+    recent = {}; postgap = {}
     for r in df.itertuples(index=False):
         a, b, t = r.teamA_id, r.teamB_id, r.begin_at
         names[a] = r.teamA_name; names[b] = r.teamB_name
+        # post-gap counter uses the idle time BEFORE this match
+        for team in (a, b):
+            lp = last_played.get(team)
+            gap = (t - lp).total_seconds()/86400.0 if lp is not None else 365.0
+            if gap >= GAP_DAYS: postgap[team] = 0
+            else: postgap[team] = postgap.get(team, 20) + 1
         ea = elo.get(a, BASE); eb = elo.get(b, BASE)
         pa = 1/(1+10**(-(ea-eb)/400))
         elo[a] = ea + K*(r.actualA-pa); elo[b] = eb + K*((1-r.actualA)-(1-pa))
@@ -36,6 +47,7 @@ def build_state(game):
         last_elo_t[a] = t; last_elo_t[b] = t
         gl.update(a, b, r.actualA)
         hist.setdefault(a, []).append(r.actualA); hist.setdefault(b, []).append(1-r.actualA)
+        recent.setdefault(a, []).append(int(t.value)); recent.setdefault(b, []).append(int(t.value))
         last_played[a] = t; last_played[b] = t
         games_ct[a] = games_ct.get(a, 0)+1; games_ct[b] = games_ct.get(b, 0)+1
         key = (min(a, b), max(a, b)); hh = h2h.get(key, [0, 0])
@@ -50,16 +62,18 @@ def build_state(game):
             "elo": elo[tid], "delo": delo[tid],
             "last_elo_ns": int(last_elo_t[tid].value),
             "glicko_mu": gmu, "glicko_phi": gphi,
+            "glicko_sigma": gl.sigma.get(tid, 0.06),
             "form10": float(np.mean(h[-10:])) if h else 0.5,
             "streak": _streak(h), "games": games_ct[tid],
             "last_played_ns": int(last_played[tid].value),
             "location": region.get(tid, "??"),
+            "recent30_ns": recent.get(tid, [])[-30:],
+            "postgap": min(postgap.get(tid, 20), 20),
         })
     st = pd.DataFrame(rows)
     st.to_parquet(OUT / f"{game}_team_state.parquet", index=False)
     h2h_rows = [{"a": k[0], "b": k[1], "wins_low": v[0], "n": v[1]} for k, v in h2h.items()]
     pd.DataFrame(h2h_rows).to_parquet(OUT / f"{game}_h2h.parquet", index=False)
-    # patch default for lol
     meta = {"max_ts_ns": int(df.begin_at.max().value)}
     if game == "lol":
         from features import lol_patch

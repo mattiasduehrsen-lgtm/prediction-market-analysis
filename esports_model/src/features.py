@@ -1,13 +1,25 @@
 """
-Walk-forward feature engineering for CS2 / LoL win-probability modelling.
+Walk-forward feature engineering for CS2 / LoL win-probability modelling. v2.
 
 For every finished 2-team match we emit a feature row using ONLY information
 available strictly before begin_at (no leakage). Ratings, form, rest, H2H are
 all updated AFTER the row is emitted.
 
+v2 additions:
+  - Tournament tier (CS2: bo3.gg join via build_bo3_join.py; LoL: league-name
+    mapping). Event tier is pre-match metadata (bo3 publishes it on upcoming
+    matches), so joining it is leakage-safe.
+  - CS2 map-level Elo aggregates (build_map_features.py), incl. Bo3 veto-sim.
+  - Roster-staleness proxies: time-inflated Glicko phi (deviation grows with
+    inactivity, Glicko-2-style), 90-day activity counts, long-gap flags, and
+    a post-gap "rust" counter (matches since returning from a 45d+ break).
+    These proxy roster changes: long-dormant teams usually return different.
+
 Outputs artifacts/{game}_features.parquet
+Run build_bo3_join.py and build_map_features.py first (cs2).
 """
 import json, math, sys
+from collections import deque
 from pathlib import Path
 import numpy as np, pandas as pd
 import pyarrow.parquet as pq
@@ -17,6 +29,9 @@ SNAP = _REPO / "cowork_snapshot"
 PS = SNAP / "gamedata" / "pandascore"
 OUT = _REPO / "esports_model" / "artifacts"
 OUT.mkdir(parents=True, exist_ok=True)
+
+PHI_MAX = 350 / 173.7178
+GAP_DAYS = 45.0
 
 
 def load_matches(game):
@@ -39,7 +54,6 @@ def team_region(game):
 
 
 def lol_patch(match_ids):
-    """match_id -> major.minor patch float (LoL only)."""
     out = {}
     want = set(match_ids)
     with open(PS / "lol_matches_raw.jsonl") as f:
@@ -58,6 +72,21 @@ def lol_patch(match_ids):
     return out
 
 
+def lol_league_tier(league):
+    """Ordinal event tier for LoL from league name (0..4, like bo3 d..s)."""
+    if not isinstance(league, str):
+        return np.nan
+    l = league.lower()
+    if any(k in l for k in ("worlds", "mid-season invitational", "msi", "first stand")):
+        return 4.0
+    if any(k in l for k in ("challengers", "academy", "2nd division", "division 2",
+                            "div 2", "ldl", "hesports", "second division")):
+        return 1.0
+    if l in ("lck", "lpl", "lec", "lcs") or l.startswith("lta") or l == "lcp":
+        return 3.0
+    return 2.0
+
+
 # ----------------------------- Glicko-2 (lightweight) -----------------------
 class Glicko:
     """Sequential Glicko-2; per-match update (rating period = 1 match)."""
@@ -69,11 +98,16 @@ class Glicko:
         self.sigma = {}   # volatility
     def _get(self, t):
         if t not in self.mu:
-            self.mu[t] = 0.0; self.phi[t] = 350/173.7178; self.sigma[t] = 0.06
+            self.mu[t] = 0.0; self.phi[t] = PHI_MAX; self.sigma[t] = 0.06
         return self.mu[t], self.phi[t], self.sigma[t]
     def rating(self, t):
         mu, phi, _ = self._get(t)
         return 1500 + 173.7178*mu, 173.7178*phi
+    def phi_inflated(self, t, days_idle):
+        """Glicko-2 style: deviation grows with inactivity (1 period ~ 7 days)."""
+        _, phi, sigma = self._get(t)
+        periods = max(days_idle, 0.0) / 7.0
+        return 173.7178 * min(math.sqrt(phi*phi + sigma*sigma*periods), PHI_MAX)
     def expect(self, ta, tb):
         mua, phia, _ = self._get(ta); mub, phib, _ = self._get(tb)
         g = 1/math.sqrt(1 + 3*(phib**2)/(math.pi**2))
@@ -116,14 +150,10 @@ def build(game):
     region = team_region(game)
     patch = lol_patch(df["match_id"].tolist()) if game == "lol" else {}
 
-    # state
-    elo = {}                 # standard Elo (baseline-style)
-    delo = {}                # time-decayed Elo
-    last_played = {}         # team -> begin_at
-    last_elo_t = {}          # team -> begin_at for decay
-    hist = {}                # team -> list of recent (result) for form
-    h2h = {}                 # (min,max) -> [A_wins_by_lower, n]
-    games_ct = {}
+    elo = {}; delo = {}; last_played = {}; last_elo_t = {}
+    hist = {}; h2h = {}; games_ct = {}
+    recent = {}              # team -> deque of begin_at (90d activity)
+    postgap = {}             # team -> matches since last 45d+ gap (capped 20)
     gl = Glicko()
 
     BASE = 1500.0; K = 32.0; DK = 40.0; DECAY_HALF = 180.0  # days
@@ -133,7 +163,6 @@ def build(game):
         a, b = r.teamA_id, r.teamB_id
         t = r.begin_at
         ea = elo.get(a, BASE); eb = elo.get(b, BASE)
-        # decayed elo: pull toward base by inactivity half-life
         def decayed(team):
             v = delo.get(team, BASE); lt = last_elo_t.get(team)
             if lt is not None:
@@ -145,17 +174,26 @@ def build(game):
         gmu_a, gphi_a = gl.rating(a); gmu_b, gphi_b = gl.rating(b)
 
         ga = games_ct.get(a, 0); gb = games_ct.get(b, 0)
-        # form: last-10 win rate
         def form(team):
             h = hist.get(team, [])
             return (np.mean(h[-10:]) if h else 0.5), (sum(1 for _ in h[-10:]) and _streak(h))
         fa, sa_ = form(a); fb, sb_ = form(b)
-        # rest days
         def rest(team):
             lp = last_played.get(team)
             return min((t-lp).total_seconds()/86400.0, 60.0) if lp is not None else 30.0
         ra = rest(a); rb = rest(b)
-        # h2h
+        def idle(team):
+            lp = last_played.get(team)
+            return (t-lp).total_seconds()/86400.0 if lp is not None else 365.0
+        ia = idle(a); ib = idle(b)
+        def act90(team):
+            q = recent.get(team)
+            if q is None: return 0
+            cut = t - pd.Timedelta(days=90)
+            while q and q[0] < cut: q.popleft()
+            return len(q)
+        aa = act90(a); ab = act90(b)
+        phi_ia = gl.phi_inflated(a, ia); phi_ib = gl.phi_inflated(b, ib)
         key = (min(a, b), max(a, b)); hh = h2h.get(key, [0, 0])
         if hh[1] > 0:
             lower_wr = hh[0]/hh[1]
@@ -180,23 +218,29 @@ def build(game):
             "same_region": int(region.get(a, "?") == region.get(b, "?")),
             "patch": patch.get(r.match_id, np.nan),
             "new_a": int(ga < 5), "new_b": int(gb < 5),
+            # --- v2 roster-staleness proxies ---
+            "phi_infl_a": phi_ia, "phi_infl_b": phi_ib,
+            "phi_infl_diff": phi_ia-phi_ib,
+            "act90_a": aa, "act90_b": ab, "act90_diff": aa-ab,
+            "longgap_a": int(ia >= GAP_DAYS), "longgap_b": int(ib >= GAP_DAYS),
+            "postgap_a": min(postgap.get(a, 20), 20), "postgap_b": min(postgap.get(b, 20), 20),
         })
 
         # ---- updates (after emitting) ----
         res = r.actualA
-        # standard elo
         pa = 1/(1+10**(-(ea-eb)/400))
         elo[a] = ea + K*(res-pa); elo[b] = eb + K*((1-res)-(1-pa))
-        # decayed elo (use decayed values as base, bigger K)
         pda = 1/(1+10**(-(da-db)/400))
-        # margin multiplier from map score
         margin = abs(r.scoreA-r.scoreB); mult = math.log1p(margin) if margin > 0 else 0.5
         delo[a] = da + DK*mult*(res-pda); delo[b] = db + DK*mult*((1-res)-(1-pda))
         last_elo_t[a] = t; last_elo_t[b] = t
-        # glicko
         gl.update(a, b, res)
-        # bookkeeping
         hist.setdefault(a, []).append(res); hist.setdefault(b, []).append(1-res)
+        # post-gap rust counter: reset on 45d+ gap, else increment
+        for team, gap in ((a, ia), (b, ib)):
+            if gap >= GAP_DAYS: postgap[team] = 0
+            else: postgap[team] = postgap.get(team, 20) + 1
+        recent.setdefault(a, deque()).append(t); recent.setdefault(b, deque()).append(t)
         last_played[a] = t; last_played[b] = t
         games_ct[a] = ga+1; games_ct[b] = gb+1
         if a < b: hh = [hh[0]+res, hh[1]+1]
@@ -204,8 +248,31 @@ def build(game):
         h2h[key] = hh
 
     out = pd.DataFrame(rows)
+
+    # ---- v2 context merges (all pre-match event metadata) ----
+    if game == "cs2":
+        tier = pq.read_table(OUT / "cs2_bo3_join.parquet").to_pandas()
+        tier = tier[["match_id", "tier_ord", "bo3_rating", "bo3_stars", "tier_source"]]
+        out = out.merge(tier, on="match_id", how="left")
+        out["tier_is_s"] = (out.tier_ord == 4).astype(float).where(out.tier_ord.notna())
+        out["tier_known"] = out.tier_ord.notna().astype(int)
+        out = out.drop(columns=["tier_source"])
+        mf = pq.read_table(OUT / "cs2_map_feats.parquet").to_pandas()
+        out = out.merge(mf, on="match_id", how="left")
+    else:
+        mm = pq.read_table(PS / f"{game}_matches.parquet").to_pandas()[["match_id", "league"]]
+        out = out.merge(mm, on="match_id", how="left")
+        out["tier_ord"] = out.league.map(lol_league_tier)
+        out["tier_is_s"] = (out.tier_ord == 4).astype(float)
+        out["tier_known"] = out.tier_ord.notna().astype(int)
+        out = out.drop(columns=["league"])
+        for c in ("bo3_rating", "bo3_stars", "mapelo_veto_prob", "mapelo_mean_diff",
+                  "mapelo_best_diff", "mapelo_worst_diff", "mapelo_spread", "mapelo_ngames"):
+            out[c] = np.nan
+
     out.to_parquet(OUT / f"{game}_features.parquet", index=False)
-    print(f"{game}: wrote {len(out):,} feature rows -> {game}_features.parquet")
+    print(f"{game}: wrote {len(out):,} feature rows -> {game}_features.parquet "
+          f"(tier known {out.tier_known.mean():.1%}, mapelo {out.mapelo_veto_prob.notna().mean():.1%})")
     return out
 
 

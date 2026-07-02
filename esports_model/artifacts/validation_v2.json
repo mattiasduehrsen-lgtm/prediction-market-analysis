@@ -1,0 +1,52 @@
+{
+  "cs2": {
+    "game": "cs2",
+    "n_total": 57104,
+    "n_test": 11421,
+    "test_start": "2025-09-18",
+    "ship_feats": "FEATS_V1",
+    "baseline_elo": {
+      "acc": 0.6416,
+      "brier": 0.2212,
+      "logloss": 0.6328,
+      "ece": 0.0193
+    },
+    "current_v1": {
+      "acc": 0.652,
+      "brier": 0.2157,
+      "logloss": 0.6226,
+      "ece": 0.0159
+    },
+    "ship_v2": {
+      "acc": 0.6554,
+      "brier": 0.215,
+      "logloss": 0.6192,
+      "ece": 0.0115
+    }
+  },
+  "lol": {
+    "game": "lol",
+    "n_total": 20880,
+    "n_test": 4176,
+    "test_start": "2025-05-24",
+    "ship_feats": "FEATS_V1+ROSTER",
+    "baseline_elo": {
+      "acc": 0.647,
+      "brier": 0.2185,
+      "logloss": 0.6266,
+      "ece": 0.0203
+    },
+    "current_v1": {
+      "acc": 0.6561,
+      "brier": 0.2143,
+      "logloss": 0.6243,
+      "ece": 0.0193
+    },
+    "ship_v2": {
+      "acc": 0.6552,
+      "brier": 0.2127,
+      "logloss": 0.6129,
+      "ece": 0.0175
+    }
+  }
+}

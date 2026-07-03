@@ -2,3 +2,9 @@
 artifacts/*_features.parquet
 __pycache__/
 src/__pycache__/
+# Regenerated daily on the laptop by EsportsModelState (build_state.py) — tracking
+# them made every laptop pull abort on "local changes would be overwritten"
+# (the silent-deploy-failure root cause, 2026-07-02). Ship code, not state.
+artifacts/*_team_state.parquet
+artifacts/*_h2h.parquet
+artifacts/*_state_meta.json

@@ -65,7 +65,11 @@ def paginate_until(path, date_field, fname, sort):
                 continue
             seen.add(row["id"]); fh.write(json.dumps(row) + "\n"); new += 1
         fh.flush()
-        offset += LIMIT
+        # BUGFIX 2026-07-03: advance by rows RECEIVED, not requested. The API caps
+        # pages at 100 even when LIMIT=250 is asked — offset += LIMIT skipped 60%
+        # of every window, so the historical dump was a ~40% SAMPLE. Weekly
+        # incremental runs now walk densely and backfill the gaps via id-dedup.
+        offset += len(rows)
         if offset % 2500 == 0:
             print(f"  {path}: offset={offset}, +{new} new, last date={rows[-1].get(date_field,'')[:10]}")
     fh.close()

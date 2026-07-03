@@ -23,25 +23,52 @@ def norm(s):
     return re.sub(r"[^a-z0-9]", "", s)
 
 
+def _emit(m, rows):
+    tier = (m.get("tier") or "").lower()
+    if tier not in TIER_ORD:
+        return
+    mm = SLUG.match(m.get("slug") or "")
+    if not mm:
+        return  # hashed/TBD slugs can't be name-joined (teams not final yet)
+    a, b, dd, mo, yy = mm.groups()
+    na, nb = norm(a.replace("-", " ")), norm(b.replace("-", " "))
+    if not na or not nb:
+        return
+    rows.append({"a": min(na, nb), "b": max(na, nb),
+                 "date": f"{yy}-{mo}-{dd}", "tier_ord": TIER_ORD[tier]})
+
+
 rows = []
+# 1) Historical dump. NOTE: the dump dedups by id and NEVER refreshes a row, so
+#    upcoming matches are stale/absent in it — hence step 2.
 with (BO3 / "matches.jsonl").open(encoding="utf-8") as fh:
     for line in fh:
         try:
             m = json.loads(line)
         except Exception:
             continue
-        tier = (m.get("tier") or "").lower()
-        if tier not in TIER_ORD:
-            continue
-        mm = SLUG.match(m.get("slug") or "")
-        if not mm:
-            continue  # hashed/TBD slugs can't be name-joined
-        a, b, dd, mo, yy = mm.groups()
-        na, nb = norm(a.replace("-", " ")), norm(b.replace("-", " "))
-        if not na or not nb:
-            continue
-        rows.append({"a": min(na, nb), "b": max(na, nb),
-                     "date": f"{yy}-{mo}-{dd}", "tier_ord": TIER_ORD[tier]})
+        _emit(m, rows)
+
+# 2) LIVE fetch of the ~500 newest matches (sorted -start_date = ALL upcoming +
+#    this week). These are CURRENT rows (real slugs/tiers), appended last so
+#    drop_duplicates(keep="last") lets them override stale dump versions.
+try:
+    import requests
+    S = requests.Session()
+    S.headers.update({"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+    n_live = 0
+    for off in (0, 100, 200, 300, 400):
+        r = S.get("https://api.bo3.gg/api/v1/matches",
+                  params={"sort": "-start_date", "page[limit]": 100, "page[offset]": off},
+                  timeout=20)
+        got = r.json().get("results", []) if r.status_code == 200 else []
+        for m in got:
+            _emit(m, rows); n_live += 1
+        if len(got) < 100:
+            break
+    print(f"[tier-index] live fetch: {n_live} newest matches merged")
+except Exception as e:
+    print(f"[tier-index] live fetch failed ({e}) — index built from dump only")
 
 df = pd.DataFrame(rows).drop_duplicates(["a", "b", "date"], keep="last")
 df.to_parquet(BO3 / "tier_index.parquet", index=False)

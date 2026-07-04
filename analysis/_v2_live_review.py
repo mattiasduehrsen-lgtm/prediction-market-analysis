@@ -20,7 +20,7 @@ with (ROOT/"output"/"esports_fade"/"fade_events.jsonl").open(encoding="utf-8") a
         if ts >= CUT_57:
             ev[e.get("type","?")] += 1
             if e.get("type") == "skip_bet_filter": mk_reasons[e.get("reason","?")] += 1
-for t, c in ev.most_common(18): print(f"  {t:from28} {c}" .replace("from",""))
+for t, c in ev.most_common(18): print(f"  {t:<28} {c}")
 print("  skip_bet_filter reasons:", dict(mk_reasons))
 
 print("\n=== B) orders since v1.54 (exec_mode, status, fill) ===")

@@ -185,11 +185,17 @@ CS2_WINDOW_PRE_S = 2 * 3600      # start polling 2h before scheduled match start
 CS2_WINDOW_POST_S = 5 * 3600     # keep polling 5h after start (covers long Bo5 + delays)
 CS2_WINDOW_REFRESH_S = 300       # rebuild the window list from the parquet at most this often
 
-# Matches single-map / per-game markets: "-game1", "-game2", "-map-2", etc.
-# These are Bo1 outcomes (coin flips); we only want series moneylines.
-# Also catches "-map-handicap" style markets, which are likewise negative-EV.
+# Matches every NON-series-moneyline market: per-map/per-game winners, handicaps,
+# totals, kills, first-blood/tower. We trade series moneylines ONLY — the model
+# prices P(win the series); on any other market that probability is meaningless.
+# v1.58 FIX: GRID's new LoL slugs use "-game-handicap" (no digit), which the old
+# regex (-game\d) MISSED — the bot placed real orders on handicap markets with
+# fictitious "edges" (series prob vs handicap price), e.g. lol-hle1-g2-...-game-
+# handicap filled $15 @0.34 on a fake +0.16 edge. Regex now catches all prop forms.
 import re as _re
-_SINGLE_MAP_RE = _re.compile(r"-game\d+|-map-?\d*\b|-map-", _re.IGNORECASE)
+_SINGLE_MAP_RE = _re.compile(
+    r"-game\d+|-game-|-map-?\d*\b|-map-|handicap|kill-over|kill-under|first-blood"
+    r"|first-tower|total-|-total\b|over-under|round-total", _re.IGNORECASE)
 
 
 def is_single_map_market(slug: str) -> bool:

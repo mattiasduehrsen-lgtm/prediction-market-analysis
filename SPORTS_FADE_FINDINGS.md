@@ -170,33 +170,61 @@ At $10/trade scale: $30k/year. At $20: $60k/year.
 
 ---
 
-## Recommended path forward
+## Recommended path forward (compressed for NBA season closing)
 
-### This week (2026-05-25 to 2026-05-31)
+**Critical timing constraint:** NBA Finals end June 10-19, then dark until October.
+NHL Stanley Cup Final also mid-June. To capture NBA's +32% edge this season,
+we must compress paper validation.
 
-1. **Watch the sports paper bot under v2** — collect 7d of consensus-filtered signals
-2. **Run evaluator hourly via cron** — already scheduled
-3. **At end of week:** generate a comparison report: paper actual vs backtest prediction
-4. **If actual is within ±30% of prediction:** approve NBA LIVE deployment at $5/trade
+### Days 1-2 (May 25-26): Compressed paper validation
 
-### Next week if validation holds
+1. Sports paper bot v2 (consensus filter) collecting signals — already running
+2. Sports evaluator computes paper PnL every 10 min — already scheduled
+3. Target: 30+ paper resolutions with positive ROI before deciding to deploy
+4. Verify consensus filter is firing (not eating too much volume)
 
-1. **Deploy NBA only at $5/trade LIVE.** Use the existing esports bot infrastructure but with NBA-specific config:
-   - `LIVE_BET_USD = 5`
-   - `CONSENSUS_THRESHOLD = 2`
-   - `SKIP_MARKET_KEYWORDS = ('spread', 'handicap', '-line-')`
-   - `LIVE_MIN_OUR_ENTRY = 0.40`
-   - Smaller risk caps: `DAILY_LOSS_CAP = 50`, `DAILY_RISK_CAP_USD = 200`
-2. **Run NBA LIVE for 2 weeks** at $5/trade.
-3. **If LIVE ROI is positive at 100+ trades:** scale to $10, add Tennis.
-4. **After 6 weeks:** decision point — scale to $20, add MLB + NHL.
+### Day 3 (May 27) — go/no-go decision
+
+If paper ROI is within ±50% of backtest prediction (+1.3 to +4% real-world):
+
+**Deploy NBA only at $5/trade LIVE.** Configuration:
+- `LIVE_BET_USD = 5`
+- `CONSENSUS_THRESHOLD = 2`
+- `SKIP_MARKET_KEYWORDS = ('spread', 'handicap', '-line-')`
+- `LIVE_MIN_OUR_ENTRY = 0.40`
+- Tight caps: `DAILY_LOSS_CAP = 100`, `DAILY_RISK_CAP_USD = 200`
+
+### Weeks 1-3.5 (May 27 → June 19): NBA Finals capture
+
+- ~15-22 trading days of NBA at $5 = ~1,000-1,500 LIVE trades
+- If LIVE ROI is positive at n=100, scale NBA bet size to $10
+- Daily: ~$50-150 profit at $5; $100-300 at $10
+
+### Week 2 onward (June 1): Layer Tennis
+
+- French Open final week → Wimbledon prep → US Open in August
+- Tennis is year-round — no season-end cliff
+- Start at $5/trade
+
+### Week 3 onward (June 15): Layer MLB
+
+- Daily games through October
+- Lower per-trade edge (~1%) but massive volume
+- Start at $5/trade
+
+### June 19+: NBA dark, MLB + Tennis carry forward
+
+- Tennis Wimbledon (late June → mid July) — peak tennis volume
+- MLB regular season through end of September
+- October: NBA + NHL return, NFL in full swing — add back
 
 ### What I'm NOT recommending
 
-- Don't deploy all 4 sports simultaneously. NBA first.
-- Don't scale to $10+ before 100+ LIVE trades.
-- Don't deploy soccer ever (unless we figure out why losers become winners).
-- Don't remove the consensus filter "to get more volume" — the volume reduction IS the strategy improvement.
+- Don't skip the 48-72h paper validation just because the window is closing
+- Don't deploy at $10+ on day 1 — verify edge translates first
+- Don't deploy soccer (negative wallet persistence in OOS)
+- Don't remove the consensus filter "to get more volume" — that volume reduction IS the improvement
+- Don't deploy NHL LIVE yet — small sample (197 OOS trades), wait for next season's data
 
 ---
 

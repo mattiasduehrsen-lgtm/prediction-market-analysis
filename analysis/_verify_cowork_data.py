@@ -16,11 +16,14 @@ PARQUETS = [
     "gamedata/prematch_prices.parquet", "gamedata/cs2_map_elo_final.parquet",
     "gamedata/cs2_map_elo_history.parquet", "gamedata/polymarket_cs2_markets.parquet",
     "esports/clob_esports_markets.parquet", "esports/resolutions.parquet",
+    "gamedata/bo3/tier_index.parquet",
 ]
 JSONL = [
     "gamedata/pandascore/cs2_matches_raw.jsonl", "gamedata/pandascore/lol_matches_raw.jsonl",
     "live/fade_events.jsonl", "live/live_orders.jsonl",
-]
+    "gamedata/bo3/matches.jsonl",
+] + [str(f.relative_to(Path(__file__).resolve().parents[1] / "cowork_snapshot"))
+     for f in sorted((Path(__file__).resolve().parents[1] / "cowork_snapshot" / "live" / "price_capture").glob("prices_*.jsonl"))]
 CSV = ["live/lol_observations.csv", "live/live_results.csv"]
 JSONF = ["live/fade_targets.json", "live/fade_targets_paper.json", "live/live_daily_pnl.json"]
 

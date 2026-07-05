@@ -210,11 +210,11 @@ CS2 markets attract emotionally-attached bettors (favorite team fans, scene insi
 
 ---
 
-## v1.54 TURNAROUND (2026-07-01) — CURRENT STRATEGY
+## v1.54 TURNAROUND (2026-07-01) — historical
 
 **The table above is historical.** War-room analysis found the fade-everything
 config at **−1.5% realized** on 567 fills; the entire loss was one high-frequency
-wallet plus spread costs on unfiltered fades. The strategy is now:
+wallet plus spread costs on unfiltered fades. The strategy became:
 
 1. **Model-edge gate (primary):** a fade fires ONLY if the v2 gradient-boosted
    win-prob model (`esports_model/`) rates our side underpriced by
@@ -230,3 +230,39 @@ wallet plus spread costs on unfiltered fades. The strategy is now:
    depth for all near-start esports markets → unblocks prop/arb/LoL backtests.
 
 Full analysis: `COWORK_WARROOM_RESULTS_2026-07-01.md`. History: `PATCH_HISTORY.md`.
+
+---
+
+## v1.59 R1 PAPER VALIDATION (2026-07-05) — CURRENT STATE
+
+**LIVE is PAUSED** (`output/esports_fade/paused.flag`, set at v1.58) and stays
+paused. The v1.54/v1.57 gate went **1–8 (−$83)** post-v1.57; GRID-era realized is
+**−$141.29 on 44 fills**. The live calibration referee (117 resolved shadow
+signals) shows market Brier .222 < Elo .246 < v2 .258 — raw v2's dose-response is
+inverted on the GRID-era population: the bigger its claimed edge, the more wrong
+it is. Full adjudication: `COWORK_GRID_REFIT_RESULTS_2026-07-05.md`.
+
+What runs now:
+
+1. **R1 recalibrated PAPER gate** (`_r1_paper_gate`, `esports_fade_bot.py`) — the
+   one lever with positive out-of-sample direction (+16–32% ROI fill-true on July
+   captured asks; n≈21–24, not significant). Prices every CS2 series fade signal
+   through a **frozen** calibration table, paper-bets iff
+   `p_r1 − best_ask ≥ 0.05`, `0.20 < ask < 0.95`, depth ≥ $10, tier known & non-S,
+   max 1 gated entry per match per day. Output: `r1_paper_trades.csv` +
+   `r1_eval`/`r1_paper_bet` events. Never places orders.
+2. **Pre-registered triggers** (frozen 2026-07-05, do not re-derive):
+   - **GO-LIVE**: ≥150 resolved R1 bets AND ROI > +10% AND price-matched excess
+     P(≤0) < 0.05 → first read ~early August.
+   - **KILL R1**: any n ≥ 60 with running ROI < −10%.
+   - **Health**: rolling 200-signal Brier of `p_r1` vs market; drift >.02 worse →
+     refit = new pre-registration, clock restarts.
+3. **LoL is observe-only again** (`LOL_OBSERVE_ONLY` defaults 1) — failed both the
+   July Brier eval and the fill-true sim (−12.6%).
+4. **Props are banned permanently** (v1.58 regex): every prop class ran −9%..−61%
+   at executable quotes, both sides. The spread *is* the market maker's model.
+5. **In-play stays paper**: pre-registered test (run 2026-07-05) at contrarian
+   n=51, p=0.22 — undersampled; re-run once at n≥100. No peeking.
+6. **Weekly hygiene during accumulation**: model-state + tier-index refresh
+   (13 GRID-era teams missing from model state), maker/taker tagging accrues
+   toward the ~100-fill adverse-selection read.

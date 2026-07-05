@@ -47,6 +47,9 @@ cowork_snapshot/esports/*.parquet
 cowork_snapshot/esports/*_results.json
 cowork_snapshot/esports/clob_token_to_market.json
 cowork_snapshot/esports/token_to_market.json
+cowork_snapshot/esports/fade_targets_paper.json
+cowork_snapshot/gamedata/
+cowork_snapshot/live/
 cowork_snapshot/*.log
 cowork_snapshot/*.zip
 cowork_snapshot/*.md

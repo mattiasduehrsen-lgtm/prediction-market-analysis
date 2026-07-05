@@ -157,13 +157,13 @@ TP_SWEEP_INTERVAL = 60.0
 #   cs2/csgo (+144%), league-of-legends / league- (+127%).
 # Dota/Valorant samples too small to trust right now — add later.
 ESPORTS_PREFIXES = ("cs2-", "csgo-", "league-", "lol-", "arch-lol-")
-# LoL WENT LIVE 2026-07-01 (v1.55) after both pre-registered go-live gates passed on
-# 155 observe-only samples: median book depth $318 (71% fillable at bet size) and
-# would_fade=28 (real edge exists at the threshold). LoL fades route through the SAME
-# v1.54 model-edge gate (v2 LoL model primary, edge>=0.10, Elo fallback) + a book-depth
-# guard. The observe stream STILL logs every LoL signal (feeds backtest_lol.py) —
-# setting this back to True reverts LoL to observe-only (the kill switch).
-LOL_OBSERVE_ONLY = os.getenv("LOL_OBSERVE_ONLY", "0") in ("1", "true", "True")
+# LoL went LIVE 2026-07-01 (v1.55) on depth + would_fade gates — REVERTED to
+# observe-only 2026-07-05 (v1.59, GRID re-fit §6.4): LoL failed the July Brier
+# eval half AND the fill-true sim (-12.6%); the v1.55 go-live gates never included
+# a price test. The observe stream still logs every LoL signal (feeds
+# backtest_lol.py). Re-going-live requires a fill-true paper pass like R1's.
+# Override with env LOL_OBSERVE_ONLY=0.
+LOL_OBSERVE_ONLY = os.getenv("LOL_OBSERVE_ONLY", "1") in ("1", "true", "True")
 LOL_PREFIXES = ("lol-", "arch-lol-", "league-")
 
 # On-chain real-time signal source (v1.40). The data-api /trades feed is ~220s
@@ -202,6 +202,55 @@ def is_single_map_market(slug: str) -> bool:
     return bool(_SINGLE_MAP_RE.search(slug or ""))
 
 
+# ── R1 recalibrated fade gate — PAPER VALIDATION ONLY (v1.59) ────────────────
+# COWORK_GRID_REFIT_RESULTS_2026-07-05.md §6. Raw v2 edges are inverted on the
+# GRID-era population (the more edge v2 claims, the more wrong it is — v1.57 went
+# 1-8 live). What survives is the DIRECTION of model-market disagreement after
+# collapsing v2's confident range onto the GRID-era truth curve. R1 evaluates
+# that recalibrated gate on live signals and real book quotes but NEVER places
+# an order. Pre-registered triggers (do not re-derive after seeing results):
+#   GO-LIVE: >=150 resolved R1 bets AND ROI > +10% AND price-matched excess > 0
+#            with cluster-bootstrap P(<=0) < 0.05
+#   KILL:    at any n >= 60, running ROI < -10%
+R1_ENABLED = os.getenv("R1_PAPER_GATE_ENABLED", "1") not in ("0", "false", "False")
+R1_MIN_EDGE = 0.05        # bet iff p_r1 - best_ask >= this (0.05 chosen on the fit half)
+R1_MIN_ASK = 0.20         # exclusive bounds on the executable ask
+R1_MAX_ASK = 0.95
+R1_BET_USD = 10.0         # depth requirement at live bet size — fillability must be real
+R1_BOOK_PRECHECK = 0.03   # fetch the book only when p_r1 - our_entry >= this (rate-limit)
+# FROZEN isotonic curve, fit once on all 188 GRID-era resolved signals
+# (2026-06-23 .. 07-05). Stored as a table on purpose: refitting in code would
+# invalidate the pre-registration (new curve = new clock). Piecewise-linear
+# between points; clamped outside. It collapses v2 0.40-0.72 to ~0.48-0.57 —
+# i.e. "v2's spread on this population is noise; trust only the extremes."
+R1_ISO_TABLE = ((0.15, 0.00), (0.20, 0.03), (0.25, 0.18), (0.30, 0.35),
+                (0.35, 0.35), (0.40, 0.48), (0.65, 0.48), (0.70, 0.57),
+                (0.80, 0.57), (0.85, 0.82), (0.90, 1.00))
+
+
+def r1_calibrate(v2_p: float) -> float:
+    """Frozen piecewise-linear recalibration of a raw v2 probability."""
+    pts = R1_ISO_TABLE
+    if v2_p <= pts[0][0]:
+        return pts[0][1]
+    if v2_p >= pts[-1][0]:
+        return pts[-1][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if v2_p <= x1:
+            return y0 + (y1 - y0) * (v2_p - x0) / (x1 - x0)
+    return pts[-1][1]
+
+
+_R1_MATCH_ROOT_RE = _re.compile(r"^(.*?-\d{4}-\d{2}-\d{2})")
+
+
+def r1_match_root(slug: str) -> str:
+    """Match-level key for the 1-gated-entry-per-match-per-day cap (the live bot
+    doubled into mibra-vexa1 / paina-bsta / mw-mag, all same-day re-entries)."""
+    m = _R1_MATCH_ROOT_RE.match(slug or "")
+    return m.group(1) if m else (slug or "")
+
+
 class FadeBot:
     def __init__(self, live: bool = False, dry_live: bool = False):
         # dry_live exercises the LIVE init path (auth, client) and the cap
@@ -233,6 +282,12 @@ class FadeBot:
         self.fades_today = 0
         self.fades_by_wallet_today: dict[str, int] = {}          # wallet -> fade count (resets UTC daily)
         self.last_signal_ts: dict[tuple[str, str], float] = {}   # (target, cid) -> epoch
+        # R1 paper gate (v1.59): match roots that already consumed today's single
+        # gated paper entry (pre-registered cap: 1 per match per UTC day).
+        # Re-primed from the CSV on startup so watchdog restarts can't double-enter.
+        self.r1_trades_path = OUT_DIR / "r1_paper_trades.csv"
+        self.r1_bet_matches: set[str] = set()
+        self._prime_r1_matches()
         # condition_id -> {"outcomes":[a,b], "tokens":{outcome:token_id}}
         self.market_cache: dict[str, dict] = {}
         self._load_market_index()
@@ -913,6 +968,124 @@ class FadeBot:
         self.write_event({"type": "lol_observation", **row})
         self.lol_obs_count = getattr(self, "lol_obs_count", 0) + 1
 
+    def _prime_r1_matches(self):
+        """Reload today's R1 match roots from r1_paper_trades.csv so a watchdog
+        restart can't hand a match a second gated entry (pre-registration says 1)."""
+        if not self.r1_trades_path.exists():
+            return
+        try:
+            today = self.day_started.isoformat()
+            with self.r1_trades_path.open(encoding="utf-8", newline="") as fh:
+                for row in _csv.DictReader(fh):
+                    if row.get("date") == today and row.get("match_root"):
+                        self.r1_bet_matches.add(row["match_root"])
+            if self.r1_bet_matches:
+                print(f"[fade-bot] R1: primed {len(self.r1_bet_matches)} match roots for {today}")
+        except Exception as e:
+            print(f"[fade-bot] R1 prime failed (non-fatal): {e}")
+
+    def _r1_paper_gate(self, *, slug, cid, wallet, our_outcome, other, our_entry,
+                       our_token_id, tx):
+        """R1 recalibrated fade gate — PAPER ONLY (v1.59, GRID re-fit §6). Prices
+        every CS2 series fade signal with the FROZEN calibration table and real
+        book quotes, logs the would-be bet, and NEVER places an order.
+
+        Deliberately called BEFORE the paused.flag check in process_trade: LIVE
+        is paused precisely so this validation stream can accrue. Every eval is
+        logged (r1_eval) for the rolling-Brier health metric; passes append to
+        r1_paper_trades.csv — the input to the pre-registered go-live decision.
+        """
+        if not R1_ENABLED:
+            return
+        s = (slug or "").lower()
+        if not s.startswith(("cs2-", "csgo-")):
+            return                       # LoL is observe-only again (§6.4)
+        if is_single_map_market(slug):
+            return                       # series moneylines only — no props (§4)
+        # Debounce: one eval per (wallet, market) per window, same as the live path.
+        dkey = ("r1", wallet, cid)
+        nowt = time.time()
+        if nowt - self.last_signal_ts.get(dkey, 0.0) < MIN_SECONDS_BETWEEN_SAME_TARGET_SAME_MARKET:
+            return
+        self.last_signal_ts[dkey] = nowt
+
+        # v2 ONLY — the frozen curve was fit on v2 probs; an Elo fallback would
+        # feed it a distribution it was never calibrated on.
+        v2 = self.shadow.get("cs2")
+        if v2 is None:
+            return
+        pred = v2.predict(our_outcome, other)
+        if not pred or not pred.get("ok"):
+            self.write_event({"type": "r1_eval", "tx": tx, "slug": slug,
+                              "our_outcome": our_outcome, "our_entry": our_entry,
+                              "r1_reason": (pred or {}).get("reason", "no_pred")})
+            return
+        v2_p = float(pred["model_prob_a"])
+        p_r1 = round(r1_calibrate(v2_p), 4)
+        tier_ord = self._tier_for(our_outcome, other, slug)
+
+        # Health-metric stream: EVERY priced signal, bet or not (rolling Brier of
+        # p_r1 vs market; refit trigger = drifts >.02 worse than market Brier).
+        self.write_event({"type": "r1_eval", "tx": tx, "slug": slug,
+                          "our_outcome": our_outcome, "our_entry": our_entry,
+                          "v2_p": round(v2_p, 4), "p_r1": p_r1,
+                          "tier_ord": tier_ord if tier_ord is not None else ""})
+
+        # Cheap pre-check before spending a /book call: entry tracks the ask
+        # within a couple cents, so p_r1 - entry < 0.03 can't clear the 0.05 bar.
+        if p_r1 - our_entry < R1_BOOK_PRECHECK:
+            return
+
+        def skip(reason, **kw):
+            self.write_event({"type": "r1_skip", "tx": tx, "slug": slug,
+                              "our_outcome": our_outcome, "p_r1": p_r1,
+                              "reason": reason, **kw})
+
+        root = r1_match_root(s)
+        if root in self.r1_bet_matches:
+            return skip("match_cap")     # 1 gated entry per match per day (§6.5)
+        if tier_ord is None:
+            return skip("tier_unknown")  # CS2 tier rule stays (§6.4)
+        if tier_ord >= 4:
+            return skip("tier_S", tier_ord=tier_ord)
+        if not our_token_id:
+            return skip("no_token")
+        best_ask, depth = self._clob_book(our_token_id)
+        if best_ask is None:
+            return skip("no_ask")
+        if not (R1_MIN_ASK < best_ask < R1_MAX_ASK):
+            return skip("ask_range", best_ask=best_ask)
+        edge = round(p_r1 - best_ask, 4)
+        if edge < R1_MIN_EDGE:
+            return skip("edge_below", best_ask=best_ask, r1_edge=edge)
+        if depth < R1_BET_USD:
+            return skip("thin_book", best_ask=best_ask, ask_depth=depth)
+
+        # PASS — record the paper bet at the executable ask.
+        self.r1_bet_matches.add(root)
+        row = {"ts": round(nowt, 2),
+               "date": datetime.now(timezone.utc).date().isoformat(),
+               "slug": slug, "match_root": root, "condition_id": cid,
+               "our_outcome": our_outcome, "our_entry": our_entry,
+               "v2_p": round(v2_p, 4), "p_r1": p_r1,
+               "best_ask": round(best_ask, 4), "r1_edge": edge,
+               "ask_depth_usd": depth,
+               "tier_ord": tier_ord, "bet_usd": R1_BET_USD,
+               "target_wallet": wallet, "tx_hash": tx}
+        try:
+            newfile = not self.r1_trades_path.exists()
+            with self.r1_trades_path.open("a", encoding="utf-8", newline="") as fh:
+                w = _csv.DictWriter(fh, fieldnames=list(row.keys()))
+                if newfile:
+                    w.writeheader()
+                w.writerow(row)
+        except Exception as e:
+            print(f"[fade-bot] R1 csv write failed: {e}")
+        self.write_event({"type": "r1_paper_bet", **row})
+        self.r1_bets_count = getattr(self, "r1_bets_count", 0) + 1
+        print(f"[fade-bot] R1 PAPER BET {our_outcome}@{best_ask} "
+              f"(p_r1={p_r1} v2={round(v2_p, 3)} edge={edge} depth=${depth}) slug={slug[:50]}")
+
     def write_event(self, ev: dict):
         # Auto-add a wall-clock timestamp to every event so downstream tools
         # can filter by time. Doesn't overwrite an existing `ts` field —
@@ -1083,6 +1256,21 @@ class FadeBot:
             self.fades_today = 0
             self.fades_by_wallet_today.clear()
             self.last_signal_ts.clear()
+            self.r1_bet_matches.clear()
+
+        # ── R1 recalibrated PAPER gate (v1.59) ──────────────────────────────
+        # Runs BEFORE the paused.flag check on purpose: the pause halts LIVE
+        # entries precisely so this pre-registered validation stream can accrue
+        # (~4.7 gated bets/day -> first go-live read at n=150, ~early August).
+        # Exception-wrapped: an R1 bug must never touch the live path.
+        if strategy == "fade":
+            try:
+                self._r1_paper_gate(slug=slug, cid=condition_id, wallet=wallet,
+                                    our_outcome=our_outcome, other=other,
+                                    our_entry=our_entry,
+                                    our_token_id=our_token_id, tx=tx)
+            except Exception as e:
+                self.write_event({"type": "r1_error", "error": str(e)[:120], "tx": tx})
 
         # Daily LOSS cap (LIVE only) — PRIMARY stop. Halts new entries once
         # today's realized losses pass DAILY_LOSS_CAP. daily_pnl is refreshed

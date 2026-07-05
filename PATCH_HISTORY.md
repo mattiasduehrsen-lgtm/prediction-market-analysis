@@ -2,6 +2,62 @@
 
 ---
 
+## v1.59 — 2026-07-05
+**R1 recalibrated PAPER gate + LoL back to observe-only (GRID re-fit adjudication).**
+
+Full analysis: `COWORK_GRID_REFIT_RESULTS_2026-07-05.md` (reproducible via
+`analysis/_grid_refit_2026-07-05.py`). On 188 GRID-era resolved signals, raw v2's
+dose-response is **inverted** — the more edge it claims, the more wrong it is
+(edge ≥0.10 bucket: v2 .553, market .410, actual .304). What survives is the
+*direction* of model–market disagreement after a frozen recalibration:
++16–32% ROI fill-true on July captured asks, but n=21–24 and not significant →
+**paper validation with pre-registered triggers, no money.**
+
+- **R1 paper gate** (`_r1_paper_gate` in `esports_fade_bot.py`): prices every CS2
+  series fade signal with a frozen calibration table (code literals — a refit is a
+  new pre-registration). Paper-bet iff `p_r1 − best_ask ≥ 0.05`, `0.20 < ask < 0.95`,
+  ask-depth ≥ $10, CS2 tier known & non-S, max **1 gated entry per match per UTC day**
+  (the live bot doubled into 3 losing matches same-day). Logs `r1_eval` on every
+  priced signal (rolling-Brier health metric) and `r1_paper_bet` →
+  `output/esports_fade/r1_paper_trades.csv`. Runs **before** the `paused.flag` check
+  so the stream accrues while LIVE stays halted. Never places orders.
+  Kill switch: `R1_PAPER_GATE_ENABLED=0`.
+- **Pre-registered triggers** (do not re-derive): GO-LIVE at ≥150 resolved R1 bets
+  AND ROI > +10% AND price-matched excess P(≤0) < 0.05 (~early Aug at ~4.7/day);
+  KILL at n ≥ 60 with running ROI < −10%.
+- **LoL observe-only again** (`LOL_OBSERVE_ONLY` default 0→1): LoL failed the July
+  Brier eval half AND the fill-true sim (−12.6%); the v1.55 go-live gates never
+  included a price test. Observe stream unaffected.
+- **Levers adjudicated dead**: games-floor/tier as edge source (v2 loses to the
+  market at every floor and tier band); props (both sides −9%..−61% at executable
+  quotes — the v1.58 regex ban is permanent); in-play (pre-registered laptop test
+  run 2026-07-05: contrarian n=51, p=0.22 — undersampled; re-run at n ≥ 100).
+- Context: GRID-era live realized −$141.29 on 44 fills; post-v1.57 gated fade 1–8.
+  LIVE stays paused.
+
+Files: `esports_fade_bot.py`, `src/bot/version.py`,
+`COWORK_GRID_REFIT_RESULTS_2026-07-05.md`, `analysis/_grid_refit_2026-07-05.py`.
+
+---
+
+## v1.58 — 2026-07-05
+**Prop-slug fix + LIVE paused on evidence.** *(backfilled entry — shipped in
+commit `fc83eba`, was missing from this file)*
+
+- **Bug**: GRID's new LoL slugs use `-game-handicap` (no digit), which the old
+  single-map regex missed → real orders on handicap markets with fictitious edges
+  (series prob vs handicap price; one $15 fill @0.34 on a fake +0.16 edge). Regex
+  now catches all prop forms (handicap/kill/total/first-x/`-game-`).
+- Tier index rebuilds **daily** (was weekly) — "tier unknown" was skipping legit
+  fades mid-week (42 skips).
+- **Live calibration referee** (108 resolved shadow-compared signals): market
+  Brier .216 < Elo .243 < v2 .255 — on the GRID-era population the market beats
+  both models and v2 is worst. Legit v1.57 fades went 0–5 (−$75). **Action:**
+  `paused.flag` set — new LIVE fades halted, positions still managed, all data
+  streams running.
+
+---
+
 ## v1.57 — 2026-07-02
 **Model v2 + decision layer (Cowork v2 pass, independently verified + retrained natively).**
 

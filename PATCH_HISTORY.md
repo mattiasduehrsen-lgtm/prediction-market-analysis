@@ -2,6 +2,29 @@
 
 ---
 
+## v1.61 — 2026-07-07
+**Tier-join csgo-suffix fix — found via R1 funnel monitoring on day 2.**
+
+352 of 357 R1 skips were `tier_unknown`, and the skipped slugs included real
+tiered matches (tyloo-9z = tier A, isurus-yawara = tier B) that ARE in the tier
+index. Root cause: bo3 team slugs carry a `csgo` suffix (`tyloo-csgo`,
+`isurus-gaming-cs-go`) that the shared normalization didn't strip, while market
+outcome names have none (`TYLOO`, `Isurus`) — pair keys never matched. This
+silently suppressed the live gate's tier matches **since v1.57** and strangled
+R1 accrual (1 gated bet in 2 days vs ~4.7/day expected).
+
+Fix: strip `cs[ -]?go|cs ?2` in all three norm sites (`build_tier_index.norm`,
+`esports_fade_bot._tier_for._tn`, `tape_backfill._norm` — kept in sync);
+verified on every observed failure pair + embedded-cs2 regression. Index
+regenerated on deploy. **Not a spec change** — the pre-registered tier rule is
+unchanged; its implementation now actually finds the tiers.
+
+Files: `esports_fade_bot.py`, `analysis/build_tier_index.py`,
+`analysis/tape_backfill.py`, `src/bot/version.py`. Also: `analysis/r1_status.py`
+(trigger-monitoring view) landed just before this.
+
+---
+
 ## v1.60 — 2026-07-06
 **Evidence-hardening infra while R1 accrues (pre-registered triggers untouched).**
 

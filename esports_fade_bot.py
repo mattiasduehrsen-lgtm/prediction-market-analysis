@@ -900,7 +900,10 @@ class FadeBot:
             return None
         def _tn(s):
             s = (s or "").lower()
-            s = _re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg)\b", " ", s)
+            # v1.61: strip csgo/cs2 suffixes too — MUST match build_tier_index.norm
+            # (bo3 slugs say "tyloo-csgo", markets say "TYLOO"; the mismatch made
+            # real tiered matches skip as tier_unknown since v1.57).
+            s = _re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg|cs[ -]?go|cs ?2)\b", " ", s)
             return _re.sub(r"[^a-z0-9]", "", s)
         na, nb = _tn(out_a), _tn(out_b)
         ents = idx.get((min(na, nb), max(na, nb)))

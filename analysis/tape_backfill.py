@@ -206,7 +206,9 @@ def _tier_map():
 def _norm(s):
     if not isinstance(s, str):
         return ""
-    s = re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg)\b", " ", s.lower())
+    # v1.61: keep in sync with build_tier_index.norm (csgo/cs2 suffix strip)
+    s = re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg|cs[ -]?go|cs ?2)\b",
+               " ", s.lower())
     return re.sub(r"[^a-z0-9]", "", s)
 
 

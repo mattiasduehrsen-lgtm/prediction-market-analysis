@@ -19,7 +19,11 @@ SLUG = re.compile(r"^(.+)-vs-(.+)-(\d{2})-(\d{2})-(\d{4})$")
 def norm(s):
     if not isinstance(s, str): return ""
     s = s.lower()
-    s = re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg)\b", " ", s)
+    # v1.61: also strip csgo/cs-go/cs2 — bo3 team slugs carry the suffix
+    # ("tyloo-csgo", "isurus-gaming-cs-go") while market outcomes don't
+    # ("TYLOO", "Isurus"), so pair keys never matched -> tier_unknown skips on
+    # real tiered matches. MUST stay in sync with _tn in esports_fade_bot._tier_for.
+    s = re.sub(r"\b(esports|esport|e sports|gaming|team|clan|club|gg|cs[ -]?go|cs ?2)\b", " ", s)
     return re.sub(r"[^a-z0-9]", "", s)
 
 

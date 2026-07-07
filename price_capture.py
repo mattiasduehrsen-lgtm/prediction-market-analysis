@@ -40,7 +40,10 @@ def load_universe():
     df = pd.read_parquet(MK, columns=["condition_id", "slug", "tokens",
                                       "game_start", "closed", "archived"])
     df = df[(~df["closed"].astype(bool)) & (~df["archived"].astype(bool))]
-    df = df[df["slug"].str.contains("cs2-|csgo-|lol-|league-", case=False, na=False)]
+    # v1.60: capture ALL esports titles (the parquet is esports-only already) —
+    # dota/valorant/EWC/CDL/apex books archive from day one, so a model for any
+    # future GRID-listed title starts with a fill-true referee instead of a
+    # 5-day-old one. Near-start markets keep priority under the cycle budget.
     gs = pd.to_datetime(df["game_start"], errors="coerce", utc=True)
     now = pd.Timestamp.utcnow()
     m = df[(gs.notna())

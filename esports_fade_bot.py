@@ -767,6 +767,36 @@ class FadeBot:
         except Exception:
             pass  # shadow must NEVER affect trading
 
+    def maybe_reload_shadow(self):
+        """Hot-reload the v2 Predictors when the daily state build
+        (EsportsModelState, 07:00) writes fresh artifacts. Without this the bot
+        prices gate/R1 signals with whatever state was on disk at its last
+        restart — state staleness was flagged as a live risk in the GRID re-fit
+        (v1.60). Exception-safe: any failure keeps the old predictor."""
+        if not self.shadow:
+            return
+        try:
+            art = ROOT / "esports_model" / "artifacts"
+            for g in list(self.shadow):
+                p = art / f"{g}_team_state.parquet"
+                try:
+                    mt = p.stat().st_mtime
+                except OSError:
+                    continue
+                key = f"_shadow_state_mtime_{g}"
+                loaded = getattr(self, key, None)
+                if loaded is None:
+                    # baseline = state in effect since __init__ loaded it
+                    setattr(self, key, mt)
+                elif mt > loaded:
+                    from predict import Predictor as _Pred  # path set in __init__
+                    self.shadow[g] = _Pred(g)
+                    setattr(self, key, mt)
+                    print(f"[fade-bot] v2 {g} predictor hot-reloaded "
+                          f"(fresh team state, mtime {datetime.fromtimestamp(mt).isoformat(timespec='seconds')})")
+        except Exception as e:
+            print(f"[fade-bot] shadow reload failed (keeping loaded state): {e}")
+
     def maybe_reload_targets(self):
         """Hot-reload fade_targets.json AND follow_targets.json on mtime change.
 
@@ -2007,6 +2037,7 @@ class FadeBot:
                         self.cs2_model.maybe_reload()
                     if self.lol_model is not None:
                         self.lol_model.maybe_reload()
+                    self.maybe_reload_shadow()   # daily v2 state without restart (v1.60)
                     if self.live:
                         self.maybe_reload_daily_pnl()
                         self.refresh_daily_risk()

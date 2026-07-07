@@ -2,6 +2,33 @@
 
 ---
 
+## v1.60 — 2026-07-06
+**Evidence-hardening infra while R1 accrues (pre-registered triggers untouched).**
+
+Full findings: `TAPE_BACKFILL_FINDINGS_2026-07-06.md`. Headline: the backfilled
+evidence tilts **negative** for both open validations — expectations updated,
+rules unchanged.
+
+- **v2 state hot-reload** (`maybe_reload_shadow`): bot re-instantiates the v2
+  Predictors when the daily state build writes fresh artifacts (was
+  restart-only — staleness was a flagged live risk).
+- **Price capture widened** to all esports titles (was cs2/lol only).
+- **New `OddsCapture` task** (`odds_capture.py` + `watch_odds_capture.bat`):
+  archives bo3.gg bookmaker coefficients (winner + props) forward — closing
+  lines are not retroactively recoverable. → book-vs-market diagnostic.
+- **Analysis shipped**: `tape_backfill.py` (315 GRID-era markets tape-priced:
+  market Brier beats frozen-R1 everywhere; June −19% / July +33% split = the
+  July promise is time-local; curve unstable up to 0.33), `inplay_tape_join.py`
+  (GRID-era contrarian n=106: z=−1.58, ROI −26% — expect the in-play paper test
+  to fail), `model_coverage_report.py` (CS2 83%; misses are streamer teams,
+  no aliases addable without poisoning — verified "Team shoke" ≠ CYBERSHOKE).
+
+Files: `esports_fade_bot.py`, `price_capture.py`, `odds_capture.py`,
+`watch_odds_capture.bat`, `analysis/{tape_backfill,inplay_tape_join,model_coverage_report}.py`,
+`TAPE_BACKFILL_FINDINGS_2026-07-06.md`, `src/bot/version.py`.
+
+---
+
 ## v1.59 — 2026-07-05
 **R1 recalibrated PAPER gate + LoL back to observe-only (GRID re-fit adjudication).**
 

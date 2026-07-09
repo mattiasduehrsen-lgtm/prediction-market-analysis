@@ -2,6 +2,32 @@
 
 ---
 
+## v1.63 — 2026-07-09
+**WTA live-arming — shipped DARK; flips only via `.env` after explicit user go.**
+
+Full plan + pre-registered triggers: `WTA_LIVE_PLAN_2026-07-09.md`.
+
+- Deep-dive of the sports paper stream (10,155 resolved since May 24): ATP −11%,
+  MLB ~0, NHL −6% dead; NBA +14% out of season; **WTA +10.2% on 1,072 trades /
+  271 markets since Jun 18**, broad across 155 faded wallets.
+- **Fill-true check** (`analysis/sports_tape_check.py`, 742 market tapes): WTA
+  tape ROI **+9.4%** ≈ claimed (slip ~0, fill 93% — sports paper accounting is
+  honest, unlike esports); clustered t=1.61. MLB control correctly dead (t=0.45).
+  Pre-registered arming bar (set before the final score) **passed**.
+- Also ruled out: esports series-vs-handicap consistency arb (0 violations in
+  44 pairs at T−5; handicap books median spread 0.37).
+- Changes: `LIVE_SPORTS_PREFIXES` env-driven (`LIVE_SPORTS`, default empty =
+  all paper); `SPORTS_DAILY_LOSS_CAP` env-driven; `SKIP_MARKET_KEYWORDS` +=
+  `-set-`/`-total`. Target list stays frozen on the validated 2026-05-23 build.
+- Live triggers (pre-registered): KILL at ROI<−15% @ n≥50 or 2 consecutive
+  daily-cap hits; SCALE $5→$10 at n≥100 & ROI>+5%; weekly live-vs-paper health
+  check. ~22 fades/day → first KILL read ~3 days.
+
+Files: `sports_fade_bot.py`, `analysis/sports_tape_check.py`,
+`WTA_LIVE_PLAN_2026-07-09.md`, `src/bot/version.py`.
+
+---
+
 ## v1.62 — 2026-07-09
 **Tier-join fuzzy fallback — second join-failure class.**
 

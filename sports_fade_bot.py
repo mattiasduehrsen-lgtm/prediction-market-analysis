@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import csv as _csv
 import json
+import os
 import time
 import threading
 from collections import deque
@@ -53,7 +54,11 @@ CONSENSUS_TTL_SECONDS = 21600
 
 # MARKET-TYPE FILTER: skip spread/handicap markets (OOS ROI -1.34%, while
 # total O/U returns +13.62% and moneylines +7.97%).
-SKIP_MARKET_KEYWORDS = ("spread", "handicap", "-line-")
+# v1.63: added tennis prop forms — "-set-" catches first-set-winner/set-totals,
+# "-total" catches match-total-21pt5. A handful leaked into the WTA paper stream
+# (4 of ~2k trades, so the paper ROI estimate is unaffected), and the esports
+# v1.58 lesson is that prop leaks at LIVE time buy fictitious edges.
+SKIP_MARKET_KEYWORDS = ("spread", "handicap", "-line-", "-set-", "-total")
 MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 300
                               # on 2026-05-21 because Polymarket's data-api routinely
                               # lags 180-200s, and we were rejecting trades at exactly
@@ -64,7 +69,8 @@ MAX_TRADE_AGE_SECONDS = 300   # skip trades older than this. Raised from 180 to 
 PAPER_BET_USD = 5.0           # bet size (PAPER) — kept at $5 for backtest continuity
 LIVE_BET_USD = 5.0            # bet size (LIVE) — MLB-only initial deployment 2026-05-27.
                               # Conservative starting size; bump after 200+ live trades hold +EV.
-DAILY_LOSS_CAP = 75.0         # primary stop: halt if today's REALIZED losses
+DAILY_LOSS_CAP = float(os.getenv("SPORTS_DAILY_LOSS_CAP", "75"))
+                              # primary stop: halt if today's REALIZED losses
                               # exceed this $ amount (LIVE; uses live_daily_pnl.json
                               # which the eval_live cron refreshes every 10 min).
                               # Replaces the older immediate-risk cap so we can
@@ -119,12 +125,15 @@ ESPORTS_PREFIXES = (
 # above for ongoing data collection; LIVE mode trades only this subset.
 #   2026-05-28 v1.38 - DISABLED ALL. MLB live deploy 2026-05-27 bled hard
 #   in first ~24h despite paper showing +7-10% ROI. User halted via /pause +
-#   asked to disable. Empty tuple => no sport is live-eligible, every signal
-#   falls back to paper logging. Bot can continue running for data collection;
-#   re-enable a sport here when ready (and bump v1.39).
-LIVE_SPORTS_PREFIXES = (
-    # "mlb-",  # disabled 2026-05-28 — see PATCH_HISTORY.md v1.38
-)
+#   asked to disable.
+#   2026-07-09 v1.63 - ENV-DRIVEN. Set LIVE_SPORTS in .env (comma-separated,
+#   e.g. "wta-") to arm a sport; default is EMPTY = everything paper-logs.
+#   Rationale: going live becomes a one-line .env change + restart after
+#   explicit user confirmation, with no code deploy at the moment of arming.
+#   WTA arming criteria + pre-registered kill/scale triggers:
+#   WTA_LIVE_PLAN_2026-07-09.md.
+LIVE_SPORTS_PREFIXES = tuple(
+    p.strip().lower() for p in os.getenv("LIVE_SPORTS", "").split(",") if p.strip())
 
 
 class FadeBot:

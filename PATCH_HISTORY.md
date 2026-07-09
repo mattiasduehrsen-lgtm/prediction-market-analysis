@@ -2,6 +2,27 @@
 
 ---
 
+## v1.62 — 2026-07-09
+**Tier-join fuzzy fallback — second join-failure class.**
+
+Post-v1.61 the R1 funnel still showed 449/452 evals tier-none, including
+Virtus.pro–NIP / Yawara–Keyd fixtures whose pairs ARE in the (daily-rebuilt,
+fresh) index. Root cause #2: market outcomes are short display names ("Keyd",
+"magic") where bo3 slugs are fuller (`keydstars`, `magicru`) — exact keys miss.
+
+`_tier_for` now falls back to a prefix-compatible pair match, accepted **only
+when exactly one index pair qualifies** — ambiguity (mouz vs mouznxt) returns
+None, because a wrong tier join is worse than none. Unit-tested on all observed
+failures + ambiguity traps.
+
+Remaining known holes (not fixable client-side): bo3 hashes team slugs on
+not-yet-finalized upcoming matches (joinable only near match time), and matches
+added to bo3 after the 06:00 build join next day.
+
+Files: `esports_fade_bot.py`, `src/bot/version.py`.
+
+---
+
 ## v1.61 — 2026-07-07
 **Tier-join csgo-suffix fix — found via R1 funnel monitoring on day 2.**
 

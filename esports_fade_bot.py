@@ -908,7 +908,24 @@ class FadeBot:
         na, nb = _tn(out_a), _tn(out_b)
         ents = idx.get((min(na, nb), max(na, nb)))
         if not ents:
-            return None
+            # v1.62 FUZZY FALLBACK: market outcomes are often SHORT display names
+            # where bo3 uses the full slug ("Keyd" vs keydstars, "magic" vs
+            # magicru) — exact pair keys miss real tiered matches (post-v1.61
+            # funnel: 449/452 evals still tier-none, incl. Virtus.pro-NIP class
+            # fixtures). Accept a pair key ONLY if it is prefix-compatible on
+            # BOTH sides and UNIQUE across the whole index — ambiguity returns
+            # None (conservative; a wrong tier join is worse than none).
+            k0, k1 = min(na, nb), max(na, nb)
+
+            def _pfx(x, y):
+                return x == y or (len(x) >= 3 and len(y) >= 3
+                                  and (x.startswith(y) or y.startswith(x)))
+            pairs = [key for key in idx
+                     if (_pfx(k0, key[0]) and _pfx(k1, key[1]))
+                     or (_pfx(k0, key[1]) and _pfx(k1, key[0]))]
+            if len(pairs) != 1:
+                return None
+            ents = idx[pairs[0]]
         md = _re.search(r"(\d{4}-\d{2}-\d{2})", slug or "")
         if not md:
             return ents[-1][1]

@@ -23,7 +23,9 @@ def _resolved(path):
     if not Path(path).exists():
         return pd.DataFrame()
     d = pd.read_csv(path)
-    d["ts"] = pd.to_numeric(d.get("timestamp"), errors="coerce")
+    # live_results.csv uses `ts`; paper_results.csv uses `timestamp`
+    tcol = "ts" if "ts" in d.columns else "timestamp"
+    d["ts"] = pd.to_numeric(d[tcol], errors="coerce")
     d = d[d.fade_slug.astype(str).str.startswith("wta-", na=False)]
     d = d[pd.to_numeric(d.get("realized_pnl"), errors="coerce").notna()].copy()
     d["pnl"] = pd.to_numeric(d.realized_pnl)

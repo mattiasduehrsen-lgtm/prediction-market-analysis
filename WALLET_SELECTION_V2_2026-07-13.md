@@ -1,5 +1,36 @@
 # Wallet-selection v2 — fill-true, shrunken, out-of-time (2026-07-13)
 
+> ## VERDICT (run 2026-07-13, 444,914 fills / 17,088 wallets / 428 GRID-era markets):
+> ## **THE FADE WELL IS DRY. The optimal fade portfolio is EMPTY.**
+>
+> - Population mean fade-edge = **−0.002** per unit (fading a random wallet loses
+>   0.2¢ before spread) and — the deep finding — **τ = 0.001**: the dispersion of
+>   TRUE wallet skill across 4,043 scoreable wallets is one-tenth of a cent.
+>   Nobody tracked is reliably dumb (or smart) relative to the price minutes
+>   later. The best posterior fade-edge in the population is **+0.0004**; zero
+>   wallets clear the +0.03 floor. A raw +0.60-edge wallet (n=9) shrinks to
+>   −0.0015 — the lucky tail, exposed.
+> - **Out-of-time confirmation in money terms** (Jul 6–13): fading the CURRENT
+>   target list = **−15.1% ROI, clustered t=−2.55** (significantly negative);
+>   fading random scored wallets = −11.9% (t=−4.58). Consistent with the actual
+>   GRID-era live record (−$141 on 44 fills).
+> - 2,665 of 4,043 wallets (66%) carry MM/bot signatures (frequency or
+>   two-sided flow) — most tracked "wallets" are automation, and the residual
+>   human flow carries no exploitable information either.
+> - Latency caveat, addressed: p_after is measured 60–600s post-fill; the bot
+>   acts in ~2–6s on-chain. If an edge existed only inside the first minute it
+>   would be a latency race — and the live record at REAL sub-minute fills
+>   (1–8 gated, −$141 GRID era) already measured that race as lost.
+> - Consistent with `book_vs_market` (Polymarket now out-sharps bookmakers):
+>   a market this sharp absorbs retail flow without leaving a fade edge.
+>
+> **Consequences:** wallet-list optimization is answered — don't fade anyone on
+> GRID-era esports. The esports fade thesis should not return to live on ANY
+> wallet list without this analysis flipping on a future window. R1 keeps
+> running purely per its pre-registration (its fade leg is now known-dead;
+> expect KILL). Confirmation re-run on the second window (~Jul 21) per the
+> promotion protocol — expected to confirm dryness.
+
 **Goal:** super-optimize which wallets the esports fade targets. Design first,
 then a pipeline (`analysis/wallet_scores.py`), then a pre-registered promotion
 bar. Nothing swaps into `fade_targets.json` from today's run alone.

@@ -100,7 +100,10 @@ def stage_fetch():
                 break
             rows.extend({"ts": t.get("timestamp"), "price": t.get("price"),
                          "size": t.get("size"), "side": t.get("side"),
-                         "outcome": t.get("outcome")} for t in page)
+                         "outcome": t.get("outcome"),
+                         # wallet added 2026-07-13 for the wallet-skill study —
+                         # caches created before then lack this column
+                         "wallet": t.get("proxyWallet")} for t in page)
             if len(page) < 500:
                 break
             offset += 500

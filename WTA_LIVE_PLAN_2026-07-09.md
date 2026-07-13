@@ -1,5 +1,30 @@
 # WTA fade — live-arming plan (pre-registered 2026-07-09, BEFORE final tape score)
 
+> ## ⚰️ KILLED 2026-07-13 16:26 UTC — trigger fired, reverted to paper.
+>
+> **Final: 60 resolved fills, 29–31, ROI −20.8%, net −$62.44 realized** (+6 open
+> positions, cost $30.0, valued $38.5 at kill time — final tally moves with them).
+> The KILL condition (ROI < −15% at n ≥ 50) was met together with a daily-cap hit
+> on 2026-07-13 (−$66.70 realized that day on 26 resolutions — one catastrophic
+> post-Wimbledon Monday did the killing; the book was ~+$4 before it).
+> Action taken per pre-registration: `LIVE_SPORTS` removed from laptop `.env`,
+> `PolyBotSports` restarted; verified signals route to paper (Gjorcheska fade
+> logged to paper_trades.csv post-restart, no live orders after the kill ts).
+> Open positions remain tracked and resolve on their own.
+>
+> **Cost of the experiment ≈ −$54 to −$62** — inside the underwritten worst case
+> (−$100–150). Live WR 48% (29/60) vs the ≥57% the entry prices needed; the tape
+> check was honest about *execution* (fills matched claims) but 3.5 days of live
+> sample landed on the wrong side of a thin (t=1.61) edge. Whether the edge was
+> real-but-unlucky or never real is not distinguishable at n=60 — and per the
+> plan we do not re-derive or re-enter without a NEW pre-registration.
+>
+> **Process note for next time:** live-eligible signals skip the paper write, so
+> the "paper stream = control" clause was structurally empty for WTA during the
+> live window (fade_events retains the signals if a reconstruction is ever
+> wanted). Any future live plan should keep a shadow-paper write for the live
+> sport. Wallet after kill: ~$313 pUSD.
+
 **Context:** user is time-constrained; esports R1/in-play clocks run to ~August and
 tape evidence says they likely end in kills. The sports paper stream (running since
 May on the frozen 2026-05-23 target list) shows WTA fade +10.2% on 1,072 trades /

@@ -2,6 +2,29 @@
 
 ---
 
+## v1.64 — 2026-07-13
+**CoD/CDL readiness + wallet-selection v2 verdict.**
+
+- **Next new-title window identified: CoD Champs, Jul 16–19 (Vegas)**; CDL props
+  already listed on Polymarket (Jul 24 fixture). Prop regex now catches
+  `first-to-` forms (CDL "first-to-score-neither" classified as a series
+  moneyline before); `tape_backfill` tags `-cdl-` as `game=cod`. codmw
+  PandaScore data verified (1,261 matches, nightly refresh, all champs orgs
+  matched). Capture covers cdl automatically. **Plan: observe-only
+  reconnaissance** — day-one books + tape, fill-true read after the event;
+  calibration for EWC CoD / CDL 2027, not a live candidate.
+- **Wallet-selection v2 verdict (`WALLET_SELECTION_V2_2026-07-13.md`): the fade
+  well is DRY on GRID-era esports.** τ=0.001 true-skill dispersion across 4,043
+  scoreable wallets; zero clear the posterior floor; OOS fading the current
+  list −15.1% (t=−2.55). Do not resume wallet-fade live on any list.
+- WTA live experiment KILLED Jul 13 per pre-registered trigger (see
+  `WTA_LIVE_PLAN_2026-07-09.md` postmortem).
+
+Files: `esports_fade_bot.py`, `analysis/{tape_backfill,wallet_scores}.py`,
+`WALLET_SELECTION_V2_2026-07-13.md`, `src/bot/version.py`.
+
+---
+
 ## v1.63 — 2026-07-09
 **WTA live-arming — shipped DARK; flips only via `.env` after explicit user go.**
 

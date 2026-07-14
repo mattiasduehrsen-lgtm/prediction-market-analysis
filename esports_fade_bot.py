@@ -195,7 +195,9 @@ CS2_WINDOW_REFRESH_S = 300       # rebuild the window list from the parquet at m
 import re as _re
 _SINGLE_MAP_RE = _re.compile(
     r"-game\d+|-game-|-map-?\d*\b|-map-|handicap|kill-over|kill-under|first-blood"
-    r"|first-tower|total-|-total\b|over-under|round-total", _re.IGNORECASE)
+    # first-to- added v1.64: CDL props use "first-to-score-neither" etc., which
+    # carried no total/handicap token and classified as a series moneyline
+    r"|first-tower|first-to-|total-|-total\b|over-under|round-total", _re.IGNORECASE)
 
 
 def is_single_map_market(slug: str) -> bool:

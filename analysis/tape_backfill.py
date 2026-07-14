@@ -53,6 +53,10 @@ def _game(slug):
         return "lol"
     if s.startswith(("cs2-", "csgo-")):
         return "cs2"
+    # CoD (v1.64, CDL listings began Jul 2026; slug form "chi1-csc-cdl-<date>").
+    # No v2 predictor exists for cod — marks fall back to market-only rows.
+    if "-cdl-" in s or s.startswith(("cdl-", "cod-")):
+        return "cod"
     return None
 
 

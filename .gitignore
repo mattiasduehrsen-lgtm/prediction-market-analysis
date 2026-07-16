@@ -122,3 +122,5 @@ restart_bot.bat
 start_bot.bat
 start_dashboard.bat
 zip_snapshot.ps1
+cowork_snapshot/sports/
+cowork_snapshot/study/

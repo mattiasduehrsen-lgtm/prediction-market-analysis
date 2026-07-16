@@ -79,6 +79,22 @@ The RS thread was removed entirely in v1.26a. Previously, in the last 10–90s o
 
 Each version is tagged in `src/bot/version.py`. To revert, check out the commit hash listed.
 
+### v1.65 — 2026-07-16
+**Updown maker-rebate lane, Phase 0 ($0 at risk; read-only).** The 2026-07-15
+Cowork edge audit (`COWORK_EDGE_AUDIT_2026-07-15.md`) found the market calibrated
+to ~0.1¢ everywhere it trades and killed 4 more taker lanes; the one unventured
+structural lane is the MAKER side of the very updown markets this bot used to
+lose to as a fee-paying taker (crypto taker feeRate 0.072 since Jan 2026, never
+modelled; makers get 20% of fees back daily). Shipped: `updown_book_capture.py`
+(+ `UpdownCapture` task: books/trades/Binance spot every ~10s) and
+`analysis/updown_rebate_probe.py` (pool sizing). Families verified live:
+{btc,eth,sol,xrp,bnb,doge,hype} × {5m,15m} — NO 1h family exists; HYPE has no
+Binance spot (books captured, sim excluded). Pre-registered gates in the audit
+§5: Phase 0 continues iff pools ≥$500/day AND ≥3 families median touch-depth
+<$2k; Phase 1 offline fill-true sim gate before any order; Phase 2 micro-live
+only after explicit approval. This lane concerns the same updown MARKETS as the
+dormant mean-reversion bot but places no orders and touches no pause flag.
+
 ### v1.26c — 2026-05-03
 HOTFIX: Corrected v1.26a cw filter. v1.26a copied ETH v1.22 band edges (+0.03, -0.10) instead of Cowork's validated spec (+0.02, -0.15). BTC cw was reading +0.022% which landed in the (+0.02,+0.03) gap → zero trades for 24h. Fix: `signal_5m.py` global filter now uses `[-0.15,-0.02]∪[+0.02,+0.10]`.
 

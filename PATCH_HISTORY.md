@@ -2,6 +2,34 @@
 
 ---
 
+## v1.65 — 2026-07-16
+**Updown maker-rebate lane Phase 0 — capture + probe shipped ($0 at risk).**
+
+Mission: `CLAUDE_CODE_MAKER_LANE_PROMPT_2026-07-15.md`; full audit:
+`COWORK_EDGE_AUDIT_2026-07-15.md` (4 more taker lanes measured and killed;
+maker rebates = the unventured subsidized seat).
+
+- `updown_book_capture.py` + `watch_updown_capture.bat` + task `UpdownCapture`:
+  read-only logger — UP-token books (touch + 2¢ depth), taker prints, Binance
+  spot, ~10s cycle, all live updown families. The Phase-1 fill-true referee.
+- Families verified against gamma at deploy: **{btc,eth,sol,xrp,bnb,doge,hype}
+  × {5m,15m}**, all `feesEnabled=True`. The speculative `1h` family does not
+  exist (all slug variants 404). HYPE is not on Binance → books/trades captured,
+  excluded from the fair-value sim (batch spot call guards against the invalid
+  symbol).
+- `analysis/updown_rebate_probe.py`: one-shot fee-param verification + per-family
+  taker notional → rebate-pool sizing → Phase-0 gate numbers.
+- Pre-registered gates (audit §5, frozen): Phase 0 → 1 iff pools ≥ $500/day AND
+  ≥3 families median touch-depth < $2k. Phase 1 sim gate before any order.
+  Phase 2 micro-live only with explicit user approval.
+
+Files: `updown_book_capture.py`, `watch_updown_capture.bat`,
+`analysis/updown_rebate_probe.py`, `analysis/_edge_audit_2026-07-15.py`,
+`COWORK_EDGE_AUDIT_2026-07-15.md`, `CLAUDE_CODE_MAKER_LANE_PROMPT_2026-07-15.md`,
+`src/bot/version.py`, `STRATEGY_HISTORY.md`.
+
+---
+
 ## v1.64 — 2026-07-13
 **CoD/CDL readiness + wallet-selection v2 verdict.**
 

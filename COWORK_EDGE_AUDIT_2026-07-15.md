@@ -202,3 +202,33 @@ retail bot no seat at all, and the capital belongs elsewhere.
 *Session artifacts: `updown_book_capture.py`, `watch_updown_capture.bat`,
 `analysis/updown_rebate_probe.py`, `analysis/_edge_audit_2026-07-15.py`, this doc.
 No bot code touched. No tasks created or restarted. LIVE stays paused.*
+
+---
+
+## 8. Phase 0 executed — GATE PASS (Claude Code, 2026-07-16, v1.65)
+
+- **Families verified live** (mission's guess corrected): {btc,eth,sol,xrp,bnb,
+  doge,hype} × {5m,15m}, all `feesEnabled=True` (CLOB `maker_base_fee=1000`,
+  `taker_base_fee=1000` on every family). **No 1h family exists** (all slug
+  variants 404). HYPE has no Binance spot → books captured, excluded from the
+  fair-value sim.
+- **`UpdownCapture` task created and running** (user-approved), file growing at
+  ~140MB/day pace across all 14 families. Smoke-tested on dev and laptop.
+- **Probe** (`output/updown_capture/probe_20260716.txt`): rebate pools —
+  btc-5m ≈ $13.8k/day, eth-5m ≈ $2.1k, btc-15m ≈ $848, sol-5m ≈ $611,
+  xrp-5m ≈ $255, others smaller; **sum ≈ $17.7k/day**. Caveat: gamma returned
+  only 1 past window per family (expired slugs age out), so these are
+  single-window extrapolations; btc-5m also hit the 500-trade pagination cap.
+  Even at a 10× haircut the sum clears the bar.
+- **Touch depth** (first hour of capture): median touch-depth **$9–$270 across
+  all 14 families** — every family under the $2k bar (gate needed 3). The touch
+  is far thinner than assumed; queue risk is small but so is the size the touch
+  absorbs — the Phase-1 sim's prints-only fill rule handles both honestly.
+- **GATE (frozen §5): pools ≥$500/day ✓ AND ≥3 families touch<$2k ✓ → PHASE 1
+  PROCEEDS.** Sim (`analysis/updown_maker_sim.py`) to be built and run on
+  ≥3 days of capture → earliest read **2026-07-19**; split-half confirmation
+  per §5, no cell-shopping.
+- **Phase 0b (CDL):** index refresher works (Jul-25 CDL fixture present; 325 CDL
+  markets total) but **zero Champs-window (Jul 16–19) markets are listed** on
+  Polymarket as of Champs day 1 — nothing to capture yet; EsportsMarketMonitor
+  alerts if they appear. Observe-only per v1.64 unchanged.

@@ -124,3 +124,4 @@ start_dashboard.bat
 zip_snapshot.ps1
 cowork_snapshot/sports/
 cowork_snapshot/study/
+cowork_snapshot/perps/

@@ -53,10 +53,9 @@ def _game(slug):
         return "lol"
     if s.startswith(("cs2-", "csgo-")):
         return "cs2"
-    # CoD (v1.64, CDL listings began Jul 2026; slug form "chi1-csc-cdl-<date>").
-    # No v2 predictor exists for cod — marks fall back to market-only rows.
-    if "-cdl-" in s or s.startswith(("cdl-", "cod-")):
-        return "cod"
+    # v1.66: the v1.64 "cod" clause is REMOVED — "-cdl-" slugs are Chilean
+    # soccer (chi1-cdl-*), and Polymarket has never listed a CoD match market.
+    # Reinstate with verified slug forms if CoD ever actually lists.
     return None
 
 
@@ -80,13 +79,30 @@ def universe():
     return m.drop_duplicates("condition_id")
 
 
-def stage_fetch():
-    uni = universe()
-    print(f"[fetch] GRID-era series universe: {len(uni)} markets "
-          f"(cs2={int((uni.game == 'cs2').sum())}, lol={int((uni.game == 'lol').sum())})")
+def prop_universe():
+    """GRID-era CS2/LoL PROP markets (the complement of universe()) — feeds the
+    prop-MAKER measurement (edge audit §6): the -9%..-61% taker ROI on props is
+    someone's maker income; whose, and how much, needs the fill tapes."""
+    df = pd.read_parquet(MK, columns=["condition_id", "slug", "tokens", "game_start"])
+    df["game"] = df.slug.map(_game)
+    gs = pd.to_datetime(df.game_start, errors="coerce", utc=True)
+    m = df[df.game.notna() & gs.notna() & (gs >= GRID_T0)
+           & (gs <= pd.Timestamp.utcnow())
+           & df.slug.map(is_single_map_market)].copy()
+    m["gs"] = gs[m.index]
+    return m.drop(columns=["tokens"]).drop_duplicates("condition_id")
+
+
+def stage_fetch_props():
+    """Fetch fill tapes for GRID-era prop markets into the same cache dir."""
+    uni = prop_universe()
     todo = [r for r in uni.itertuples(index=False)
             if not (TR / f"{r.condition_id}.parquet").exists()]
-    print(f"[fetch] to download: {len(todo)} (rest cached)")
+    print(f"[fetch-props] GRID-era prop universe: {len(uni)}; to download: {len(todo)}")
+    _fetch_markets(todo)
+
+
+def _fetch_markets(todo):
     for i, r in enumerate(todo, 1):
         rows, offset = [], 0
         while True:
@@ -105,18 +121,26 @@ def stage_fetch():
             rows.extend({"ts": t.get("timestamp"), "price": t.get("price"),
                          "size": t.get("size"), "side": t.get("side"),
                          "outcome": t.get("outcome"),
-                         # wallet added 2026-07-13 for the wallet-skill study —
-                         # caches created before then lack this column
                          "wallet": t.get("proxyWallet")} for t in page)
             if len(page) < 500:
                 break
             offset += 500
             time.sleep(0.15)
         pd.DataFrame(rows).to_parquet(TR / f"{r.condition_id}.parquet", index=False)
-        if i % 25 == 0:
+        if i % 50 == 0:
             print(f"  {i}/{len(todo)} markets fetched")
         time.sleep(0.1)
     print("[fetch] done")
+
+
+def stage_fetch():
+    uni = universe()
+    print(f"[fetch] GRID-era series universe: {len(uni)} markets "
+          f"(cs2={int((uni.game == 'cs2').sum())}, lol={int((uni.game == 'lol').sum())})")
+    todo = [r for r in uni.itertuples(index=False)
+            if not (TR / f"{r.condition_id}.parquet").exists()]
+    print(f"[fetch] to download: {len(todo)} (rest cached)")
+    _fetch_markets(todo)
 
 
 # pre-start windows in minutes before game_start (same as the GRID re-fit)
@@ -317,7 +341,8 @@ def stage_report():
         print(f"  curve refit skipped ({e})")
 
 
-STAGES = dict(fetch=stage_fetch, marks=stage_marks, report=stage_report)
+STAGES = dict(fetch=stage_fetch, fetch_props=stage_fetch_props,
+              marks=stage_marks, report=stage_report)
 if __name__ == "__main__":
     for s in (sys.argv[1:] or list(STAGES)):
         STAGES[s]()

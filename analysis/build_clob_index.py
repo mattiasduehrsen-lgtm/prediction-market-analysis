@@ -30,7 +30,12 @@ ESPORTS_PATTERNS = [
     "starcraft-","-sc2-",
     "overwatch-","ow2-","-owl-",
     "apex-legends","apex-",
-    "call-of-duty","cdl-","-cdl-",
+    # v1.66: "cdl-"/"-cdl-" REMOVED — they matched Chilean soccer ("chi1-cdl-*",
+    # Colo-Colo/Limache class fixtures with draw/BTTS markets), which polluted the
+    # esports index and misled the v1.64 "CoD listing Jul 24" claim. Polymarket
+    # has never listed a Call of Duty match market; if it ever does, the market
+    # monitor's new-listing diff is the detection path, not this pattern list.
+    "call-of-duty",
     "esl-pro","-iem-","blast-pro","blast-premier","blast-fall","blast-spring",
     "dreamhack-","ewc-","esports-world-cup",
     "fortnite-","pubg-",

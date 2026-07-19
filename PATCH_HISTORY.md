@@ -2,6 +2,32 @@
 
 ---
 
+## v1.66 — 2026-07-19
+**Esports focus + CDL correction — v1.64's CoD thesis was a keyword mirage.**
+
+Deep-check of the "next CoD listing July 24" claim found that **every `cdl`
+market Polymarket has ever listed is Chilean soccer** (`chi1-cdl-*` — Colo-Colo
+vs CD Limache class fixtures with draw/BTTS/halftime markets), swept into the
+esports index by the `-cdl-` keyword. **Polymarket has never listed a Call of
+Duty match market**; CoD Champs (Jul 16–19) came and went unlisted.
+
+- Fix: `cdl-`/`-cdl-` removed from `build_clob_index` patterns (index cleans on
+  next refresh; prevents soccer books from entering esports price capture when
+  the Jul-24 fixture hits the ±48h window on Jul 23). v1.64's code changes
+  (prop regex, tape tagging) are harmless and stay.
+- Honest esports map after correction: the only dated esports match-surface on
+  Polymarket today is **CS2 + LoL** (every measured angle dead for us);
+  EWC/Dota/Valorant presence is **futures-only**. Next real catalysts: EWC
+  per-title match listings, The International, Valorant Champions (Aug–Sept) —
+  `EsportsMarketMonitor` (daily) is the detection path. Readiness (8-game
+  models, all-title capture, fill-true tooling) already in place.
+- Clocks converging on ~Jul 21: R1, in-play, wallet second window, and the
+  maker-lane Phase-1 formal gate (interim: 0/28 cells passed — expect KILL).
+
+Files: `analysis/build_clob_index.py`, `src/bot/version.py`.
+
+---
+
 ## v1.65 — 2026-07-16
 **Updown maker-rebate lane Phase 0 — capture + probe shipped ($0 at risk).**
 

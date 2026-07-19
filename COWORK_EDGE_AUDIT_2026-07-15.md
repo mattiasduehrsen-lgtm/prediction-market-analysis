@@ -182,6 +182,23 @@ inventory cap, $5 clips, maker-only orders, existing daily-loss circuit breaker.
   Curiosity only: the winner-market maker result (§1.5) already says don't fight
   the resident prop MM on its own turf.
 
+  > **UNBLOCKED AND MEASURED 2026-07-19 (`analysis/prop_maker_study.py`, 7,932
+  > prop tapes + 474 series tapes; taker-only feed → maker PnL via the exact
+  > per-trade mirror; trading band 0.03–0.97; settlement-band mega-prints
+  > excluded): THE PROP MAKER SEAT IS NET-NEGATIVE — −$39k/day aggregate.**
+  > map_winner makers lost **−$985k on $49M** (−2.0%) over 25 GRID-era days;
+  > handicap −3.7%; only totals (+4.2% on thin $2M) and series (+0.5% + rebates
+  > ≈ $7k/day across ALL makers) are positive. Maker losses are GROWING weekly
+  > (−$182k → −$355k → −$524k, EWC weeks). The aggregate winners on props are
+  > **informed in-play TAKERS** (top taker wallet +$537k) sniping stale maker
+  > quotes mid-map — the §1.5 "mixed/latency wallets" pattern, GRID-era edition.
+  > **Closes the last unmeasured esports surface: props are dead from BOTH
+  > sides for us** (taker: −9..−61% at quotes; maker: aggregate-negative, and
+  > our updown sim already showed a 1.5s maker cannot survive far simpler
+  > books). The only winning esports seat observed anywhere in this data is
+  > sub-second in-play information — a latency race we measured ourselves out
+  > of months ago (bo3 ~89s vs GRID sub-second).
+
 ---
 
 ## 7. The honest one-paragraph summary

@@ -54,7 +54,9 @@ ROSTER_RE = re.compile(
     r"roster|stand-?in|substitut|benched|inactive|loan|transfer|join|leav|"
     r"sign|part ways|removed|added|coach|lineup|player", re.I)
 MOVE_C = 0.05            # trigger threshold on the mid
-BASE_LO, BASE_HI = 90, 10        # baseline window, minutes before event
+BASE_LO, BASE_HI = 360, 10       # baseline window, minutes before event
+                                 # (capture round-robins far-from-start markets
+                                 #  sparsely; 6h window tolerates that)
 POST_H = 6.0             # reaction window after event, hours
 PLACEBO_OFFS = (-5 * 3600, -9 * 3600, +14 * 3600)
 
@@ -129,7 +131,7 @@ def measure_one(d, ev_ts):
     ts, mid = d["ts"], d["mid"]
     b0 = bisect_left(ts, ev_ts - BASE_LO * 60)
     b1 = bisect_right(ts, ev_ts - BASE_HI * 60)
-    if b1 - b0 < 3:
+    if b1 - b0 < 2:
         return None
     base = float(np.median(mid[b0:b1]))
     p0 = bisect_left(ts, ev_ts)
@@ -166,9 +168,23 @@ def stage_measure():
                 return k
         return None
     rev["team"] = rev.title.map(title_team)
-    cand = rev[rev.team.notna()
-               & (rev.comment.str.contains(ROSTER_RE, na=False)
-                  | rev.title.str.contains(ROSTER_RE, na=False))].copy()
+    rosterish = (rev.comment.str.contains(ROSTER_RE, na=False)
+                 | rev.title.str.contains(ROSTER_RE, na=False))
+    cand = rev[rev.team.notna() & rosterish].copy()
+    # transfer-portal / news pages: team appears in the COMMENT, not the title
+    import re as _re
+    long_norms = {k: v for k, v in team_norms.items() if len(k) >= 5}
+    def comment_team(c):
+        n = _norm(str(c))
+        for k in long_norms:
+            if k in n:
+                return k
+        return None
+    extra = rev[rev.team.isna() & rosterish].copy()
+    extra["team"] = extra.comment.map(comment_team)
+    extra = extra[extra.team.notna()]
+    print(f"[measure] +{len(extra)} events via comment-mention (transfer/news pages)")
+    cand = pd.concat([cand, extra], ignore_index=True)
     # dedupe: one event per (team, hour)
     cand["hour"] = (cand.ets // 3600).astype(int)
     cand = cand.sort_values("ets").drop_duplicates(["team", "hour"])
@@ -182,7 +198,7 @@ def stage_measure():
         for o in r.outcomes:
             team_cids.setdefault(_norm(o), []).append(r.condition_id)
         slug_outcomes[r.condition_id] = r.slug
-    rows = []
+    rows, near_misses = [], []
     for ev in cand.itertuples(index=False):
         for cid in team_cids.get(ev.team, []):
             d = books.get(cid)
@@ -190,6 +206,11 @@ def stage_measure():
                 continue
             m = measure_one(d, ev.ets)
             if m is None:
+                # diagnostic: how far is the nearest snapshot from the event?
+                ts = d["ts"]
+                if len(ts):
+                    i = min(range(len(ts)), key=lambda j: abs(ts[j] - ev.ets))
+                    near_misses.append(abs(ts[i] - ev.ets) / 3600)
                 continue
             base_n, lag, mx = m
             placebo = []
@@ -206,6 +227,10 @@ def stage_measure():
     m.to_parquet(OUT / "events_measured.parquet", index=False)
     if not len(m):
         print("[measure] no events with sufficient book coverage — report n=0 honestly")
+        if near_misses:
+            nm = pd.Series(near_misses)
+            print(f"  diagnostics: {len(nm)} event-market pairs had SOME books; "
+                  f"nearest-snapshot gap hours: median {nm.median():.1f}, min {nm.min():.1f}")
         return
     trig = m[m.triggered]
     p_rate = m.placebo_hits.sum() / max(m.placebo_n.sum(), 1)

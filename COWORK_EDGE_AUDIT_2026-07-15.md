@@ -222,6 +222,26 @@ No bot code touched. No tasks created or restarted. LIVE stays paused.*
 
 ---
 
+## 9. FORMAL ADJUDICATIONS — 2026-07-21 (two kills, both per frozen rules)
+
+- **MAKER LANE: KILL.** Phase-1 sim on 6 capture days (Jul 16–21, ~4.5
+  full-day-equivalents after the Jul-19 capture interrupt): **no cell passed
+  split-half confirmation** (28 cells, k∈{2..5¢}); adverse selection dominates
+  spread+rebate at every tested width, worst on 15m families (−$2 to −$3.5 per
+  $10 clip within 60s). Mechanical verdict line: `VERDICT: KILL`. The lane is
+  closed; the `UpdownCapture` task is no longer needed by this lane (retire at
+  user's discretion — it is also a generic market archive). Both sides of the
+  crypto updown table are now measured dead for this project: taker
+  (v1.26–v1.34 era) and maker (this lane).
+- **IN-PLAY CONTRARIAN: KILL.** Pre-registered gate read at contrarian n=111
+  (≥100): actual wins 15 vs 18.3 implied, z=−0.88, **p=0.81** — not merely
+  short of the p<0.02 bar but on the wrong side of even money. Matches the
+  GRID-tape prediction (n=106, z=−1.58). The June "+40%" was pre-GRID-regime
+  variance. Hypothesis closed; the cs2_inplay paper stream has no remaining
+  pre-registration attached (retire at user's discretion).
+
+---
+
 ## 8. Phase 0 executed — GATE PASS (Claude Code, 2026-07-16, v1.65)
 
 - **Families verified live** (mission's guess corrected): {btc,eth,sol,xrp,bnb,

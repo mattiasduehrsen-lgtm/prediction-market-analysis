@@ -30,6 +30,18 @@
 > running purely per its pre-registration (its fade leg is now known-dead;
 > expect KILL). Confirmation re-run on the second window (~Jul 21) per the
 > promotion protocol — expected to confirm dryness.
+>
+> ### SECOND WINDOW (run 2026-07-21, Jul 14–21, 279,211 fills / 251 markets):
+> ### **CONFIRMED DRY.**
+> - v2 EB selection: **still empty** (fit window unchanged; zero wallets clear
+>   the posterior floor).
+> - Fading the CURRENT list: **−1.0%** (t=−0.16) — milder than window 1's
+>   −15.1% but ≤ 0 again; two-for-two non-positive.
+> - Fading random scored wallets: **−6.4%** (t=−1.15) — negative in both windows.
+> - Promotion bar: fails on every condition, both windows. **The optimal fade
+>   portfolio is empty. The wallet-fade thesis is closed permanently** — any
+>   future reopening requires a fresh full study on a future population, not a
+>   revival of this one.
 
 **Goal:** super-optimize which wallets the esports fade targets. Design first,
 then a pipeline (`analysis/wallet_scores.py`), then a pre-registered promotion

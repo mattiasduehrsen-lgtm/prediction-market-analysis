@@ -19,6 +19,13 @@ $map = [ordered]@{
     "telegram_bot"      = @("PolyBotTelegram", "watchdog_telegram.lock", "", 0)
     "main.py dashboard" = @("PolyDashboard",   "watchdog_dashboard.lock","", 0)
     "price_capture"     = @("PriceCapture",    "watchdog_pricecap.lock", "watchdog_pricecap.log", 30)
+    # capture loops added 2026-07-23 after twice being found dead from stray
+    # console interrupts (^C in their logs, source unidentified) with nothing
+    # reviving them. news_capture prints only on rosterish hits -> alive-check
+    # only (no staleness), like telegram/dashboard.
+    "updown_book_capture" = @("UpdownCapture", "watchdog_updowncap.lock", "watchdog_updowncap.log", 20)
+    "odds_capture"        = @("OddsCapture",   "watchdog_oddscap.lock",   "watchdog_oddscap.log",   20)
+    "news_capture"        = @("NewsCapture",   "watchdog_newscap.lock",   "", 0)
 }
 try {
     $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop)

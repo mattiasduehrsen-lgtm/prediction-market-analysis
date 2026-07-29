@@ -2,6 +2,28 @@
 
 ---
 
+## v1.67 — 2026-07-28
+**Edge-hunt results + roster-market capture.** Full brief:
+`EDGE_HUNT_BRIEF_2026-07-28.md` (18-agent adversarial workflow; 19 candidates,
+10 refuted with live-probe receipts, 2 survivors).
+
+- **New PRIMARY esports lane candidate: Liquipedia-resolved roster-change
+  markets** (~20 live "will 〈org〉 make a roster change before September"
+  events; resolve on the org's Liquipedia Active-roster table incl. benching;
+  $2.50–$490 books = pro-free zone). Pre-registered GO/KILL homework gate
+  frozen in the brief. **Side lane:** POLY airdrop eligibility at ≤$0/month
+  measured cost (geopolitics-only fee-free bundle; NO maker-quoting).
+- **Infra:** roster markets were invisible to the whole stack — no index
+  pattern matched their slugs AND no `game_start` meant capture filtered them.
+  `build_clob_index` += `make-a-roster-change` stem; `price_capture` gains an
+  **evergreen lane** (no-game_start event markets, every 10th cycle, 100
+  books/pass).
+
+Files: `analysis/build_clob_index.py`, `price_capture.py`,
+`EDGE_HUNT_BRIEF_2026-07-28.md`, `src/bot/version.py`.
+
+---
+
 ## v1.66 — 2026-07-19
 **Esports focus + CDL correction — v1.64's CoD thesis was a keyword mirage.**
 

@@ -28,6 +28,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CYCLE_S = 60              # one pass per minute
 MAX_BOOKS_PER_CYCLE = 150 # request budget (~2.5 req/s worst case)
+EVERGREEN_EVERY = 10      # v1.67: no-game_start event markets every Nth cycle
+EVERGREEN_PER_PASS = 100  # (roster futures move on day-scale; ~10min cadence ok)
 WINDOW_PRE_H, WINDOW_POST_H = 48.0, 6.0   # game_start within [-6h, +48h from now]
 RELOAD_MARKETS_S = 600    # re-read the markets parquet every 10 min
 PROP = re.compile(r"-game\d|kill-over|first-blood|-map-|handicap|total-|-map\b", re.I)
@@ -51,17 +53,29 @@ def load_universe():
            & (gs < now + pd.Timedelta(hours=WINDOW_PRE_H))].copy()
     m["gs"] = gs[m.index]
     m = m.sort_values("gs")
-    out = []
-    for r in m.itertuples(index=False):
-        toks = [t for t in (list(r.tokens) if r.tokens is not None else []) if t.get("token_id")]
-        if not toks:
-            continue
-        out.append({"cid": r.condition_id, "slug": r.slug,
-                    "token": str(toks[0]["token_id"]),
-                    "outcome": toks[0].get("outcome", ""),
-                    "is_prop": bool(PROP.search(r.slug or "")),
-                    "gs": r.gs.isoformat()})
-    return out
+
+    def rows_for(frame, evergreen=False):
+        out = []
+        for r in frame.itertuples(index=False):
+            toks = [t for t in (list(r.tokens) if r.tokens is not None else [])
+                    if t.get("token_id")]
+            if not toks:
+                continue
+            out.append({"cid": r.condition_id, "slug": r.slug,
+                        "token": str(toks[0]["token_id"]),
+                        "outcome": toks[0].get("outcome", ""),
+                        "is_prop": bool(PROP.search(r.slug or "")),
+                        "gs": (r.gs.isoformat() if not evergreen else None),
+                        "evergreen": evergreen})
+        return out
+
+    # v1.67: EVERGREEN markets — open esports EVENT markets with NO game_start
+    # (roster-change futures, outrights). These were silently invisible to the
+    # capture net; the roster-change lane (EDGE_HUNT_BRIEF_2026-07-28.md #1)
+    # resolves on day-scale news, so a slow lane (every 10th cycle) suffices
+    # and cannot starve the near-start match budget.
+    ev = df[gs.isna()].copy()
+    return rows_for(m) , rows_for(ev, evergreen=True)
 
 
 def book(token_id):
@@ -87,13 +101,15 @@ def book(token_id):
 
 def main():
     print(f"[price-capture] starting; window -{WINDOW_POST_H}h..+{WINDOW_PRE_H}h, "
-          f"{MAX_BOOKS_PER_CYCLE} books/cycle")
-    universe, loaded_at, rr = [], 0.0, 0
+          f"{MAX_BOOKS_PER_CYCLE} books/cycle (+evergreen every {EVERGREEN_EVERY} cycles)")
+    universe, evergreen, loaded_at, rr, err = [], [], 0.0, 0, 0
+    cyc = 0
     while True:
         t0 = time.time()
+        cyc += 1
         if t0 - loaded_at > RELOAD_MARKETS_S or not universe:
             try:
-                universe = load_universe(); loaded_at = t0
+                universe, evergreen = load_universe(); loaded_at = t0
             except Exception as e:
                 print(f"[price-capture] universe load failed: {e}")
                 time.sleep(30); continue
@@ -104,6 +120,12 @@ def main():
             rr %= len(tail)
             extra = max(0, MAX_BOOKS_PER_CYCLE - len(batch))
             batch += tail[rr:rr + extra]; rr += extra
+        # evergreen lane: no-game_start event markets (roster futures etc.),
+        # round-robined slowly so they never crowd the match window
+        if evergreen and cyc % EVERGREEN_EVERY == 0:
+            err %= len(evergreen)
+            batch += evergreen[err:err + EVERGREEN_PER_PASS]
+            err += EVERGREEN_PER_PASS
         day = datetime.now(timezone.utc).strftime("%Y%m%d")
         path = OUT_DIR / f"prices_{day}.jsonl"
         n_ok = 0

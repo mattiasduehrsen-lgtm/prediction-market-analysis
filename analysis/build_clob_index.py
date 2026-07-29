@@ -38,6 +38,10 @@ ESPORTS_PATTERNS = [
     "call-of-duty",
     "esl-pro","-iem-","blast-pro","blast-premier","blast-fall","blast-spring",
     "dreamhack-","ewc-","esports-world-cup",
+    # v1.67: Polymarket's esports roster-change event category (Jun 2026+):
+    # "will-<org>-make-a-roster-change-before-<deadline>". Deadline text varies
+    # (and is typo-prone: one live slug says "septemeber"), so match the stem.
+    "make-a-roster-change",
     "fortnite-","pubg-",
     "league-of-legends",
 ]

@@ -1,0 +1,62 @@
+[
+ {
+  "org": "natus-vincere",
+  "already_changed": false,
+  "already_evidence": "Market created 2026-06-23 (createdAt 2026-06-23T16:31:14Z; slug human suffix reads 20260623). Creation Starter roster per market text: b1t, Aleksib, iM, w0nderful, makazze. Resolution object is the HLTV 'Players of Natus Vincere' table, status = Starter. CURRENT state (Liquipedia counterstrike/Natus_Vincere active roster; the HLTV team page itself returned HTTP 403 to fetch, so cross-checked via Liquipedia + the HLTV July 2026 news archive + bo3/navi.gg secondary): b1t (2020-12-20), Aleksib (2023-06-30), iM (2023-06-30), w0nderful (2023-10-31), makazze (2025-07-08) - IDENTICAL to the creation  ...[trimmed]",
+  "n_years": 5,
+  "n_with_change": 2,
+  "change_years_detail": "2021 - NO. Roster s1mple / electroNic / Boombl4 / Perfecto / b1t stable across the whole Jun 29-Aug 31 window. flamie was already moved inactive 2021-04-11 (before window) and formally left 2021-09-16 (after window, and from the bench, so would not have counted anyway). GuardiaN left 2021-02-12. Nothing touches the starter table in-window.\n\n2022 - NO (weakest year, medium confidence). Boombl4 benched 2022-05-28 (BEFORE window). sdy added 2022-06-03 as a STAND-IN on loan from MAD Lions (BEFORE window, and a stand-in, HLTV [SI] marker). Reporting through Aug 2022 ('NAVI's sdy to remain in CS:GO  ...[trimmed]",
+  "rumor_note": "ONE credible-ish rumor, weak sourcing. Sebastian 'krL' Perez (French insider) reported NAVI may sign Mateusz 'matys' Szymko (then G2) and Viktor 'Staehr' Staehr (then Astralis) to the CS2 roster - but he DELETED the tweet shortly after, and did not specify who would be replaced. Carried by cybersport.ru and hawk.live; NOT picked up by HLTV, and NAVI does not appear anywhere in HLTV's summer 2026 rostermania tracker beyond jL's contract expiry. Treat as low-reliability. Counter-signals: NEO joined Astralis as head coach 2026-07-14 and PR returned to MOUZ 2026-07-17 with no NAVI involvement; no  ...[trimmed]",
+  "confidence": "medium"
+ },
+ {
+  "org": "team-liquid",
+  "already_changed": false,
+  "already_evidence": "Market created 2026-07-01 (createdAt 2026-07-01T21:10:42Z; slug suffix 20260701). Creation Active roster per market text: nAts, kamo, purp0, Kicks, trexx. Resolution object is the ACTIVE roster table on liquipedia.net/valorant/Team_Liquid - which is directly readable (unlike HLTV), so this determination is well grounded.\n\nCURRENT Liquipedia Active table: nAts (joined 2022-11-11), kamo (2024-10-15), purp0 (2025-12-12), Kicks (2026-06-26), trexx (2026-06-26) - IDENTICAL to the creation five. Zero joins, zero departures, zero status changes since 2026-07-01.\n\nCritically, ALL of Team Liquid's 2026 ...[trimmed]",
+  "n_years": 5,
+  "n_with_change": 3,
+  "change_years_detail": "Team Liquid's VALORANT division was founded 2020-08-07, so all five years 2021-2025 are fielded years. Dates below are from the Liquipedia Former Players table, which carries explicit separate 'inactive date' and 'leave date' columns - the same table family the market resolves against, so the enumeration is unusually clean.\n\n2021 - NO. ec1s moved inactive 2021-02-24, released 2021-05-10 (both BEFORE window). Jamppi joined 2021-02-25 (before). Kryptix moved inactive 2021-09-25 and Nivera joined 2021-09-25 (both AFTER window - that swap happened at Champions time, late September). The Jun 29-Aug ...[trimmed]",
+  "rumor_note": "No credible reports of an impending qualifying move. Searches across VLR.gg, Liquipedia, Sheep Esports, THESPIKE and the Japanese VALORANT press surface nothing on purp0, kamo, nAts, Kicks or trexx departing; the only recent 'rumored roster' chatter (statsmeisterVLR) is the now-CONFIRMED nAts/kamo/purp0/trexx/Kicks five, i.e. stale pre-June speculation that already resolved. Context cutting both ways: (1) the lineup is ~4 weeks old and mid-Stage-2, and trexx/Kicks only re-debuted 2026-07-15 - orgs almost never re-cut a roster they just rebuilt, a strong argument for NO; (2) the one live tail i ...[trimmed]",
+  "confidence": "high"
+ },
+ {
+  "org": "sentinels",
+  "already_changed": false,
+  "already_evidence": "Market created 2026-07-01 with creation roster JohnQT, Reduxx, Jerrwin, Cortezia, JonahP. Liquipedia (https://liquipedia.net/valorant/Sentinels) Active roster table as of 2026-07-28 still contains ALL FIVE: johnqt (2023-09-13), cortezia (2025-11-01), reduxx (2025-11-01), JonahP (2026-03-06), Jerrwin (2026-03-24). Nobody has left; nobody has been moved to inactive/reserve. ONE COMPLICATION: a sixth name, Marved (Jimmy Nguyen), was added 2026-07-15 and Liquipedia renders him INSIDE the Active squad table with the role tag 'Stand-in' (page Timeline entry reads '2026-07-15 Marved joins as Stand-in ...[trimmed]",
+  "n_years": 5,
+  "n_with_change": 1,
+  "change_years_detail": "Source: Liquipedia Sentinels auto-generated Timeline (granular enough to log analysts/streamers/coaches separately, so player-vs-staff can be separated cleanly). Window tested = Jun 29 - Aug 31 each year, player-table changes only.\n2021 (fielded roster): NO. Only in-window entry is Aug 31 'Daph joins as Streamer' - staff, not a player. TenZ's Loan->Player role change was Jun 1, before the window. Roster (ShahZaM/SicK/dapr/zombs/TenZ) stable through the window.\n2022 (fielded roster): YES - the only hit in five years, and a heavy one. Jul 8 shroud joins; Jul 11 Zellsis joins; Jul 12 Kanpeki move ...[trimmed]",
+  "rumor_note": "No credible signing or departure rumors found. Searches surfaced only the March 2026 JonahP-for-Kyu move and 2026 season retrospectives - nothing forward-looking. The one live variable is johnqt's health: he had an emergency appendectomy around 2026-07-14, no return date has been confirmed, and reporting suggests he could be out until roughly the third matchweek. Two paths to a genuine YES: (a) recovery drags and Sentinels formally move johnqt to inactive/reserve, or (b) Marved is converted from stand-in to a signed player. Neither has been announced. Note also that the description permits 'a  ...[trimmed]",
+  "confidence": "medium"
+ },
+ {
+  "org": "team-falcons",
+  "already_changed": false,
+  "already_evidence": "Market created 2026-06-23 with creation roster m0NESY, kyousuke, NiKo, TeSeS, karrigan. HLTV team 11283 'Players of Falcons' table read via proxy on 2026-07-28 shows exactly those five, every one with status STARTER: NiKo (1y6m), TeSeS (1y6m), m0NESY (1y3m), kyousuke (1y1m), karrigan (3m), plus zonic as Coach. Liquipedia counterstrike Falcons independently confirms the identical active five (NiKo 2025-01-03, TeSeS 2025-01-04, m0NESY 2025-04-14, kyousuke 2025-06-23, karrigan 2026-04-20). The only post-creation movement is kyxsan being acquired by Aurora Gaming on 2026-07-08 - this does NOT qual ...[trimmed]",
+  "n_years": 5,
+  "n_with_change": 2,
+  "change_years_detail": "Source: Liquipedia Counter-Strike Falcons / Team_Falcons Timeline. Org has fielded a CS roster continuously since 2020-11-29, so all five years 2021-2025 count. Window = Jun 29 - Aug 31, applying the market's strict Starter-table rule (moves involving already-benched players do not count).\n2021 (fielded roster): YES (weakest of the five calls). Aug 10 'Falcons Esports signed JOXY', added to the V1K1NG/varK/br0/BLACKEAGLE/CacaNito lineup (DiM was the listed substitute). Timeline does not tag JOXY as a substitute, so scored as a qualifying player addition - but this is the one classification I w ...[trimmed]",
+  "rumor_note": "No credible rumor of an impending Falcons move. Context runs strongly the other way: Falcons won the IEM Cologne 2026 Major on 2026-06-21, beating FURIA 3-0, and are ranked world #1. Coverage reports the org's founder/management stating they do not plan any CS2 roster changes, that they fully trust the current roster and coaching staff, and stressing stability - and there is an eScoreNews piece headlined 'Falcons management denies reports about CS2 roster changes' (returned 403, could not read the body, so treat the denial as corroborating rather than primary). karrigan only arrived 2026-04-20 ...[trimmed]",
+  "confidence": "high"
+ },
+ {
+  "org": "paper-rex",
+  "already_changed": false,
+  "already_evidence": "NO qualifying change since market creation (2026-07-01). Creation roster per Gamma description: d4v41, f0rsakeN, something, Jinggg, invy. Liquipedia /valorant/Paper_Rex Active Squad on 2026-07-28 is exactly those five (d4v41 2021-02-08, f0rsakeN 2021-02-08, something 2023-03-22, Jinggg 2024-03-29, invy 2025-12-16), with NO Inactive or Substitute section listed. VLR.gg team page (vlr.gg/team/624) shows the same five and no inactive/sub block. VLR.gg transactions log (vlr.gg/team/transactions/624) has ZERO entries dated 2026 \u2014 most recent transaction is invy join 2025-12-15 / PatMen leave 2025-1 ...[trimmed]",
+  "n_years": 5,
+  "n_with_change": 1,
+  "change_years_detail": "Window = Jun 29 - Aug 31 each year. Sources: Liquipedia Paper_Rex former/inactive tables cross-checked against VLR.gg transactions log (the two agree on every date I could compare). 2021 = NO: roster events were Tommy leave 2021-05-20, shiba join 2021-05-21 (both pre-window) and Jinggg join 2021-09-28 (post-window); nothing between Jun 29 and Aug 31. 2022 = NO: shiba leave 2022-01-03 and cgrs/CigaretteS join 2022-10-22 bracket the window; roster (Benkai, d4v41, f0rsakeN, mindfreak, Jinggg) was static all summer. 2023 = NO (near miss): Benkai moved to Inactive 2023-06-03/04, which is 26 days BE ...[trimmed]",
+  "rumor_note": "No credible rumors of an impending PRX move found as of 2026-07-28. Contract cover: d4v41 and something extended through 2026, f0rsakeN also extended \u2014 PRX publicly framed the 2026 five as a deliberate stability play while rivals rebuilt. Form is strongly change-suppressing: runner-up at Masters London 2026 (lost GF 3-2 to Leviatan, 2026-06-21, $200k, 6 VCT points) and currently 4W-1L, 1st in Group B of VCT Pacific Stage 2. Only negative signal is a poor Esports World Cup 2026 (0-2 in groups: lost to NRG 2026-07-02 and Karmine Corp 2026-07-04, no points). Structural suppressor: Pacific Stage 2 ...[trimmed]",
+  "confidence": "high"
+ },
+ {
+  "org": "100-thieves",
+  "already_changed": false,
+  "already_evidence": "NO qualifying change since market creation (2026-07-01). Creation roster per Gamma description: Cryocells, Asuna, Bang, Vora, Timotino. Liquipedia /valorant/100_Thieves Active Squad on 2026-07-28 is exactly those five (Asuna 2025-11-05, Cryocells 2025-11-05, Timotino 2025-11-06, vora 2025-11-06, bang 2025-11-07), with NO Inactive or Substitute section. VLR.gg team page (vlr.gg/team/120) shows the same five, no inactive/sub block. VLR.gg transactions log (vlr.gg/team/transactions/120) has ZERO entries dated 2026 \u2014 most recent is bang join 2025-11-07. Behavioural confirmation: 100T won the VALOR ...[trimmed]",
+  "n_years": 5,
+  "n_with_change": 2,
+  "change_years_detail": "Window = Jun 29 - Aug 31 each year. Sources: VLR.gg transactions log for team 120 (complete dated log 2020-2026) cross-checked against Liquipedia 100_Thieves former-players table. IMPORTANT: my first Liquipedia pull silently dropped rows (it omitted Kess entirely), so the VLR transactions log is the primary here and Liquipedia the check. 2021 = YES: b0i (Aaron Thao) joined 2021-07-05. Liquipedia records the stint as 100 Thieves 2021-07-05 to 2021-09-27 with status 'Substitute', then Active 2021-09-27 to 2021-11-23; VLR logs it flatly as 'join / Player'. Liquipedia lists substitutes inside the  ...[trimmed]",
+  "rumor_note": "No credible rumors of an impending 100T move found as of 2026-07-28; targeted searches for July 2026 bench/replace chatter returned nothing. Form is maximally change-suppressing: reigning Esports World Cup 2026 champions (2026-07-13), first international title in org history, ~#7 in world rankings, 5-0 across their last five, and winning in VCT Americas Stage 2 (beat G2 2-1, beat KRU 2-0 on 2026-07-24). The roster is a 2-month-old Nov-2025 rebuild (vora/Timotino signed from the defunct TSM Ascension side; Asuna/Cryocells/bang re-signed) that is immediately outperforming expectations, so there  ...[trimmed]",
+  "confidence": "medium"
+ }
+]

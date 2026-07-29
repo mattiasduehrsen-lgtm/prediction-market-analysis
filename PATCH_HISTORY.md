@@ -2,6 +2,42 @@
 
 ---
 
+## v1.68 — 2026-07-28
+**Dota/Valorant index hole — the new-listing-readiness lane was blind to both.**
+
+`build_clob_index`'s `ESPORTS_PATTERNS` matched `dota-2`, but GRID-era dated Dota
+slugs are **`dota2-*`** (no hyphen). Result: the esports index had **zero 2026
+Dota rows** (last Dota row 2025-10-08) while live Gamma showed 71 open Dota
+events / 1,012 markets (EPL Masters $150k–255k/match, June's BLAST Slam at
+$2.4M–5.5M/match, Games of the Future) — and `price_capture`, which loads its
+universe from that parquet, had captured **0 Dota book lines ever** (Jul 27:
+77,089 cs2 lines, 0 dota). Same class: dated Valorant is **`val-*`** not
+`valorant-*` (499/632 open VAL markets missed). v1.66's "Dota/Valorant is
+futures-only" map was itself an artifact of this hole.
+
+Why the sentinel missed it: `gap_check` tested slugs with `game_of()` (which
+says "dota" for `dota2-*`) as a proxy for the index patterns — so the alarm
+built to catch exactly this gap considered it covered. It also scanned gamma's
+default-order actives, which never reach new listings at high ids.
+
+- `ESPORTS_PATTERNS`: anchored-prefix support (`^dota2-`, `^val-` via
+  startswith — bare `val-` substring would swallow `approval-*` slugs) +
+  futures tokens with no game name in the slug (`blast-slam`, `esl-one-`,
+  `dream-league`, `pgl-wallachia`, `win-the-international`,
+  `qualify-to-the-international`, `-lck-`/`-lec-`/`-lpl-`).
+- `gap_check` now imports the REAL matcher (`looks_esports`) and scans newest
+  actives first (`order=id desc`); `game_of()` classifies `val-*` as valorant.
+- No trading-logic change; fades stay paused. PriceCapture picks up the new
+  rows via its 10-min universe reload after the index rebuild (dated matches →
+  match-window lane; the new futures → v1.67's evergreen lane).
+- Motivation: **TI 2026 runs Aug 13–23** — Dota book capture must be archiving
+  well before then.
+
+Files: `analysis/build_clob_index.py`, `analysis/esports_market_monitor.py`,
+`src/bot/version.py`.
+
+---
+
 ## v1.67 — 2026-07-28
 **Edge-hunt results + roster-market capture.** Full brief:
 `EDGE_HUNT_BRIEF_2026-07-28.md` (18-agent adversarial workflow; 19 candidates,

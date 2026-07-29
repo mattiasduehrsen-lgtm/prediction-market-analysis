@@ -39,7 +39,8 @@ except Exception:
 
 def game_of(slug: str) -> str:
     s = (slug or "").lower()
-    if "vct" in s or "valorant" in s: return "valorant"
+    # v1.68: GRID-era dated Valorant slugs are "val-*" (not "valorant-*")
+    if s.startswith("val-") or "vct" in s or "valorant" in s: return "valorant"
     if s.startswith(("cs2-", "csgo-")) or "-cs2" in s or "-csgo" in s: return "cs2"
     if s.startswith(("lol-", "arch-lol-", "league-")) or "league-of-legends" in s: return "lol"
     if "dota" in s: return "dota"
@@ -109,15 +110,28 @@ def build_snapshot() -> dict:
 
 
 def gap_check() -> dict:
-    """Best-effort: esports-looking ACTIVE gamma markets our index slug-patterns miss."""
+    """Best-effort: esports-looking ACTIVE gamma markets our index slug-patterns miss.
+
+    v1.68: tests slugs against the REAL index matcher (build_clob_index.looks_esports),
+    not the game_of() proxy — game_of said "dota" for dota2-* slugs while the index
+    patterns missed all of them, so this sentinel was blind to exactly the gap it was
+    built to catch (zero 2026 Dota rows for months). Also scans NEWEST actives first
+    (order=id desc) — new listings live at high ids, default order never reached them.
+    """
     KW = ["cs2", "csgo", "valorant", "vct", "league of legends", "lol ", "dota",
           "rocket league", "rlcs", "overwatch", "rainbow six", "counter-strike",
           "esports", "grid"]
     try:
+        from build_clob_index import looks_esports
+    except Exception:
+        sys.path.insert(0, str(ROOT / "analysis"))
+        from build_clob_index import looks_esports
+    try:
         miss = []
         for off in (0, 100, 200, 300, 400):
             r = requests.get("https://gamma-api.polymarket.com/markets",
-                             params={"closed": "false", "limit": 100, "offset": off}, timeout=15)
+                             params={"closed": "false", "limit": 100, "offset": off,
+                                     "order": "id", "ascending": "false"}, timeout=15)
             if r.status_code != 200: break
             ms = r.json()
             if not ms: break
@@ -125,8 +139,7 @@ def gap_check() -> dict:
                 blob = (m.get("slug", "") + " " + m.get("question", "")).lower()
                 if any(k in blob for k in KW):
                     slug = m.get("slug", "")
-                    # would our index pattern catch it? (rough: game_of != other OR has a known token)
-                    if game_of(slug) == "other":
+                    if not looks_esports(slug)[0]:
                         miss.append(slug)
             if len(ms) < 100: break
         return {"checked": True, "missed_count": len(set(miss)), "examples": list(dict.fromkeys(miss))[:8]}

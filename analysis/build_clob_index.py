@@ -17,9 +17,21 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CLOB = "https://clob.polymarket.com"
 
-# Tight esports keyword patterns — only patterns that ONLY appear in true esports slugs
+# Tight esports keyword patterns — only patterns that ONLY appear in true esports slugs.
+# A leading "^" anchors the pattern to the START of the slug (startswith), for tokens
+# too short to be safe as substrings ("val-" is inside "approval-...").
 ESPORTS_PATTERNS = [
     "csgo-","cs2-","-cs2","-csgo",
+    # v1.68: GRID-era dated slugs the original list never matched — Dota is
+    # "dota2-*" (no hyphen, so "dota-2" missed ALL of it: zero 2026 Dota rows in
+    # the index while $2M+/match BLAST Slam traded) and Valorant is "val-*".
+    "^dota2-","^val-",
+    # v1.68: Dota tournament/TI futures carry no "dota" token in the slug at all
+    # ("will-team-spirit-win-blast-slam-vii", "...-win-the-international-2026").
+    "blast-slam","esl-one-","dream-league","pgl-wallachia",
+    "win-the-international","qualify-to-the-international",
+    # v1.68: LoL league-playoff futures ("will-t1-win-the-lck-2026-season-playoffs").
+    "-lck-","-lec-","-lpl-",
     # LoL: keep the specific league tags AND a bare "lol-"/"arch-lol-" so GRID-era
     # head-to-head slugs (e.g. "lol-t1-geng-2026", "arch-lol-...") are indexed.
     # Valorant is unaffected — its slugs are "vct-"/"valorant-", never "lol".
@@ -52,7 +64,10 @@ def looks_esports(slug):
         return False, None
     s = slug.lower()
     for pat in ESPORTS_PATTERNS:
-        if pat in s:
+        if pat.startswith("^"):
+            if s.startswith(pat[1:]):
+                return True, pat
+        elif pat in s:
             return True, pat
     return False, None
 

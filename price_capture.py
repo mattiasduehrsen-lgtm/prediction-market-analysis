@@ -28,6 +28,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CYCLE_S = 60              # one pass per minute
 MAX_BOOKS_PER_CYCLE = 150 # request budget (~2.5 req/s worst case)
+NEAR_SHARE = 0.6          # v1.69: 60% of each cycle to nearest-start,
+                          # 40% round-robins the 2-7d tail (news-lag region)
 EVERGREEN_EVERY = 10      # v1.67: no-game_start event markets every Nth cycle
 EVERGREEN_PER_PASS = 100  # (roster futures move on day-scale; ~10min cadence ok)
 WINDOW_PRE_H, WINDOW_POST_H = 168.0, 6.0  # v1.69: 48h -> 168h (7d).
@@ -118,13 +120,21 @@ def main():
             except Exception as e:
                 print(f"[price-capture] universe load failed: {e}")
                 time.sleep(30); continue
-        # nearest-to-start always; round-robin the tail within budget
-        batch = universe[:MAX_BOOKS_PER_CYCLE]
-        tail = universe[MAX_BOOKS_PER_CYCLE:]
+        # v1.69: RESERVED SPLIT. With the 7-day window the universe is ~3k
+        # markets, so a pure nearest-first batch consumed the whole budget and
+        # the 2-7d tail was NEVER sampled - which is precisely the region the
+        # news-lag study needs (roster news lands ~78h pre-match). Reserve a
+        # slice of every cycle for the tail.
+        near_n = int(MAX_BOOKS_PER_CYCLE * NEAR_SHARE)
+        batch = universe[:near_n]
+        tail = universe[near_n:]
         if tail:
             rr %= len(tail)
-            extra = max(0, MAX_BOOKS_PER_CYCLE - len(batch))
-            batch += tail[rr:rr + extra]; rr += extra
+            extra = MAX_BOOKS_PER_CYCLE - len(batch)
+            batch += tail[rr:rr + extra]
+            if len(batch) < MAX_BOOKS_PER_CYCLE:      # wrap around
+                batch += tail[:MAX_BOOKS_PER_CYCLE - len(batch)]
+            rr += extra
         # evergreen lane: no-game_start event markets (roster futures etc.),
         # round-robined slowly so they never crowd the match window
         if evergreen and cyc % EVERGREEN_EVERY == 0:

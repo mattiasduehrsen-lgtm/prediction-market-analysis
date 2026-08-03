@@ -71,8 +71,31 @@ def load_news():
     return out
 
 
+def _load_outcomes():
+    """condition_id -> [outcome names] from the market index (full team names)."""
+    import pandas as pd, json as _json
+    mk = pd.read_parquet(ROOT / "cowork_snapshot" / "esports" / "clob_esports_markets.parquet",
+                         columns=["condition_id", "tokens"])
+    out = {}
+    for r in mk.itertuples(index=False):
+        try:
+            toks = _json.loads(r.tokens) if isinstance(r.tokens, str) else list(r.tokens)
+            names = [t.get("outcome") for t in toks if isinstance(t.get("outcome"), str)]
+        except Exception:
+            names = []
+        if names:
+            out[r.condition_id] = names
+    return out
+
+
+OUTCOMES = {}
+
+
 def load_books():
-    """cid -> {slug, teams:[norm], gs, ts[], mid[]} for captured SERIES markets."""
+    """cid -> {slug, tokens:[outcome names], gs, ts[], mid[]} for captured series."""
+    global OUTCOMES
+    if not OUTCOMES:
+        OUTCOMES = _load_outcomes()
     books = {}
     for fp in sorted(glob.glob(str(CAP / "prices_*.jsonl"))):
         for line in open(fp, encoding="utf-8", errors="ignore"):
@@ -96,10 +119,10 @@ def load_books():
         o = np.argsort(d["ts"])
         d["ts"] = np.asarray(d["ts"])[o]
         d["mid"] = np.asarray(d["mid"])[o]
-        # team tokens from the slug body (between game prefix and date)
-        body = re.sub(r"^(cs2|csgo|lol|league)-", "", d["slug"])
-        body = re.sub(r"-\d{4}-\d{2}-\d{2}.*$", "", body)
-        d["tokens"] = [t for t in body.split("-") if len(t) >= 3]
+        # v2 FIX: slugs use abbreviations (100t, 3dmax, 9zg) while news uses full
+        # names -> zero overlap. Use the market's real OUTCOME NAMES from the
+        # index instead. This was the reason the first run returned n=0.
+        d["tokens"] = OUTCOMES.get(cid, [])
         gs = d.get("gs")
         d["gs_ts"] = pd.Timestamp(gs).timestamp() if gs else None
     return books
@@ -129,15 +152,17 @@ def main():
 
     rows, placebo_hits, placebo_n = [], 0, 0
     for ev in news:
-        toks = {_norm(w) for w in re.findall(r"[A-Za-z0-9.]+", ev["text"])}
-        toks = {t for t in toks if len(t) >= 4 and t not in STOP_WORDS}
-        if not toks:
+        raw = _norm(ev["text"])          # whole headline, normalized
+        if len(raw) < 4:
             continue
         for cid, d in books.items():
             # market must involve a mentioned team AND start after the event
             if d["gs_ts"] is None or d["gs_ts"] < ev["ts"]:
                 continue
-            if not (toks & {_norm(t) for t in d["tokens"]}):
+            # a team matches if its normalized full name appears in the
+            # normalized headline (substring) - handles "TDK transfer to 1win"
+            names = [_norm(t) for t in d["tokens"]]
+            if not any(len(n) >= 4 and n in raw for n in names):
                 continue
             m = measure(d, ev["ts"])
             if m is None:

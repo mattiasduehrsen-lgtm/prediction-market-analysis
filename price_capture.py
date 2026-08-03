@@ -29,8 +29,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 CYCLE_S = 60              # one pass per minute
 MAX_BOOKS_PER_CYCLE = 150 # request budget (~2.5 req/s worst case)
 PROP_MAX_LEAD_H = 24.0    # v1.69: props captured only within 24h of start
-NEAR_SHARE = 0.6          # v1.69: 60% of each cycle to nearest-start,
-                          # 40% round-robins the 2-7d tail (news-lag region)
+SERIES_SHARE = 0.75       # v1.69: 75% of each cycle to series moneylines
+                          # (rotating over ALL of them), remainder to near props
 EVERGREEN_EVERY = 10      # v1.67: no-game_start event markets every Nth cycle
 EVERGREEN_PER_PASS = 100  # (roster futures move on day-scale; ~10min cadence ok)
 WINDOW_PRE_H, WINDOW_POST_H = 168.0, 6.0  # v1.69: 48h -> 168h (7d).
@@ -130,21 +130,25 @@ def main():
             except Exception as e:
                 print(f"[price-capture] universe load failed: {e}")
                 time.sleep(30); continue
-        # v1.69: RESERVED SPLIT. With the 7-day window the universe is ~3k
-        # markets, so a pure nearest-first batch consumed the whole budget and
-        # the 2-7d tail was NEVER sampled - which is precisely the region the
-        # news-lag study needs (roster news lands ~78h pre-match). Reserve a
-        # slice of every cycle for the tail.
-        near_n = int(MAX_BOOKS_PER_CYCLE * NEAR_SHARE)
-        batch = universe[:near_n]
-        tail = universe[near_n:]
-        if tail:
-            rr %= len(tail)
-            extra = MAX_BOOKS_PER_CYCLE - len(batch)
-            batch += tail[rr:rr + extra]
-            if len(batch) < MAX_BOOKS_PER_CYCLE:      # wrap around
-                batch += tail[:MAX_BOOKS_PER_CYCLE - len(batch)]
-            rr += extra
+        # v1.69: PRIORITIZE BY RESEARCH VALUE, not nearness. Series moneylines
+        # (~200) are what every live research question needs - and the news-lag
+        # study specifically needs them at 2-7d lead, which pure nearest-first
+        # ordering never reached (the far tail sat ~14 min deep in a 1,063-entry
+        # list). Series rotate through the whole set every ~2 cycles (=> ~2 min
+        # resolution on any market, near or far); props take the remainder,
+        # nearest first.
+        series = [m for m in universe if not m["is_prop"]]
+        props = [m for m in universe if m["is_prop"]]
+        s_slice = min(len(series), int(MAX_BOOKS_PER_CYCLE * SERIES_SHARE))
+        if series:
+            rr %= len(series)
+            batch = series[rr:rr + s_slice]
+            if len(batch) < s_slice:
+                batch += series[:s_slice - len(batch)]
+            rr += s_slice
+        else:
+            batch = []
+        batch += props[:MAX_BOOKS_PER_CYCLE - len(batch)]
         # evergreen lane: no-game_start event markets (roster futures etc.),
         # round-robined slowly so they never crowd the match window
         if evergreen and cyc % EVERGREEN_EVERY == 0:

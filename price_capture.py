@@ -28,6 +28,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CYCLE_S = 60              # one pass per minute
 MAX_BOOKS_PER_CYCLE = 150 # request budget (~2.5 req/s worst case)
+PROP_MAX_LEAD_H = 24.0    # v1.69: props captured only within 24h of start
 NEAR_SHARE = 0.6          # v1.69: 60% of each cycle to nearest-start,
                           # 40% round-robins the 2-7d tail (news-lag region)
 EVERGREEN_EVERY = 10      # v1.67: no-game_start event markets every Nth cycle
@@ -59,6 +60,15 @@ def load_universe():
            & (gs > now - pd.Timedelta(hours=WINDOW_POST_H))
            & (gs < now + pd.Timedelta(hours=WINDOW_PRE_H))].copy()
     m["gs"] = gs[m.index]
+    # v1.69: PROPS ONLY NEAR START. 93% of the 7-day universe is prop markets
+    # (3,057 of 3,265) and both prop seats are measured dead (taker -9..-61%,
+    # maker aggregate-negative), so far-out props would crowd the ~208 series
+    # moneylines the news-lag study needs. Keep props inside 24h (cheap, and
+    # they remain the fill-true referee for near-start work); beyond that,
+    # series only.
+    is_prop = m["slug"].str.contains(PROP, na=False)
+    lead_h = (m["gs"] - now).dt.total_seconds() / 3600
+    m = m[(~is_prop) | (lead_h <= PROP_MAX_LEAD_H)]
     m = m.sort_values("gs")
 
     def rows_for(frame, evergreen=False):

@@ -37,13 +37,20 @@ WIKIS = {"cs2": "https://liquipedia.net/counterstrike/api.php",
          "lol": "https://liquipedia.net/leagueoflegends/api.php"}
 HLTV_EVERY = 120.0
 WIKI_EVERY = 300.0
+WIKI_BACKOFF_S = 0.0        # set by 429 responses; exponential, capped
+WIKI_BACKOFF_MAX = 3600.0
 ROSTER_RE = re.compile(
     r"roster|stand-?in|substitut|benched|inactive|loan|transfer|join|leav|sign"
     r"|part ways|removed|added|coach|lineup|miss|absen|illness|sick|visa|forfeit"
     r"|withdraw|replace", re.I)
 
 S = requests.Session()
-S.headers["User-Agent"] = "prediction-market-analysis news-capture (read-only research)"
+# Liquipedia API terms require a descriptive UA WITH CONTACT. We were
+# 429-blocked from ~2026-07-28 (parallel research agents hammered the API);
+# repo URL is the contact (deliberately not a personal email in a public repo).
+S.headers["User-Agent"] = ("prediction-market-analysis/1.0 news-capture "
+                           "(+https://github.com/mattiasduehrsen-lgtm/prediction-market-analysis; "
+                           "read-only research; 5min poll)")
 seen: set[str] = set()
 
 
@@ -89,8 +96,14 @@ def poll_wiki(game, api, now, since_iso):
             "action": "query", "list": "recentchanges", "format": "json",
             "rcend": since_iso, "rcprop": "title|timestamp|comment|ids",
             "rcnamespace": 0, "rclimit": 200})
+        global WIKI_BACKOFF_S
+        if r.status_code == 429:
+            WIKI_BACKOFF_S = min(max(WIKI_BACKOFF_S * 2, 300.0), WIKI_BACKOFF_MAX)
+            print(f"[news] {game} wiki 429 rate-limited; backing off {WIKI_BACKOFF_S:.0f}s")
+            return rows
         if r.status_code != 200:
             return rows
+        WIKI_BACKOFF_S = 0.0
         for c in r.json().get("query", {}).get("recentchanges", []):
             key = f"{game}:{c.get('rcid')}"
             if key in seen:
@@ -122,7 +135,7 @@ def main():
         if now - last_hltv >= HLTV_EVERY:
             rows += poll_hltv(now)
             last_hltv = now
-        if now - last_wiki >= WIKI_EVERY:
+        if now - last_wiki >= WIKI_EVERY + WIKI_BACKOFF_S:
             since = datetime.fromtimestamp(now - 7200, timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
             for game, api in WIKIS.items():

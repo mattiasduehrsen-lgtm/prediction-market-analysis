@@ -30,7 +30,12 @@ CYCLE_S = 60              # one pass per minute
 MAX_BOOKS_PER_CYCLE = 150 # request budget (~2.5 req/s worst case)
 EVERGREEN_EVERY = 10      # v1.67: no-game_start event markets every Nth cycle
 EVERGREEN_PER_PASS = 100  # (roster futures move on day-scale; ~10min cadence ok)
-WINDOW_PRE_H, WINDOW_POST_H = 48.0, 6.0   # game_start within [-6h, +48h from now]
+WINDOW_PRE_H, WINDOW_POST_H = 168.0, 6.0  # v1.69: 48h -> 168h (7d).
+# Roster/stand-in news lands a MEDIAN 78h before the team's next match
+# (measured 2026-08-03, news_lag_forward.py), and Polymarket lists ~223
+# match markets beyond 48h - so the 48h window made the news-lag edge
+# structurally unmeasurable: no book in the archive when the news broke.
+# Near-start markets keep priority in the cycle budget; the tail rotates.
 RELOAD_MARKETS_S = 600    # re-read the markets parquet every 10 min
 PROP = re.compile(r"-game\d|kill-over|first-blood|-map-|handicap|total-|-map\b", re.I)
 

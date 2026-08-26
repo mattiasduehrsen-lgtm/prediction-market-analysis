@@ -103,25 +103,33 @@ def snap_at(d, t, tol=2700.0):
 def resolutions(slugs):
     cache_f = OUT / "resolutions.json"
     cache = json.loads(cache_f.read_text()) if cache_f.exists() else {}
+    # drop entries from the pre-fix cache format / failed lookups
+    cache = {k: v for k, v in cache.items() if isinstance(v, dict) and (v.get("w") is not None or v.get("out"))}
     S = requests.Session()
     todo = [s for s in slugs if s not in cache]
     for i, slug in enumerate(todo):
         try:
-            r = S.get("https://gamma-api.polymarket.com/markets",
-                      params={"slug": slug}, timeout=15)
-            j = r.json()
+            # gamma's slug lookup EXCLUDES closed markets unless closed=true
+            j = []
+            for extra in ({"closed": "true"}, {}):
+                r = S.get("https://gamma-api.polymarket.com/markets",
+                          params={"slug": slug, **extra}, timeout=15)
+                j = r.json()
+                if isinstance(j, list) and j:
+                    break
             if isinstance(j, list) and j:
                 m = j[0]
                 op = m.get("outcomePrices")
                 op = json.loads(op) if isinstance(op, str) else op
-                if m.get("closed") and op and op[0] in ("1", "0", "1.0", "0.0"):
-                    cache[slug] = int(float(op[0]))
-                else:
-                    cache[slug] = None
+                outs = m.get("outcomes")
+                outs = json.loads(outs) if isinstance(outs, str) else (outs or [])
+                w = (int(float(op[0]))
+                     if m.get("closed") and op and float(op[0]) in (0.0, 1.0) else None)
+                cache[slug] = {"w": w, "out": outs}
             else:
-                cache[slug] = None
+                cache[slug] = {"w": None, "out": []}
         except Exception:
-            cache[slug] = None
+            cache[slug] = {"w": None, "out": []}
         if i % 40 == 39:
             cache_f.write_text(json.dumps(cache))
             print(f"  [res] {i+1}/{len(todo)}")
@@ -148,7 +156,7 @@ def calib_ev(books, res, t_off_h, label, lo_h=None):
     """Buy side A at ask at T-minus; also inverted (side B at 1-bid). Report EV."""
     rows = []
     for cid, d in books.items():
-        w = res.get(d["slug"])
+        w = (res.get(d["slug"]) or {}).get("w")
         if w is None:
             continue
         t = d["gs_ts"] - t_off_h * 3600
@@ -187,9 +195,11 @@ def bo3_join(books, res):
     # market side-A team from slug: dota2-<t1>-<t2>-YYYY-MM-DD
     mk = {}
     for cid, d in books.items():
-        m = re.match(r"dota2-([a-z0-9]+)-([a-z0-9]+)-(\d{4})-(\d{2})-(\d{2})", d["slug"])
-        if m:
-            mk[cid] = (m.group(1), m.group(2), f"{m.group(5)}-{m.group(4)}-{m.group(3)}")
+        m = re.match(r"dota2-[a-z0-9]+-[a-z0-9]+-(\d{4})-(\d{2})-(\d{2})", d["slug"])
+        outs = (res.get(d["slug"]) or {}).get("out") or []
+        if m and len(outs) == 2:
+            mk[cid] = (_norm(outs[0]), _norm(outs[1]),
+                       f"{m.group(3)}-{m.group(2)}-{m.group(1)}")
     if not mk:
         print("\n[bo3] no parsable dota slugs"); return
     lines = {}
@@ -217,13 +227,14 @@ def bo3_join(books, res):
     hits = 0; evs = []
     for cid, (a1, a2, dd) in mk.items():
         d = books[cid]
-        w = res.get(d["slug"])
+        w = (res.get(d["slug"]) or {}).get("w")
         best = None
         for (t1, t2, ld), v in lines.items():
             if ld != dd:
                 continue
-            f1 = (t1.startswith(a1) or a1.startswith(t1)) and (t2.startswith(a2) or a2.startswith(t2))
-            f2 = (t1.startswith(a2) or a2.startswith(t1)) and (t2.startswith(a1) or a1.startswith(t2))
+            c = lambda x, y: len(x) >= 4 and len(y) >= 4 and (x in y or y in x)
+            f1 = c(t1, a1) and c(t2, a2)
+            f2 = c(t1, a2) and c(t2, a1)
             if f1 or f2:
                 best = (v, f2); break
         if best is None:
@@ -263,7 +274,7 @@ def main():
     softness(dota, "dota TI window")
     softness(cs2, "cs2 same window (baseline)")
     res = resolutions([d["slug"] for d in dota.values()])
-    n_res = sum(1 for s in res.values() if s is not None)
+    n_res = sum(1 for v in res.values() if isinstance(v, dict) and v.get("w") is not None)
     print(f"\n[res] resolved dota markets: {n_res}")
     calib_ev(dota, res, 0.5, "dota T-30min taker")
     calib_ev(dota, res, 6, "dota T-6h taker")

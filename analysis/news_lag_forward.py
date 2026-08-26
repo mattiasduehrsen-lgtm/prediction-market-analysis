@@ -67,8 +67,16 @@ def load_news():
                 continue
             out.append({"ts": float(ts), "src": e.get("src", ""),
                         "text": f"{e.get('title', '')} {e.get('comment', '')}"})
-    out.sort(key=lambda x: x["ts"])
-    return out
+    # v3: DEDUP. Capture restarts re-log items (in-memory seen set), so the
+    # raw files contain duplicates that pseudo-replicate every measurement.
+    seen, ded = set(), []
+    for e in sorted(out, key=lambda x: x["ts"]):
+        k = (e["src"], round(e["ts"]), e["text"][:80])
+        if k in seen:
+            continue
+        seen.add(k)
+        ded.append(e)
+    return ded
 
 
 def _load_outcomes():
@@ -129,13 +137,22 @@ def load_books():
 
 
 def measure(d, ev_ts):
+    # v3: the reaction window ends at game_start minus 5min. Without this cap
+    # a "trigger" can simply be the match being played (mid -> 0/1), which is
+    # what inflated v2 to a 90% trigger rate with 0.53 median "moves".
+    gs = d.get("gs_ts")
+    if gs is None or ev_ts > gs - 1800:      # need >=30min pre-match to act
+        return None
+    post_end = min(ev_ts + POST_H * 3600, gs - 300)
+    if post_end - ev_ts < 900:               # <15min of usable window
+        return None
     ts, mid = d["ts"], d["mid"]
     b0 = bisect_left(ts, ev_ts - BASE_LO_H * 3600)
     b1 = bisect_right(ts, ev_ts - BASE_HI_M * 60)
     if b1 - b0 < 2:
         return None
     base = float(np.median(mid[b0:b1]))
-    p0, p1 = bisect_left(ts, ev_ts), bisect_right(ts, ev_ts + POST_H * 3600)
+    p0, p1 = bisect_left(ts, ev_ts), bisect_right(ts, post_end)
     if p1 - p0 < 3:
         return None
     dev = np.abs(mid[p0:p1] - base)
@@ -151,6 +168,7 @@ def main():
         print("insufficient data"); return
 
     rows, placebo_hits, placebo_n = [], 0, 0
+    seen_pairs = set()
     for ev in news:
         raw = _norm(ev["text"])          # whole headline, normalized
         if len(raw) < 4:
@@ -164,9 +182,13 @@ def main():
             names = [_norm(t) for t in d["tokens"]]
             if not any(len(n) >= 4 and n in raw for n in names):
                 continue
+            k = (cid, int(ev["ts"] // (4 * 3600)))   # one event-cluster / 4h / market
+            if k in seen_pairs:
+                continue
             m = measure(d, ev["ts"])
             if m is None:
                 continue
+            seen_pairs.add(k)
             lag, mx = m
             rows.append({"slug": d["slug"], "src": ev["src"], "lag": lag, "move": mx})
             for off in PLACEBO_OFFS:
@@ -181,6 +203,8 @@ def main():
               "with book coverage before its match. Report honestly; do not "
               "interpret as evidence either way.")
         return
+    uniq = len({r["slug"] for r in rows})
+    print(f"  distinct markets in join: {uniq}")
     trig = [r for r in rows if r["lag"] is not None]
     print(f"  triggered (>= {MOVE_C:.0%} move within {POST_H:.0f}h): "
           f"{len(trig)}/{len(rows)} = {len(trig)/len(rows):.0%}")
